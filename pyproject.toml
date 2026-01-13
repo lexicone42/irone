@@ -1,0 +1,54 @@
+[project]
+name = "secdashboards"
+version = "0.1.0"
+description = "Security Data Lake Analytics - Connect to AWS Security Lake, create detection rules, and deploy to Lambda"
+readme = "README.md"
+license = "Apache-2.0"
+requires-python = ">=3.13"
+dependencies = [
+    "marimo>=0.10.0",
+    "boto3>=1.35.0",
+    "pandas>=2.2.0",
+    "pyarrow>=18.0.0",
+    "polars>=1.0.0",
+    "pydantic>=2.10.0",
+    "pydantic-settings>=2.6.0",
+    "httpx>=0.28.0",
+    "rich>=13.9.0",
+    "typer>=0.15.0",
+    "jinja2>=3.1.0",
+    "croniter>=5.0.0",
+    "structlog>=24.4.0",
+    "pyvis>=0.3.2",
+    "gremlinpython>=3.7.0",
+    "networkx>=3.2",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3.0",
+    "pytest-asyncio>=0.24.0",
+    "ruff>=0.9.0",
+    "ty>=0.0.1a6",
+    "boto3-stubs[essential,athena,s3,lambda,events,glue,securitylake,neptune]>=1.35.0",
+]
+
+[project.scripts]
+secdash = "secdashboards.cli:app"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/secdashboards"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "PTH"]
+
+[tool.ty.environment]
+python-version = "3.13"

@@ -1,0 +1,261 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Neptune Serverless Graph Database for Security Investigation
+
+Parameters:
+  Environment:
+    Type: String
+    Default: dev
+    AllowedValues:
+      - dev
+      - staging
+      - prod
+
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: VPC ID for Neptune deployment
+
+  PrivateSubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: Private subnet IDs for Neptune (at least 2 in different AZs)
+
+  AllowedSecurityGroupId:
+    Type: String
+    Description: Security group ID that will be allowed to access Neptune (e.g., App Runner connector SG)
+    Default: ""
+
+  MinNCUs:
+    Type: Number
+    Default: 1
+    MinValue: 1
+    MaxValue: 128
+    Description: Minimum Neptune Capacity Units (1 NCU = ~2GB memory)
+
+  MaxNCUs:
+    Type: Number
+    Default: 32
+    MinValue: 1
+    MaxValue: 128
+    Description: Maximum Neptune Capacity Units for auto-scaling
+
+  EnableIAMAuth:
+    Type: String
+    Default: 'true'
+    AllowedValues:
+      - 'true'
+      - 'false'
+    Description: Enable IAM authentication for Neptune
+
+Conditions:
+  HasAllowedSecurityGroup: !Not [!Equals [!Ref AllowedSecurityGroupId, ""]]
+
+Resources:
+  # Security Group for Neptune
+  NeptuneSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: !Sub "secdash-neptune-sg-${Environment}"
+      GroupDescription: Security group for Neptune graph database
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 8182
+          ToPort: 8182
+          SourceSecurityGroupId: !If
+            - HasAllowedSecurityGroup
+            - !Ref AllowedSecurityGroupId
+            - !Ref AWS::NoValue
+          Description: Neptune port access from allowed security group
+      Tags:
+        - Key: Name
+          Value: !Sub "secdash-neptune-sg-${Environment}"
+        - Key: Application
+          Value: secdashboards
+        - Key: Environment
+          Value: !Ref Environment
+
+  # Self-referencing rule for Neptune instances
+  NeptuneSecurityGroupSelfIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref NeptuneSecurityGroup
+      IpProtocol: tcp
+      FromPort: 8182
+      ToPort: 8182
+      SourceSecurityGroupId: !Ref NeptuneSecurityGroup
+      Description: Neptune internal communication
+
+  # Subnet Group for Neptune
+  NeptuneSubnetGroup:
+    Type: AWS::Neptune::DBSubnetGroup
+    Properties:
+      DBSubnetGroupName: !Sub "secdash-neptune-subnet-${Environment}"
+      DBSubnetGroupDescription: Subnet group for Neptune cluster
+      SubnetIds: !Ref PrivateSubnetIds
+      Tags:
+        - Key: Application
+          Value: secdashboards
+        - Key: Environment
+          Value: !Ref Environment
+
+  # IAM Role for Neptune
+  # This role is used by Neptune for S3 bulk loading if needed.
+  # WARNING: AmazonS3ReadOnlyAccess grants read access to ALL S3 buckets.
+  # For production, replace with a custom policy scoped to specific buckets.
+  NeptuneIAMRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "secdash-neptune-role-${Environment}"
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: rds.amazonaws.com
+            Action: sts:AssumeRole
+      # TODO: For production, replace with custom policy scoped to specific buckets
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonS3ReadOnlyAccess
+      Tags:
+        - Key: Application
+          Value: secdashboards
+        - Key: Environment
+          Value: !Ref Environment
+
+  # Neptune Serverless Cluster
+  NeptuneCluster:
+    Type: AWS::Neptune::DBCluster
+    DeletionPolicy: Snapshot
+    UpdateReplacePolicy: Snapshot
+    Properties:
+      DBClusterIdentifier: !Sub "secdash-neptune-${Environment}"
+      EngineVersion: "1.3.1.0"
+      DBSubnetGroupName: !Ref NeptuneSubnetGroup
+      VpcSecurityGroupIds:
+        - !Ref NeptuneSecurityGroup
+      IamAuthEnabled: !Ref EnableIAMAuth
+      StorageEncrypted: true
+      ServerlessScalingConfiguration:
+        MinCapacity: !Ref MinNCUs
+        MaxCapacity: !Ref MaxNCUs
+      AssociatedRoles:
+        - RoleArn: !GetAtt NeptuneIAMRole.Arn
+      BackupRetentionPeriod: 7
+      PreferredBackupWindow: "02:00-03:00"
+      PreferredMaintenanceWindow: "sun:03:00-sun:04:00"
+      DeletionProtection: true
+      EnableCloudwatchLogsExports:
+        - audit
+      Tags:
+        - Key: Name
+          Value: !Sub "secdash-neptune-${Environment}"
+        - Key: Application
+          Value: secdashboards
+        - Key: Environment
+          Value: !Ref Environment
+
+  # Neptune Instance (required even for serverless)
+  NeptuneInstance:
+    Type: AWS::Neptune::DBInstance
+    Properties:
+      DBInstanceIdentifier: !Sub "secdash-neptune-instance-${Environment}"
+      DBClusterIdentifier: !Ref NeptuneCluster
+      DBInstanceClass: db.serverless
+      Tags:
+        - Key: Name
+          Value: !Sub "secdash-neptune-instance-${Environment}"
+        - Key: Application
+          Value: secdashboards
+        - Key: Environment
+          Value: !Ref Environment
+
+  # IAM Policy for Neptune Data Access
+  NeptuneDataAccessPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: !Sub "secdash-neptune-data-access-${Environment}"
+      Description: Policy for accessing Neptune graph database
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Action:
+              - neptune-db:*
+            Resource: !Sub "arn:aws:neptune-db:${AWS::Region}:${AWS::AccountId}:${NeptuneCluster}/*"
+
+  # CloudWatch Alarms for Neptune
+  NeptuneHighCPUAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "secdash-neptune-high-cpu-${Environment}"
+      AlarmDescription: Neptune CPU utilization is high
+      MetricName: CPUUtilization
+      Namespace: AWS/Neptune
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 3
+      Threshold: 80
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: DBClusterIdentifier
+          Value: !Ref NeptuneCluster
+      TreatMissingData: notBreaching
+
+  NeptuneHighMemoryAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "secdash-neptune-high-memory-${Environment}"
+      AlarmDescription: Neptune memory utilization is high
+      MetricName: FreeableMemory
+      Namespace: AWS/Neptune
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 3
+      Threshold: 1073741824  # 1 GB in bytes
+      ComparisonOperator: LessThanThreshold
+      Dimensions:
+        - Name: DBClusterIdentifier
+          Value: !Ref NeptuneCluster
+      TreatMissingData: notBreaching
+
+Outputs:
+  NeptuneClusterEndpoint:
+    Description: Neptune cluster endpoint
+    Value: !GetAtt NeptuneCluster.Endpoint
+    Export:
+      Name: !Sub "${AWS::StackName}-NeptuneEndpoint"
+
+  NeptuneClusterReadEndpoint:
+    Description: Neptune cluster read endpoint
+    Value: !GetAtt NeptuneCluster.ReadEndpoint
+    Export:
+      Name: !Sub "${AWS::StackName}-NeptuneReadEndpoint"
+
+  NeptuneClusterPort:
+    Description: Neptune cluster port
+    Value: !GetAtt NeptuneCluster.Port
+    Export:
+      Name: !Sub "${AWS::StackName}-NeptunePort"
+
+  NeptuneSecurityGroupId:
+    Description: Neptune security group ID
+    Value: !Ref NeptuneSecurityGroup
+    Export:
+      Name: !Sub "${AWS::StackName}-NeptuneSecurityGroupId"
+
+  NeptuneDataAccessPolicyArn:
+    Description: ARN of the Neptune data access policy
+    Value: !Ref NeptuneDataAccessPolicy
+    Export:
+      Name: !Sub "${AWS::StackName}-NeptuneDataAccessPolicyArn"
+
+  NeptuneClusterResourceId:
+    Description: Neptune cluster resource ID for IAM auth
+    Value: !GetAtt NeptuneCluster.ClusterResourceId
+    Export:
+      Name: !Sub "${AWS::StackName}-NeptuneClusterResourceId"
+
+  NeptuneConnectionUrl:
+    Description: Full Neptune connection URL
+    Value: !Sub "wss://${NeptuneCluster.Endpoint}:${NeptuneCluster.Port}/gremlin"
+    Export:
+      Name: !Sub "${AWS::StackName}-NeptuneConnectionUrl"

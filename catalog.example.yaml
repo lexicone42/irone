@@ -1,0 +1,79 @@
+# Example Data Catalog Configuration
+# Copy this to catalog.yaml and customize for your environment
+
+sources:
+  # AWS Security Lake - CloudTrail Management Events
+  - name: cloudtrail
+    type: security_lake
+    database: amazon_security_lake_glue_db_us_west_2
+    table: amazon_security_lake_table_us_west_2_cloud_trail_mgmt_2_0
+    region: us-west-2
+    description: CloudTrail management events from Security Lake (OCSF format)
+    tags:
+      - security-lake
+      - cloudtrail
+      - ocsf
+      - management-events
+    expected_freshness_minutes: 60
+    health_check_query: |
+      SELECT COUNT(*) as cnt, MAX(time_dt) as latest_time
+      FROM "amazon_security_lake_glue_db_us_west_2"."amazon_security_lake_table_us_west_2_cloud_trail_mgmt_2_0"
+      WHERE time_dt >= CURRENT_TIMESTAMP - INTERVAL '1' HOUR
+
+  # AWS Security Lake - VPC Flow Logs
+  - name: vpc-flow
+    type: security_lake
+    database: amazon_security_lake_glue_db_us_west_2
+    table: amazon_security_lake_table_us_west_2_vpc_flow_2_0
+    region: us-west-2
+    description: VPC Flow Logs from Security Lake (OCSF format)
+    tags:
+      - security-lake
+      - vpc-flow
+      - network
+      - ocsf
+    expected_freshness_minutes: 60
+
+  # AWS Security Lake - Route53 DNS Logs
+  - name: route53
+    type: security_lake
+    database: amazon_security_lake_glue_db_us_west_2
+    table: amazon_security_lake_table_us_west_2_route53_2_0
+    region: us-west-2
+    description: Route53 DNS resolver logs from Security Lake
+    tags:
+      - security-lake
+      - dns
+      - network
+      - ocsf
+    expected_freshness_minutes: 60
+
+  # AWS Security Lake - Security Hub Findings
+  - name: security-hub
+    type: security_lake
+    database: amazon_security_lake_glue_db_us_west_2
+    table: amazon_security_lake_table_us_west_2_sh_findings_2_0
+    region: us-west-2
+    description: Security Hub findings from Security Lake
+    tags:
+      - security-lake
+      - security-hub
+      - findings
+      - ocsf
+    expected_freshness_minutes: 120
+
+  # Custom Athena data source example
+  # - name: custom-logs
+  #   type: athena
+  #   database: my_custom_database
+  #   table: application_logs
+  #   region: us-west-2
+  #   description: Custom application logs
+  #   connector_config:
+  #     output_location: s3://my-athena-results/
+  #     workgroup: primary
+  #   tags:
+  #     - custom
+  #     - application
+
+default_region: us-west-2

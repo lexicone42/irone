@@ -1,0 +1,241 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Security Data Lake Analytics - Detection Rules Infrastructure
+
+Parameters:
+  Environment:
+    Type: String
+    Default: dev
+    AllowedValues:
+      - dev
+      - staging
+      - prod
+
+  AthenaDatabase:
+    Type: String
+    Default: amazon_security_lake_glue_db_us_east_1
+    Description: Security Lake Athena database name
+
+  AthenaOutputBucket:
+    Type: String
+    Description: S3 bucket for Athena query results
+
+  AlertEmail:
+    Type: String
+    Default: ""
+    Description: Email address for security alerts (optional)
+
+Conditions:
+  HasAlertEmail: !Not [!Equals [!Ref AlertEmail, ""]]
+
+Globals:
+  Function:
+    Runtime: python3.12
+    MemorySize: 256
+    Timeout: 300
+    Environment:
+      Variables:
+        ENVIRONMENT: !Ref Environment
+        ATHENA_DATABASE: !Ref AthenaDatabase
+        ATHENA_OUTPUT_LOCATION: !Sub "s3://${AthenaOutputBucket}/query-results/"
+
+Resources:
+  # SNS Topic for Alerts
+  AlertTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub "secdash-alerts-${Environment}"
+      Tags:
+        - Key: Application
+          Value: secdashboards
+        - Key: Environment
+          Value: !Ref Environment
+
+  AlertEmailSubscription:
+    Type: AWS::SNS::Subscription
+    Condition: HasAlertEmail
+    Properties:
+      TopicArn: !Ref AlertTopic
+      Protocol: email
+      Endpoint: !Ref AlertEmail
+
+  # IAM Role for Detection Lambda Functions
+  DetectionLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "secdash-detection-role-${Environment}"
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: AthenaQueryAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - athena:StartQueryExecution
+                  - athena:GetQueryExecution
+                  - athena:GetQueryResults
+                  - athena:StopQueryExecution
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - s3:GetBucketLocation
+                  - s3:GetObject
+                  - s3:ListBucket
+                  - s3:PutObject
+                Resource:
+                  - !Sub "arn:aws:s3:::${AthenaOutputBucket}"
+                  - !Sub "arn:aws:s3:::${AthenaOutputBucket}/*"
+              - Effect: Allow
+                Action:
+                  - glue:GetTable
+                  - glue:GetTables
+                  - glue:GetDatabase
+                  - glue:GetDatabases
+                  - glue:GetPartitions
+                Resource: "*"
+        - PolicyName: SecurityLakeAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:ListBucket
+                Resource:
+                  - "arn:aws:s3:::aws-security-data-lake-*"
+                  - "arn:aws:s3:::aws-security-data-lake-*/*"
+        - PolicyName: SNSPublish
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - sns:Publish
+                Resource: !Ref AlertTopic
+
+  # Health Check Lambda
+  HealthCheckFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "secdash-health-check-${Environment}"
+      CodeUri: ../src/
+      Handler: secdashboards.health.lambda_handler.handler
+      Role: !GetAtt DetectionLambdaRole.Arn
+      Environment:
+        Variables:
+          SNS_TOPIC_ARN: !Ref AlertTopic
+      Events:
+        ScheduleEvent:
+          Type: Schedule
+          Properties:
+            Schedule: rate(15 minutes)
+            Enabled: true
+      Tags:
+        Application: secdashboards
+        Environment: !Ref Environment
+        Type: health-check
+
+  # CloudWatch Dashboard
+  MonitoringDashboard:
+    Type: AWS::CloudWatch::Dashboard
+    Properties:
+      DashboardName: !Sub "secdash-monitoring-${Environment}"
+      DashboardBody: !Sub |
+        {
+          "widgets": [
+            {
+              "type": "metric",
+              "x": 0,
+              "y": 0,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "title": "Detection Lambda Invocations",
+                "metrics": [
+                  ["AWS/Lambda", "Invocations", "FunctionName", "secdash-health-check-${Environment}"]
+                ],
+                "period": 300,
+                "stat": "Sum",
+                "region": "${AWS::Region}"
+              }
+            },
+            {
+              "type": "metric",
+              "x": 12,
+              "y": 0,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "title": "Detection Lambda Errors",
+                "metrics": [
+                  ["AWS/Lambda", "Errors", "FunctionName", "secdash-health-check-${Environment}"]
+                ],
+                "period": 300,
+                "stat": "Sum",
+                "region": "${AWS::Region}"
+              }
+            },
+            {
+              "type": "metric",
+              "x": 0,
+              "y": 6,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "title": "Detection Lambda Duration",
+                "metrics": [
+                  ["AWS/Lambda", "Duration", "FunctionName", "secdash-health-check-${Environment}"]
+                ],
+                "period": 300,
+                "stat": "Average",
+                "region": "${AWS::Region}"
+              }
+            },
+            {
+              "type": "metric",
+              "x": 12,
+              "y": 6,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "title": "SNS Alert Messages",
+                "metrics": [
+                  ["AWS/SNS", "NumberOfMessagesPublished", "TopicName", "secdash-alerts-${Environment}"]
+                ],
+                "period": 300,
+                "stat": "Sum",
+                "region": "${AWS::Region}"
+              }
+            }
+          ]
+        }
+
+Outputs:
+  AlertTopicArn:
+    Description: ARN of the SNS topic for alerts
+    Value: !Ref AlertTopic
+    Export:
+      Name: !Sub "${AWS::StackName}-AlertTopicArn"
+
+  DetectionRoleArn:
+    Description: ARN of the IAM role for detection Lambdas
+    Value: !GetAtt DetectionLambdaRole.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-DetectionRoleArn"
+
+  HealthCheckFunctionArn:
+    Description: ARN of the health check Lambda function
+    Value: !GetAtt HealthCheckFunction.Arn
+
+  DashboardUrl:
+    Description: URL to the CloudWatch monitoring dashboard
+    Value: !Sub "https://${AWS::Region}.console.aws.amazon.com/cloudwatch/home?region=${AWS::Region}#dashboards:name=secdash-monitoring-${Environment}"

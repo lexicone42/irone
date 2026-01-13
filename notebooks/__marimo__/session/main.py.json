@@ -1,0 +1,369 @@
+{
+  "version": "1",
+  "metadata": {
+    "marimo_version": "0.19.2"
+  },
+  "cells": [
+    {
+      "id": "vblA",
+      "code_hash": "b48e4ffd7798add178c7651523efcdda",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/markdown": "<span class=\"markdown prose dark:prose-invert contents\"><h2 id=\"configuration\">Configuration</h2></span>"
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "PKri",
+      "code_hash": "3ddcf2a419463bf21bc8e5eed2ba9563",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/markdown": "<span class=\"markdown prose dark:prose-invert contents\"><h2 id=\"data-catalog\">Data Catalog</h2>\n<span class=\"paragraph\">Manage your data sources here. Add new connectors by configuring additional data sources.</span></span>"
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "SFPL",
+      "code_hash": "dcc75cbd104186dc5c079141e3ec0167",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/markdown": "<span class=\"markdown prose dark:prose-invert contents\"><h3 id=\"add-custom-data-source\">Add Custom Data Source</h3>\n<span class=\"paragraph\">Configure additional data sources to connect to different Security Lake tables or external data.</span></span>"
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "Kclp",
+      "code_hash": "d55e6f3ba7cbeb08eb59bd55340764ba",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/markdown": "<span class=\"markdown prose dark:prose-invert contents\"><h2 id=\"health-monitoring\">Health Monitoring</h2>\n<span class=\"paragraph\">Check the health of your data sources and verify data freshness.</span></span>"
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "nWHF",
+      "code_hash": "a4f165164a2b469d6ca5b8ad9a5eb91f",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/markdown": "<span class=\"markdown prose dark:prose-invert contents\"><h2 id=\"query-explorer\">Query Explorer</h2>\n<span class=\"paragraph\">Run ad-hoc queries against your Security Lake data.</span></span>"
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "TqIu",
+      "code_hash": "ab278339edc662689faa828d24694d98",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/markdown": "<span class=\"markdown prose dark:prose-invert contents\"><h2 id=\"detection-rules\">Detection Rules</h2>\n<span class=\"paragraph\">Create and test detection rules for security monitoring.</span></span>"
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "DnEU",
+      "code_hash": "4bb85f58e30f061d15c5a2bd259281dc",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/markdown": "<span class=\"markdown prose dark:prose-invert contents\"><h3 id=\"create-detection-rule\">Create Detection Rule</h3></span>"
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "xXTn",
+      "code_hash": "1a42484fda6922c4bc5b07c2f7f2d279",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/markdown": "<span class=\"markdown prose dark:prose-invert contents\"><h3 id=\"test-detections\">Test Detections</h3></span>"
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "NCOB",
+      "code_hash": "0d085cbfdcd19b36e1dd5a629407bb91",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/markdown": "<span class=\"markdown prose dark:prose-invert contents\"><h2 id=\"url-data-analysis\">URL Data Analysis</h2>\n<span class=\"paragraph\">Analyze data from external URLs for health monitoring and validation.</span></span>"
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "TXez",
+      "code_hash": "d68ad93911bd975632e78624f70a1b34",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/markdown": "<span class=\"markdown prose dark:prose-invert contents\"><h2 id=\"deploy-to-lambda\">Deploy to Lambda</h2>\n<span class=\"paragraph\">Deploy detection rules to AWS Lambda with CloudWatch scheduled execution.</span></span>"
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "wlCL",
+      "code_hash": "365e5f0536326000442a37c7e76d08ba",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/markdown": "<span class=\"markdown prose dark:prose-invert contents\"><hr />\n<h2 id=\"aws-console-links\">AWS Console Links</h2>\n<span class=\"paragraph\">Quick links to relevant AWS services for investigation and monitoring.</span></span>"
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "Hbol",
+      "code_hash": "03754fcdd6ce663006bf73a957083949",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/markdown": "<span class=\"markdown prose dark:prose-invert contents\"><h1 id=\"security-data-lake-analytics\">Security Data Lake Analytics</h1>\n<span class=\"paragraph\">Connect to AWS Security Lake, analyze security data, create detection rules, and deploy to Lambda.</span>\n<h2 id=\"quick-start\">Quick Start</h2>\n<ol>\n<li>Configure your data sources in the <strong>Data Catalog</strong> section</li>\n<li>Run health checks to verify connectivity</li>\n<li>Create and test detection rules</li>\n<li>Deploy rules to Lambda for automated execution</li>\n</ol></span>"
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "MJUe",
+      "code_hash": "e61c461b1cd5663bf5b1e748df5b4df3",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/plain": ""
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "bkHC",
+      "code_hash": "1c8af88c4ecc979580cc12060f824552",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/html": "<marimo-ui-element object-id='bkHC-0' random-id='6f1c6e84-16fb-3524-f14b-955af9b2cc77'><marimo-dropdown data-initial-value='[&quot;us-west-2&quot;]' data-label='&quot;&lt;span class=&#92;&quot;markdown prose dark:prose-invert contents&#92;&quot;&gt;&lt;span class=&#92;&quot;paragraph&#92;&quot;&gt;AWS Region&lt;/span&gt;&lt;/span&gt;&quot;' data-options='[&quot;us-west-2&quot;,&quot;us-west-1&quot;,&quot;us-east-1&quot;,&quot;us-east-2&quot;,&quot;eu-west-1&quot;,&quot;eu-central-1&quot;,&quot;ap-northeast-1&quot;,&quot;ap-southeast-1&quot;]' data-allow-select-none='false' data-searchable='false' data-full-width='false'></marimo-dropdown></marimo-ui-element>"
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "lEQa",
+      "code_hash": "0925c77f5bfa5f10040823c663fa4a7f",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/html": "<pre class='text-xs'>&lt;secdashboards.catalog.registry.DataCatalog object at 0x7fb58ede6e40&gt;</pre>"
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "Xref",
+      "code_hash": "641816435ab933333bdfc5b2a4317895",
+      "outputs": [],
+      "console": []
+    },
+    {
+      "id": "BYtC",
+      "code_hash": "6d8d222d17beb90a752b37151f3f3645",
+      "outputs": [],
+      "console": []
+    },
+    {
+      "id": "RGSE",
+      "code_hash": "6047e7501d3c8adc318366a53cf7252a",
+      "outputs": [],
+      "console": []
+    },
+    {
+      "id": "emfo",
+      "code_hash": "3bb708b3a75616ac69fb958c25aa5109",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/html": "<marimo-ui-element object-id='emfo-0' random-id='319a4aee-4243-04c0-4916-6e26d3308426'><marimo-button data-initial-value='0' data-label='&quot;&lt;span class=&#92;&quot;markdown prose dark:prose-invert contents&#92;&quot;&gt;&lt;span class=&#92;&quot;paragraph&#92;&quot;&gt;Run Health Check&lt;/span&gt;&lt;/span&gt;&quot;' data-kind='&quot;neutral&quot;' data-disabled='false' data-full-width='false'></marimo-button></marimo-ui-element>"
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "Hstk",
+      "code_hash": "71e25a30f63aa32cc189737007f754e5",
+      "outputs": [],
+      "console": []
+    },
+    {
+      "id": "iLit",
+      "code_hash": "e7e29f56284fce4d707197ca54610fcb",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/html": "<marimo-ui-element object-id='iLit-0' random-id='37b7a6fb-3eb7-f04a-197b-d000badea4c6'><marimo-dropdown data-initial-value='[&quot;cloudtrail&quot;]' data-label='&quot;&lt;span class=&#92;&quot;markdown prose dark:prose-invert contents&#92;&quot;&gt;&lt;span class=&#92;&quot;paragraph&#92;&quot;&gt;Data Source&lt;/span&gt;&lt;/span&gt;&quot;' data-options='[&quot;cloudtrail&quot;,&quot;vpc-flow&quot;]' data-allow-select-none='false' data-searchable='false' data-full-width='false'></marimo-dropdown></marimo-ui-element>"
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "ZHCJ",
+      "code_hash": "546a45b77fc4b9034c1ae59c22b9e251",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/html": "<marimo-ui-element object-id='ZHCJ-0' random-id='d4c20968-2970-1fa7-bb71-082984a6b717'><marimo-code-editor data-initial-value='&quot;SELECT *&#92;nFROM &#92;&quot;amazon_security_lake_glue_db_us_west_2&#92;&quot;.&#92;&quot;amazon_security_lake_table_us_west_2_cloud_trail_mgmt_2_0&#92;&quot;&#92;nWHERE time &gt;= CURRENT_TIMESTAMP - INTERVAL &#x27;1&#x27; HOUR&#92;nLIMIT 100&quot;' data-label='null' data-language='&quot;sql&quot;' data-placeholder='&quot;&quot;' data-disabled='false' data-min-height='150' data-show-copy-button='true' data-debounce='false'></marimo-code-editor></marimo-ui-element>"
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "ROlb",
+      "code_hash": "875fd1ff88d219202853a95841c2ad9b",
+      "outputs": [],
+      "console": []
+    },
+    {
+      "id": "qnkX",
+      "code_hash": "b7def7df320cc25212dd1bfddae89df9",
+      "outputs": [],
+      "console": []
+    },
+    {
+      "id": "Vxnm",
+      "code_hash": "9c12591415a03f43254ae5a82072c392",
+      "outputs": [],
+      "console": []
+    },
+    {
+      "id": "ulZA",
+      "code_hash": "c319ca4f8ba3fc778a5630118f7235ac",
+      "outputs": [],
+      "console": []
+    },
+    {
+      "id": "ecfG",
+      "code_hash": "6c00335c66caa0fe813a1f8d18961b61",
+      "outputs": [],
+      "console": []
+    },
+    {
+      "id": "Pvdt",
+      "code_hash": "9c7253e4d5fac4cab9a1a5ff1885ab2c",
+      "outputs": [],
+      "console": []
+    },
+    {
+      "id": "ZBYS",
+      "code_hash": "427fae66e53e7d23c9fcfdfe40bb0d47",
+      "outputs": [],
+      "console": []
+    },
+    {
+      "id": "aLJB",
+      "code_hash": "41908c5eaf5e0578480e9c55c6345bbd",
+      "outputs": [],
+      "console": []
+    },
+    {
+      "id": "nHfw",
+      "code_hash": "5d41145498b51768854dde7c07116f6a",
+      "outputs": [],
+      "console": []
+    },
+    {
+      "id": "AjVT",
+      "code_hash": "6f142e290d8617a72e30b39c4fdaf28f",
+      "outputs": [],
+      "console": []
+    },
+    {
+      "id": "pHFh",
+      "code_hash": "0f1a3a3caf2bb516e862e37fef6675e0",
+      "outputs": [],
+      "console": []
+    },
+    {
+      "id": "aqbW",
+      "code_hash": "73a5ed5a9ce0b3073a14d17088a76698",
+      "outputs": [],
+      "console": []
+    },
+    {
+      "id": "TRpd",
+      "code_hash": "095e5d1db8943ad32480abd53ec98fe6",
+      "outputs": [],
+      "console": []
+    },
+    {
+      "id": "dNNg",
+      "code_hash": "c1c03e642bfdad28b94a16884f254bf5",
+      "outputs": [],
+      "console": []
+    },
+    {
+      "id": "yCnT",
+      "code_hash": "6ebb6daf025a70fb2902528c1692a468",
+      "outputs": [],
+      "console": []
+    },
+    {
+      "id": "kqZH",
+      "code_hash": "192e681f4af87f2f0034137e29dc53db",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/markdown": "<span class=\"markdown prose dark:prose-invert contents\"><table>\n<thead>\n<tr>\n<th>Service</th>\n<th>Link</th>\n</tr>\n</thead>\n<tbody>\n<tr>\n<td>Athena Query Editor</td>\n<td><a href=\"https://us-west-2.console.aws.amazon.com/athena/home?region=us-west-2#/query-editor\" rel=\"noopener noreferrer\" target=\"_blank\">https://us-west-2.console.aws.amazon.com/athena/home?region=us-west-2#/query-editor</a></td>\n</tr>\n<tr>\n<td>Security Lake</td>\n<td><a href=\"https://us-west-2.console.aws.amazon.com/securitylake/home?region=us-west-2\" rel=\"noopener noreferrer\" target=\"_blank\">https://us-west-2.console.aws.amazon.com/securitylake/home?region=us-west-2</a></td>\n</tr>\n<tr>\n<td>CloudWatch</td>\n<td><a href=\"https://us-west-2.console.aws.amazon.com/cloudwatch/home?region=us-west-2\" rel=\"noopener noreferrer\" target=\"_blank\">https://us-west-2.console.aws.amazon.com/cloudwatch/home?region=us-west-2</a></td>\n</tr>\n<tr>\n<td>Lambda Functions</td>\n<td><a href=\"https://us-west-2.console.aws.amazon.com/lambda/home?region=us-west-2#/functions\" rel=\"noopener noreferrer\" target=\"_blank\">https://us-west-2.console.aws.amazon.com/lambda/home?region=us-west-2#/functions</a></td>\n</tr>\n<tr>\n<td>EventBridge Rules</td>\n<td><a href=\"https://us-west-2.console.aws.amazon.com/events/home?region=us-west-2#/rules\" rel=\"noopener noreferrer\" target=\"_blank\">https://us-west-2.console.aws.amazon.com/events/home?region=us-west-2#/rules</a></td>\n</tr>\n</tbody>\n</table></span>"
+          }
+        }
+      ],
+      "console": []
+    }
+  ]
+}

@@ -1,0 +1,551 @@
+"""Detection Engineering Notebook
+
+Create, test, and manage security detection rules.
+Includes AI-assisted rule generation with Amazon Bedrock.
+
+Run with: marimo edit notebooks/detection_engineering.py
+"""
+
+import marimo
+
+__generated_with = "0.19.2"
+app = marimo.App(width="full")
+
+
+@app.cell
+def _():
+    import marimo as mo
+
+    mo.md(
+        """
+        # Detection Engineering
+
+        Create, test, and manage SQL-based security detection rules for AWS Security Lake.
+
+        **Capabilities:**
+        - Create detection rules with YAML syntax
+        - Test rules against live Security Lake data
+        - AI-assisted rule generation (Bedrock)
+        - Query explorer for rule development
+        """
+    )
+    return (mo,)
+
+
+@app.cell
+def _():
+    from datetime import datetime, timedelta, UTC
+    from pathlib import Path
+
+    import polars as pl
+
+    from secdashboards.catalog.models import DataSource, DataSourceType
+    from secdashboards.catalog.registry import DataCatalog
+    from secdashboards.connectors.security_lake import OCSFEventClass
+    from secdashboards.detections.rule import DetectionMetadata, Severity, SQLDetectionRule
+    from secdashboards.detections.runner import DetectionRunner
+
+    return (
+        DataCatalog,
+        DataSource,
+        DataSourceType,
+        DetectionMetadata,
+        DetectionRunner,
+        OCSFEventClass,
+        Path,
+        SQLDetectionRule,
+        Severity,
+        UTC,
+        datetime,
+        pl,
+        timedelta,
+    )
+
+
+# =============================================================================
+# Configuration
+# =============================================================================
+
+
+@app.cell
+def _(mo):
+    mo.md("## Configuration")
+    return
+
+
+@app.cell
+def _(mo):
+    region_input = mo.ui.dropdown(
+        options=[
+            "us-west-2",
+            "us-west-1",
+            "us-east-1",
+            "us-east-2",
+            "eu-west-1",
+            "eu-central-1",
+        ],
+        value="us-west-2",
+        label="AWS Region",
+    )
+    region_input
+    return (region_input,)
+
+
+@app.cell
+def _(DataCatalog, DataSource, DataSourceType, region_input):
+    catalog = DataCatalog()
+    region = region_input.value
+    region_underscore = region.replace("-", "_")
+
+    catalog.add_source(
+        DataSource(
+            name="cloudtrail",
+            type=DataSourceType.SECURITY_LAKE,
+            database=f"amazon_security_lake_glue_db_{region_underscore}",
+            table=f"amazon_security_lake_table_{region_underscore}_cloud_trail_mgmt_2_0",
+            region=region,
+            description="CloudTrail management events",
+        )
+    )
+    return catalog, region, region_underscore
+
+
+# =============================================================================
+# Query Explorer
+# =============================================================================
+
+
+@app.cell
+def _(mo):
+    mo.md(
+        """
+        ## Query Explorer
+
+        Test SQL queries against Security Lake to develop detection logic.
+        """
+    )
+    return
+
+
+@app.cell
+def _(catalog, mo, region_underscore):
+    query_source = mo.ui.dropdown(
+        options=[s.name for s in catalog.list_sources()],
+        value="cloudtrail",
+        label="Data Source",
+    )
+
+    default_query = f'''SELECT
+    time_dt,
+    actor.user.name as user_name,
+    actor.user.type as user_type,
+    src_endpoint.ip as source_ip,
+    api.operation,
+    api.service.name as service,
+    status
+FROM "amazon_security_lake_glue_db_{region_underscore}"."amazon_security_lake_table_{region_underscore}_cloud_trail_mgmt_2_0"
+WHERE time_dt >= current_timestamp - interval '1' hour
+LIMIT 100'''
+
+    query_input = mo.ui.code_editor(
+        value=default_query,
+        language="sql",
+        min_height=200,
+    )
+
+    mo.vstack([query_source, query_input])
+    return default_query, query_input, query_source
+
+
+@app.cell
+def _(mo):
+    run_query_btn = mo.ui.run_button(label="Run Query")
+    run_query_btn
+    return (run_query_btn,)
+
+
+@app.cell
+def _(catalog, mo, pl, query_input, query_source, run_query_btn):
+    query_result = mo.md("_Click 'Run Query' to execute_")
+
+    if run_query_btn.value:
+        try:
+            connector = catalog.get_connector(query_source.value)
+            result_df = connector.query(query_input.value)
+
+            if isinstance(result_df, pl.DataFrame) and len(result_df) > 0:
+                query_result = mo.vstack(
+                    [
+                        mo.md(f"**Results:** {len(result_df)} rows"),
+                        mo.ui.table(result_df.to_pandas()),
+                    ]
+                )
+            else:
+                query_result = mo.md("_No results returned_")
+        except Exception as e:
+            query_result = mo.md(f"**Query Error:** {e}")
+
+    query_result
+    return (query_result,)
+
+
+# =============================================================================
+# Create Detection Rule
+# =============================================================================
+
+
+@app.cell
+def _(mo):
+    mo.md(
+        """
+        ## Create Detection Rule
+
+        Define a new SQL-based detection rule.
+        """
+    )
+    return
+
+
+@app.cell
+def _(mo):
+    rule_name = mo.ui.text(
+        value="detect-root-login",
+        label="Rule ID",
+        full_width=True,
+    )
+    rule_display_name = mo.ui.text(
+        value="Root Account Login Detected",
+        label="Display Name",
+        full_width=True,
+    )
+    rule_description = mo.ui.text_area(
+        value="Detects when the root AWS account is used for authentication",
+        label="Description",
+        full_width=True,
+    )
+
+    mo.vstack([rule_name, rule_display_name, rule_description])
+    return rule_description, rule_display_name, rule_name
+
+
+@app.cell
+def _(Severity, mo):
+    rule_severity = mo.ui.dropdown(
+        options=[s.value for s in Severity],
+        value="high",
+        label="Severity",
+    )
+    rule_threshold = mo.ui.slider(
+        start=1,
+        stop=100,
+        value=1,
+        label="Alert Threshold",
+    )
+
+    mo.hstack([rule_severity, rule_threshold])
+    return rule_severity, rule_threshold
+
+
+@app.cell
+def _(mo):
+    mo.md("**Detection Query** (use `{start_time}` and `{end_time}` placeholders):")
+    return
+
+
+@app.cell
+def _(mo, region_underscore):
+    rule_query = mo.ui.code_editor(
+        value=f'''SELECT
+    time_dt,
+    actor.user.name,
+    src_endpoint.ip,
+    api.operation
+FROM "amazon_security_lake_glue_db_{region_underscore}"."amazon_security_lake_table_{region_underscore}_cloud_trail_mgmt_2_0"
+WHERE time_dt >= TIMESTAMP '{{start_time}}'
+  AND time_dt < TIMESTAMP '{{end_time}}'
+  AND actor.user.type = 'Root'
+  AND class_uid = 3002''',
+        language="sql",
+        min_height=200,
+    )
+    rule_query
+    return (rule_query,)
+
+
+@app.cell
+def _(mo):
+    create_rule_btn = mo.ui.run_button(label="Create Rule")
+    create_rule_btn
+    return (create_rule_btn,)
+
+
+@app.cell
+def _(
+    DetectionMetadata,
+    SQLDetectionRule,
+    Severity,
+    create_rule_btn,
+    mo,
+    rule_description,
+    rule_display_name,
+    rule_name,
+    rule_query,
+    rule_severity,
+    rule_threshold,
+):
+    detection_rules: list[SQLDetectionRule] = []
+    rule_creation_result = mo.md("")
+
+    if create_rule_btn.value and rule_name.value:
+        new_rule = SQLDetectionRule(
+            metadata=DetectionMetadata(
+                id=rule_name.value,
+                name=rule_display_name.value,
+                description=rule_description.value,
+                severity=Severity(rule_severity.value),
+            ),
+            query_template=rule_query.value,
+            threshold=rule_threshold.value,
+        )
+        detection_rules.append(new_rule)
+        rule_creation_result = mo.md(f"**Created rule:** {rule_name.value}")
+
+    rule_creation_result
+    return detection_rules, new_rule, rule_creation_result
+
+
+@app.cell
+def _(detection_rules, mo, pl):
+    if detection_rules:
+        rules_df = pl.DataFrame(
+            [
+                {
+                    "ID": r.metadata.id,
+                    "Name": r.metadata.name,
+                    "Severity": r.metadata.severity.value,
+                    "Threshold": r.threshold,
+                }
+                for r in detection_rules
+            ]
+        )
+        mo.ui.table(rules_df.to_pandas())
+    else:
+        mo.md("_No detection rules created yet_")
+    return (rules_df,)
+
+
+# =============================================================================
+# Test Detections
+# =============================================================================
+
+
+@app.cell
+def _(mo):
+    mo.md(
+        """
+        ## Test Detections
+
+        Run detection rules against recent Security Lake data.
+        """
+    )
+    return
+
+
+@app.cell
+def _(detection_rules, mo):
+    rule_options = [r.metadata.id for r in detection_rules] if detection_rules else ["(create a rule first)"]
+    test_rule_select = mo.ui.dropdown(
+        options=rule_options,
+        value=rule_options[0] if rule_options else None,
+        label="Rule to Test",
+    )
+    test_lookback = mo.ui.slider(
+        start=15,
+        stop=1440,
+        value=60,
+        label="Lookback (minutes)",
+    )
+
+    mo.hstack([test_rule_select, test_lookback])
+    return rule_options, test_lookback, test_rule_select
+
+
+@app.cell
+def _(mo):
+    run_test_btn = mo.ui.run_button(label="Run Detection Test")
+    run_test_btn
+    return (run_test_btn,)
+
+
+@app.cell
+def _(
+    DetectionRunner,
+    catalog,
+    detection_rules,
+    mo,
+    run_test_btn,
+    test_lookback,
+    test_rule_select,
+):
+    test_result_output = mo.md("_Click 'Run Detection Test' to execute_")
+
+    if run_test_btn.value and detection_rules:
+        try:
+            connector = catalog.get_connector("cloudtrail")
+            runner = DetectionRunner(connector)
+
+            rule = next(
+                (r for r in detection_rules if r.metadata.id == test_rule_select.value),
+                None,
+            )
+
+            if rule:
+                test_result = runner.run_rule(rule, lookback_minutes=test_lookback.value)
+
+                status_color = "red" if test_result.triggered else "green"
+                result_items = [
+                    mo.md(f"**Rule:** {test_result.rule_name}"),
+                    mo.md(
+                        f"**Triggered:** <span style='color:{status_color}'>{test_result.triggered}</span>"
+                    ),
+                    mo.md(f"**Severity:** {test_result.severity}"),
+                    mo.md(f"**Match Count:** {test_result.match_count}"),
+                    mo.md(f"**Execution Time:** {test_result.execution_time_ms:.0f}ms"),
+                ]
+
+                if test_result.error:
+                    result_items.append(mo.md(f"**Error:** {test_result.error}"))
+
+                if (
+                    test_result.triggered
+                    and test_result.matched_events is not None
+                    and len(test_result.matched_events) > 0
+                ):
+                    result_items.append(mo.md("**Sample Matches:**"))
+                    result_items.append(
+                        mo.ui.table(test_result.matched_events.head(10).to_pandas())
+                    )
+
+                test_result_output = mo.vstack(result_items)
+            else:
+                test_result_output = mo.md("_Rule not found_")
+
+        except Exception as e:
+            test_result_output = mo.md(f"**Test Error:** {e}")
+
+    test_result_output
+    return (test_result_output,)
+
+
+# =============================================================================
+# AI-Assisted Rule Generation (Bedrock)
+# =============================================================================
+
+
+@app.cell
+def _(mo):
+    mo.md(
+        """
+        ## AI-Assisted Rule Generation
+
+        Use Amazon Bedrock (Claude) to generate detection rules from natural language.
+
+        **Note:** Requires Bedrock access in your AWS account.
+        """
+    )
+    return
+
+
+@app.cell
+def _(mo):
+    ai_description = mo.ui.text_area(
+        value="Detect when an IAM user creates access keys for another user, which could indicate privilege escalation",
+        label="Describe what you want to detect",
+        full_width=True,
+        rows=3,
+    )
+    ai_description
+    return (ai_description,)
+
+
+@app.cell
+def _(mo):
+    from secdashboards.ai import BedrockModel
+
+    ai_model = mo.ui.dropdown(
+        options=[
+            ("Claude 3.5 Sonnet (Recommended)", BedrockModel.CLAUDE_3_5_SONNET.value),
+            ("Claude 3.5 Haiku (Fast/Cheap)", BedrockModel.CLAUDE_3_5_HAIKU.value),
+            ("Claude 3 Opus (Most Capable)", BedrockModel.CLAUDE_3_OPUS.value),
+        ],
+        value=BedrockModel.CLAUDE_3_5_SONNET.value,
+        label="Model",
+    )
+    ai_model
+    return BedrockModel, ai_model
+
+
+@app.cell
+def _(BedrockModel, ai_model, mo):
+    from secdashboards.ai import get_pricing
+
+    selected_model = BedrockModel(ai_model.value)
+    pricing = get_pricing(selected_model)
+
+    # Estimate for typical rule generation
+    est_input = 3000  # System prompt + user message
+    est_output = 1500  # YAML rule output
+    est_cost = pricing.estimate_cost(est_input, est_output)
+
+    mo.md(
+        f"""
+        **Estimated Cost:** ~${est_cost:.4f}
+        ({pricing.input_price_per_1k:.4f}/1k input, {pricing.output_price_per_1k:.4f}/1k output)
+        """
+    )
+    return est_cost, est_input, est_output, get_pricing, pricing, selected_model
+
+
+@app.cell
+def _(mo):
+    generate_btn = mo.ui.run_button(label="Generate Detection Rule")
+    generate_btn
+    return (generate_btn,)
+
+
+@app.cell
+def _(ai_description, ai_model, generate_btn, mo, region):
+    ai_result = mo.md("_Click 'Generate Detection Rule' to use AI_")
+
+    if generate_btn.value and ai_description.value:
+        try:
+            from secdashboards.ai import BedrockAssistant, BedrockModel, TaskConfig
+
+            assistant = BedrockAssistant(region=region)
+            config = TaskConfig(model=BedrockModel(ai_model.value))
+
+            response = assistant.generate_detection_rule(
+                ai_description.value,
+                context=f"Target region: {region}",
+                config=config,
+            )
+
+            ai_result = mo.vstack(
+                [
+                    mo.md(f"**Cost:** ${response.cost_usd:.4f}"),
+                    mo.md(f"**Tokens:** {response.input_tokens} in / {response.output_tokens} out"),
+                    mo.md(f"**Latency:** {response.latency_ms:.0f}ms"),
+                    mo.md("---"),
+                    mo.md("**Generated Rule:**"),
+                    mo.ui.code_editor(value=response.content, language="yaml", min_height=300),
+                ]
+            )
+        except Exception as e:
+            ai_result = mo.md(f"**Error:** {e}")
+
+    ai_result
+    return (ai_result,)
+
+
+if __name__ == "__main__":
+    app.run()
