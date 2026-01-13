@@ -402,3 +402,159 @@ class TestReportTypes:
         assert ReportType.INVESTIGATION == "investigation"
         assert ReportType.DETECTION == "detection"
         assert ReportType.EXECUTIVE_SUMMARY == "executive_summary"
+
+
+class TestExporters:
+    """Tests for high-level export functions."""
+
+    @pytest.fixture
+    def sample_graph(self):
+        """Create a sample SecurityGraph for testing."""
+        from secdashboards.graph import SecurityGraph
+        from secdashboards.graph.models import EdgeType, GraphEdge, GraphNode, NodeType
+
+        graph = SecurityGraph()
+
+        # Add sample nodes
+        graph.add_node(
+            GraphNode(
+                id="Principal:admin",
+                node_type=NodeType.PRINCIPAL,
+                label="admin",
+                properties={"user_name": "admin", "user_type": "IAMUser"},
+            )
+        )
+        graph.add_node(
+            GraphNode(
+                id="IPAddress:10.0.0.1",
+                node_type=NodeType.IP_ADDRESS,
+                label="10.0.0.1",
+                properties={"ip_address": "10.0.0.1", "is_internal": True},
+            )
+        )
+        graph.add_node(
+            GraphNode(
+                id="APIOperation:s3:GetObject",
+                node_type=NodeType.API_OPERATION,
+                label="s3:GetObject",
+                properties={"service": "s3", "operation": "GetObject"},
+            )
+        )
+
+        # Add sample edge
+        graph.add_edge(
+            GraphEdge(
+                id=GraphEdge.create_id(
+                    EdgeType.CALLED_API,
+                    "Principal:admin",
+                    "APIOperation:s3:GetObject",
+                ),
+                source_id="Principal:admin",
+                target_id="APIOperation:s3:GetObject",
+                edge_type=EdgeType.CALLED_API,
+            )
+        )
+
+        return graph
+
+    def test_graph_to_report_data(self, sample_graph) -> None:
+        """Test converting graph to report data."""
+        from secdashboards.reports import graph_to_report_data
+
+        report_data = graph_to_report_data(
+            graph=sample_graph,
+            investigation_id="TEST-001",
+            executive_summary="Test summary",
+            ai_analysis="AI findings here",
+        )
+
+        assert report_data.investigation_id == "TEST-001"
+        assert report_data.executive_summary == "Test summary"
+        assert report_data.ai_analysis == "AI findings here"
+        assert report_data.total_nodes == 3
+        assert report_data.total_edges == 1
+        assert len(report_data.entity_summaries) > 0
+        assert len(report_data.principals) == 1
+        assert len(report_data.ip_addresses) == 1
+        assert len(report_data.api_operations) == 1
+
+    def test_export_investigation_report(self, sample_graph, tmp_path: Path) -> None:
+        """Test exporting investigation report to file."""
+        from secdashboards.reports import export_investigation_report
+
+        output_path = tmp_path / "test_report.tex"
+
+        result = export_investigation_report(
+            graph=sample_graph,
+            output_path=output_path,
+            investigation_id="TEST-002",
+        )
+
+        assert result.exists()
+        content = result.read_text()
+        assert r"\documentclass" in content
+        assert "TEST-002" in content
+        assert "admin" in content
+
+    def test_detection_results_to_report_data(self) -> None:
+        """Test converting detection results to report data."""
+        from secdashboards.reports import detection_results_to_report_data
+
+        results = [
+            {
+                "rule_id": "rule-1",
+                "rule_name": "Test Rule 1",
+                "severity": "high",
+                "triggered": True,
+                "match_count": 5,
+            },
+            {
+                "rule_id": "rule-2",
+                "rule_name": "Test Rule 2",
+                "severity": "medium",
+                "triggered": False,
+                "match_count": 0,
+            },
+        ]
+
+        report_data = detection_results_to_report_data(
+            results=results,
+            mitre_techniques=["T1078", "T1110"],
+            test_summary="Test complete",
+        )
+
+        assert report_data.total_rules == 2
+        assert report_data.rules_triggered == 1
+        assert report_data.rules_by_severity["high"] == 1
+        assert report_data.rules_by_severity["medium"] == 1
+        assert len(report_data.detection_results) == 2
+        assert "T1078" in report_data.mitre_coverage
+
+    def test_export_detection_report(self, tmp_path: Path) -> None:
+        """Test exporting detection report to file."""
+        from secdashboards.reports import export_detection_report
+
+        results = [
+            {
+                "rule_id": "test-rule",
+                "rule_name": "Test Rule",
+                "severity": "high",
+                "triggered": True,
+                "match_count": 3,
+                "query": "SELECT * FROM events",
+            },
+        ]
+
+        output_path = tmp_path / "detection_report.tex"
+
+        result = export_detection_report(
+            results=results,
+            output_path=output_path,
+            mitre_techniques=["T1078"],
+        )
+
+        assert result.exists()
+        content = result.read_text()
+        assert r"\documentclass" in content
+        assert "test-rule" in content
+        assert "T1078" in content

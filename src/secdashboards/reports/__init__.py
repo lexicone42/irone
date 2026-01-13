@@ -27,6 +27,13 @@ Example usage:
     renderer.render_to_file(report, Path("output/report.tex"))
 """
 
+from .exporters import (
+    detection_results_to_report_data,
+    export_detection_report,
+    export_investigation_report,
+    graph_to_report_data,
+    save_graph_image,
+)
 from .latex_renderer import (
     LaTeXRenderer,
     escape_latex,
@@ -62,6 +69,12 @@ __all__ = [
     "TableData",
     # Renderer
     "LaTeXRenderer",
+    # Exporters
+    "detection_results_to_report_data",
+    "export_detection_report",
+    "export_investigation_report",
+    "graph_to_report_data",
+    "save_graph_image",
     # Utilities
     "escape_latex",
     "escape_latex_url",

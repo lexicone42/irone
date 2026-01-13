@@ -364,55 +364,141 @@ def _(mo):
         ## Export
 
         Export the investigation graph for reports or further analysis.
+
+        **Export Formats:**
+        - **JSON** - Raw graph data for programmatic use
+        - **LaTeX** - Professional report for documentation
         """
     )
     return
 
 
 @app.cell
-def _(graph, mo):
-    export_output = mo.md("")
+def _(mo):
+    export_format = mo.ui.dropdown(
+        options=["JSON", "LaTeX Report"],
+        value="JSON",
+        label="Export Format",
+    )
+    report_title = mo.ui.text(
+        value="Security Investigation Report",
+        label="Report Title (LaTeX only)",
+        full_width=True,
+    )
+    investigation_id_input = mo.ui.text(
+        value="",
+        label="Investigation ID (optional)",
+        placeholder="e.g., INC-2024-001",
+        full_width=True,
+    )
 
-    try:
-        if "graph" in dir() and graph.node_count() > 0:
-            # Prepare export data
-            export_data = {
-                "nodes": [
-                    {
-                        "id": n.id,
-                        "type": n.node_type.value,
-                        "label": n.label,
-                        "properties": n.properties,
-                    }
-                    for n in graph.nodes.values()
-                ],
-                "edges": [
-                    {
-                        "source": e.source_id,
-                        "target": e.target_id,
-                        "type": e.edge_type.value,
-                    }
-                    for e in graph.edges
-                ],
-            }
+    mo.vstack([export_format, report_title, investigation_id_input])
+    return export_format, investigation_id_input, report_title
 
-            import json
 
-            json_str = json.dumps(export_data, indent=2, default=str)
+@app.cell
+def _(mo):
+    export_btn = mo.ui.run_button(label="Generate Export")
+    export_btn
+    return (export_btn,)
 
-            export_output = mo.vstack(
-                [
-                    mo.md("**Graph JSON (copy for export):**"),
-                    mo.ui.code_editor(value=json_str, language="json", min_height=200),
-                ]
-            )
-        else:
+
+@app.cell
+def _(
+    analysis_output,
+    export_btn,
+    export_format,
+    graph,
+    investigation_id_input,
+    mo,
+    report_title,
+):
+    export_output = mo.md("_Build a graph first, then click 'Generate Export'_")
+
+    if export_btn.value:
+        try:
+            if "graph" not in dir() or graph.node_count() == 0:
+                export_output = mo.md("_Please build an investigation graph first_")
+            elif export_format.value == "JSON":
+                # JSON export
+                import json
+
+                export_data = {
+                    "nodes": [
+                        {
+                            "id": n.id,
+                            "type": n.node_type.value,
+                            "label": n.label,
+                            "properties": n.properties,
+                        }
+                        for n in graph.nodes.values()
+                    ],
+                    "edges": [
+                        {
+                            "source": e.source_id,
+                            "target": e.target_id,
+                            "type": e.edge_type.value,
+                        }
+                        for e in graph.edges
+                    ],
+                }
+
+                json_str = json.dumps(export_data, indent=2, default=str)
+
+                export_output = mo.vstack(
+                    [
+                        mo.md("**Graph JSON (copy for export):**"),
+                        mo.ui.code_editor(
+                            value=json_str, language="json", min_height=200
+                        ),
+                    ]
+                )
+            else:
+                # LaTeX export
+                from secdashboards.reports import (
+                    LaTeXRenderer,
+                    graph_to_report_data,
+                )
+
+                # Get AI analysis if available
+                ai_text = ""
+                try:
+                    if "analysis_output" in dir() and analysis_output:
+                        # Extract text content from analysis output
+                        ai_text = str(analysis_output)
+                except Exception:
+                    pass
+
+                report_data = graph_to_report_data(
+                    graph=graph,
+                    investigation_id=investigation_id_input.value,
+                    ai_analysis=ai_text,
+                )
+                report_data.title = report_title.value
+
+                renderer = LaTeXRenderer()
+                latex_content = renderer.render_investigation_report(report_data)
+
+                export_output = mo.vstack(
+                    [
+                        mo.md("**LaTeX Report (copy and compile with pdflatex):**"),
+                        mo.ui.code_editor(
+                            value=latex_content, language="latex", min_height=400
+                        ),
+                        mo.md(
+                            "_Tip: Save as .tex file and compile with "
+                            "`pdflatex report.tex`_"
+                        ),
+                    ]
+                )
+
+        except NameError:
             export_output = mo.md("_Build a graph to enable export_")
-    except NameError:
-        export_output = mo.md("_Build a graph to enable export_")
+        except Exception as e:
+            export_output = mo.md(f"**Export Error:** {e}")
 
     export_output
-    return export_data, export_output, json_str
+    return (export_output,)
 
 
 if __name__ == "__main__":
