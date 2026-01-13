@@ -44,6 +44,17 @@ def _():
     from secdashboards.connectors.security_lake import OCSFEventClass
     from secdashboards.detections.rule import DetectionMetadata, Severity, SQLDetectionRule
     from secdashboards.detections.runner import DetectionRunner
+    from secdashboards.graph import (
+        EdgeType,
+        GraphEdge,
+        GraphVisualizer,
+        IPAddressNode,
+        NeptuneConnector,
+        NodeType,
+        PrincipalNode,
+        SecurityFindingNode,
+        SecurityGraph,
+    )
 
     return (
         DataCatalog,
@@ -51,8 +62,17 @@ def _():
         DataSourceType,
         DetectionMetadata,
         DetectionRunner,
+        EdgeType,
+        GraphEdge,
+        GraphVisualizer,
+        IPAddressNode,
+        NeptuneConnector,
+        NodeType,
         OCSFEventClass,
         Path,
+        PrincipalNode,
+        SecurityFindingNode,
+        SecurityGraph,
         SQLDetectionRule,
         Severity,
         UTC,
@@ -108,6 +128,69 @@ def _(DataCatalog, DataSource, DataSourceType, region_input):
         )
     )
     return catalog, region, region_underscore
+
+
+@app.cell
+def _(mo):
+    mo.md("""
+    ### Neptune Graph Database (Optional)
+
+    Configure Neptune to persist detection findings as security knowledge graph.
+    Leave endpoint empty to skip Neptune integration.
+    """)
+    return
+
+
+@app.cell
+def _(mo):
+    neptune_endpoint = mo.ui.text(
+        value="",
+        label="Neptune Endpoint",
+        placeholder="my-cluster.xxx.us-west-2.neptune.amazonaws.com",
+        full_width=True,
+    )
+    neptune_port = mo.ui.number(
+        value=8182,
+        start=1,
+        stop=65535,
+        label="Neptune Port",
+    )
+    neptune_iam_auth = mo.ui.checkbox(
+        value=True,
+        label="Use IAM Authentication",
+    )
+
+    mo.hstack([neptune_endpoint, neptune_port, neptune_iam_auth])
+    return neptune_endpoint, neptune_iam_auth, neptune_port
+
+
+@app.cell
+def _(NeptuneConnector, mo, neptune_endpoint, neptune_iam_auth, neptune_port, region):
+    neptune_status = mo.md("_Neptune not configured_")
+    neptune_connector = None
+
+    if neptune_endpoint.value:
+        try:
+            neptune_connector = NeptuneConnector(
+                endpoint=neptune_endpoint.value,
+                port=int(neptune_port.value),
+                region=region,
+                use_iam_auth=neptune_iam_auth.value,
+            )
+            health = neptune_connector.check_health()
+            if health["status"] == "healthy":
+                neptune_status = mo.md(
+                    f"**Neptune:** Connected to `{neptune_endpoint.value}`"
+                )
+            else:
+                neptune_status = mo.md(
+                    f"**Neptune:** Connection failed - {health.get('error', 'Unknown error')}"
+                )
+        except Exception as e:
+            neptune_status = mo.md(f"**Neptune:** Error - {e}")
+
+    neptune_status
+    return (neptune_connector,)
 
 
 # =============================================================================
@@ -725,6 +808,426 @@ def _(
 
     export_output
     return (export_output,)
+
+
+# =============================================================================
+# Neptune Graph Persistence
+# =============================================================================
+
+
+@app.cell
+def _(mo):
+    mo.md("""
+    ## Neptune Graph Persistence
+
+    Save detection findings to Neptune and build investigation graphs
+    from triggered detections.
+
+    **Benefits:**
+    - Track detection history over time
+    - Build security knowledge graphs from alerts
+    - Link findings to entities (users, IPs, APIs)
+    - Query historical detection data
+    """)
+    return
+
+
+@app.cell
+def _(mo):
+    mo.md("""
+    ### Save Detection Finding
+
+    Save a triggered detection as a SecurityFinding node in Neptune.
+    This creates a graph linking the finding to related entities.
+    """)
+    return
+
+
+@app.cell
+def _(detection_rules, mo):
+    save_rule_options = (
+        [r.metadata.id for r in detection_rules] if detection_rules else ["(create a rule first)"]
+    )
+    save_rule_select = mo.ui.dropdown(
+        options=save_rule_options,
+        value=save_rule_options[0] if save_rule_options else None,
+        label="Detection Rule",
+    )
+    save_lookback = mo.ui.slider(
+        start=15,
+        stop=1440,
+        value=60,
+        label="Lookback (minutes)",
+    )
+
+    mo.hstack([save_rule_select, save_lookback])
+    return save_lookback, save_rule_options, save_rule_select
+
+
+@app.cell
+def _(mo):
+    save_finding_btn = mo.ui.run_button(label="Run Detection & Save to Neptune")
+    save_finding_btn
+    return (save_finding_btn,)
+
+
+@app.cell
+def _(
+    DetectionRunner,
+    EdgeType,
+    GraphEdge,
+    GraphVisualizer,
+    IPAddressNode,
+    PrincipalNode,
+    SecurityFindingNode,
+    SecurityGraph,
+    catalog,
+    datetime,
+    detection_rules,
+    mo,
+    neptune_connector,
+    save_finding_btn,
+    save_lookback,
+    save_rule_select,
+    UTC,
+):
+    save_finding_output = mo.md(
+        "_Configure Neptune and select a rule, then click 'Run Detection & Save to Neptune'_"
+    )
+    detection_graph = None
+
+    if save_finding_btn.value:
+        try:
+            if neptune_connector is None:
+                save_finding_output = mo.md(
+                    "**Error:** Neptune not configured. Enter endpoint above."
+                )
+            elif not detection_rules:
+                save_finding_output = mo.md("**Error:** Create a detection rule first.")
+            else:
+                rule = next(
+                    (r for r in detection_rules if r.metadata.id == save_rule_select.value),
+                    None,
+                )
+
+                if rule:
+                    # Run the detection
+                    connector = catalog.get_connector("cloudtrail")
+                    runner = DetectionRunner(connector)
+                    result = runner.run_rule(rule, lookback_minutes=save_lookback.value)
+
+                    # Create a graph with the finding
+                    detection_graph = SecurityGraph()
+
+                    # Create finding node
+                    finding_node = SecurityFindingNode(
+                        id=SecurityFindingNode.create_id(
+                            rule.metadata.id, datetime.now(UTC)
+                        ),
+                        label=f"{rule.metadata.name}",
+                        rule_id=rule.metadata.id,
+                        rule_name=rule.metadata.name,
+                        severity=rule.metadata.severity.value,
+                        triggered=result.triggered,
+                        match_count=result.match_count,
+                        event_count=result.match_count,
+                    )
+                    detection_graph.add_node(finding_node)
+
+                    # If triggered and we have matched events, extract entities
+                    if result.triggered and result.matched_events is not None:
+                        # Extract unique users and IPs from matched events
+                        users = set()
+                        ips = set()
+
+                        for row in result.matched_events.iter_rows(named=True):
+                            # Try various column names for user
+                            user = row.get("user_name") or row.get("name")
+                            if user:
+                                users.add(str(user))
+
+                            # Try various column names for IP
+                            ip = row.get("source_ip") or row.get("ip") or row.get("src_ip")
+                            if ip:
+                                ips.add(str(ip))
+
+                        # Add principal nodes and edges
+                        for user in list(users)[:10]:
+                            principal = PrincipalNode(
+                                id=PrincipalNode.create_id(user),
+                                label=user,
+                                user_name=user,
+                                event_count=1,
+                            )
+                            detection_graph.add_node(principal)
+                            # Link finding to principal
+                            edge = GraphEdge(
+                                id=GraphEdge.create_id(
+                                    EdgeType.RELATED_TO, finding_node.id, principal.id
+                                ),
+                                edge_type=EdgeType.RELATED_TO,
+                                source_id=finding_node.id,
+                                target_id=principal.id,
+                            )
+                            detection_graph.add_edge(edge)
+
+                        # Add IP nodes and edges
+                        for ip in list(ips)[:10]:
+                            ip_node = IPAddressNode(
+                                id=IPAddressNode.create_id(ip),
+                                label=ip,
+                                ip_address=ip,
+                                is_internal=ip.startswith(("10.", "172.", "192.168.")),
+                                event_count=1,
+                            )
+                            detection_graph.add_node(ip_node)
+                            # Link finding to IP
+                            edge = GraphEdge(
+                                id=GraphEdge.create_id(
+                                    EdgeType.RELATED_TO, finding_node.id, ip_node.id
+                                ),
+                                edge_type=EdgeType.RELATED_TO,
+                                source_id=finding_node.id,
+                                target_id=ip_node.id,
+                            )
+                            detection_graph.add_edge(edge)
+
+                    # Save to Neptune
+                    count = neptune_connector.save_graph(detection_graph)
+
+                    # Build output
+                    status_color = "red" if result.triggered else "green"
+                    output_items = [
+                        mo.md("**Detection executed and saved to Neptune!**"),
+                        mo.md("---"),
+                        mo.md(f"**Rule:** {result.rule_name}"),
+                        mo.md(
+                            f"**Triggered:** <span style='color:{status_color}'>"
+                            f"{result.triggered}</span>"
+                        ),
+                        mo.md(f"**Match Count:** {result.match_count}"),
+                        mo.md(f"**Entities Saved:** {count}"),
+                        mo.md(f"**Finding ID:** `{finding_node.id}`"),
+                    ]
+
+                    if detection_graph.node_count() > 1:
+                        visualizer = GraphVisualizer(height="500px")
+                        html = visualizer.to_html(detection_graph)
+                        output_items.append(mo.md("---"))
+                        output_items.append(mo.md("**Detection Graph:**"))
+                        output_items.append(mo.Html(html))
+
+                    save_finding_output = mo.vstack(output_items)
+                else:
+                    save_finding_output = mo.md("_Rule not found_")
+
+        except Exception as e:
+            save_finding_output = mo.md(f"**Error:** {e}")
+
+    save_finding_output
+    return (detection_graph,)
+
+
+@app.cell
+def _(mo):
+    mo.md("""
+    ### Search Detection Findings
+
+    Search for historical detection findings stored in Neptune.
+    """)
+    return
+
+
+@app.cell
+def _(mo):
+    search_severity_filter = mo.ui.dropdown(
+        options=[
+            ("All Severities", ""),
+            ("Critical", "critical"),
+            ("High", "high"),
+            ("Medium", "medium"),
+            ("Low", "low"),
+        ],
+        value="",
+        label="Severity Filter",
+    )
+    search_findings_limit = mo.ui.slider(
+        start=10,
+        stop=100,
+        value=25,
+        label="Max Results",
+    )
+
+    mo.hstack([search_severity_filter, search_findings_limit])
+    return search_findings_limit, search_severity_filter
+
+
+@app.cell
+def _(mo):
+    search_findings_btn = mo.ui.run_button(label="Search Findings in Neptune")
+    search_findings_btn
+    return (search_findings_btn,)
+
+
+@app.cell
+def _(
+    NodeType,
+    mo,
+    neptune_connector,
+    search_findings_btn,
+    search_findings_limit,
+    search_severity_filter,
+):
+    search_findings_output = mo.md("_Configure Neptune to enable search_")
+
+    if search_findings_btn.value:
+        try:
+            if neptune_connector is None:
+                search_findings_output = mo.md(
+                    "**Error:** Neptune not configured. Enter endpoint above."
+                )
+            else:
+                # Search for SecurityFinding nodes
+                properties = {}
+                if search_severity_filter.value:
+                    properties["severity"] = search_severity_filter.value
+
+                findings = neptune_connector.find_nodes(
+                    node_type=NodeType.SECURITY_FINDING,
+                    properties=properties if properties else None,
+                    limit=search_findings_limit.value,
+                )
+
+                if findings:
+                    # Build a table of results
+                    rows = []
+                    for node in findings:
+                        triggered = node.properties.get("triggered", False)
+                        status = "TRIGGERED" if triggered else "OK"
+                        status_style = "color:red" if triggered else "color:green"
+                        rows.append(
+                            f"| `{node.id}` | {node.properties.get('rule_name', node.label)} | "
+                            f"{node.properties.get('severity', 'unknown')} | "
+                            f"<span style='{status_style}'>{status}</span> | "
+                            f"{node.properties.get('match_count', 0)} |"
+                        )
+
+                    table = (
+                        "| Finding ID | Rule | Severity | Status | Matches |\n"
+                        "|------------|------|----------|--------|--------|\n"
+                        + "\n".join(rows)
+                    )
+
+                    search_findings_output = mo.vstack(
+                        [
+                            mo.md(f"**Found {len(findings)} detection findings:**"),
+                            mo.md(table),
+                        ]
+                    )
+                else:
+                    search_findings_output = mo.md("_No findings found in Neptune_")
+
+        except Exception as e:
+            search_findings_output = mo.md(f"**Search Error:** {e}")
+
+    search_findings_output
+    return
+
+
+@app.cell
+def _(mo):
+    mo.md("""
+    ### Load Finding Graph
+
+    Load an investigation graph centered on a detection finding.
+    """)
+    return
+
+
+@app.cell
+def _(mo):
+    load_finding_id = mo.ui.text(
+        value="",
+        label="Finding ID",
+        placeholder="e.g., Finding:detect-root-login:2024-01-13T...",
+        full_width=True,
+    )
+    load_finding_depth = mo.ui.slider(
+        start=1,
+        stop=5,
+        value=2,
+        label="Traversal Depth",
+    )
+
+    mo.hstack([load_finding_id, load_finding_depth])
+    return load_finding_depth, load_finding_id
+
+
+@app.cell
+def _(mo):
+    load_finding_btn = mo.ui.run_button(label="Load Finding Graph")
+    load_finding_btn
+    return (load_finding_btn,)
+
+
+@app.cell
+def _(
+    GraphVisualizer,
+    load_finding_btn,
+    load_finding_depth,
+    load_finding_id,
+    mo,
+    neptune_connector,
+):
+    load_finding_output = mo.md("_Enter a finding ID and click 'Load Finding Graph'_")
+
+    if load_finding_btn.value:
+        try:
+            if neptune_connector is None:
+                load_finding_output = mo.md(
+                    "**Error:** Neptune not configured. Enter endpoint above."
+                )
+            elif not load_finding_id.value:
+                load_finding_output = mo.md("**Error:** Enter a finding ID to load")
+            else:
+                loaded_graph = neptune_connector.load_graph(
+                    center_node_id=load_finding_id.value,
+                    depth=load_finding_depth.value,
+                )
+
+                if loaded_graph.node_count() > 0:
+                    visualizer = GraphVisualizer(height="600px")
+                    html = visualizer.to_html(loaded_graph)
+                    summary = loaded_graph.summary()
+
+                    load_finding_output = mo.vstack(
+                        [
+                            mo.md("**Finding graph loaded from Neptune!**"),
+                            mo.md(
+                                f"**Summary:** {summary['total_nodes']} nodes, "
+                                f"{summary['total_edges']} edges"
+                            ),
+                            mo.md(
+                                f"**Node Types:** "
+                                + ", ".join(
+                                    f"{k}: {v}"
+                                    for k, v in summary["nodes_by_type"].items()
+                                )
+                            ),
+                            mo.Html(html),
+                            visualizer.generate_legend_html(),
+                        ]
+                    )
+                else:
+                    load_finding_output = mo.md(
+                        f"_No graph found for finding ID: {load_finding_id.value}_"
+                    )
+
+        except Exception as e:
+            load_finding_output = mo.md(f"**Load Error:** {e}")
+
+    load_finding_output
+    return
 
 
 if __name__ == "__main__":
