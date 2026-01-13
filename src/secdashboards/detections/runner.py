@@ -2,7 +2,7 @@
 
 import importlib
 import sys
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -64,7 +64,7 @@ class DetectionRunner:
             )
 
         # Set time window
-        end = end or datetime.utcnow()
+        end = end or datetime.now(UTC)
         start = start or (end - timedelta(minutes=lookback_minutes))
 
         try:

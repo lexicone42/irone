@@ -1,0 +1,109 @@
+\documentclass[11pt,a4paper]{article}
+
+% Packages
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage[margin=1in]{geometry}
+\usepackage{graphicx}
+\usepackage{longtable}
+\usepackage{booktabs}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage{fancyhdr}
+\usepackage{titlesec}
+\usepackage{enumitem}
+\usepackage{float}
+
+% Colors
+\definecolor{codegreen}{rgb}{0,0.6,0}
+\definecolor{codegray}{rgb}{0.5,0.5,0.5}
+\definecolor{codepurple}{rgb}{0.58,0,0.82}
+\definecolor{backcolour}{rgb}{0.95,0.95,0.95}
+\definecolor{secblue}{RGB}{45,85,145}
+\definecolor{alertred}{RGB}{200,50,50}
+\definecolor{warningorange}{RGB}{230,150,50}
+
+% Code listing style
+\lstdefinestyle{sqlstyle}{
+    backgroundcolor=\color{backcolour},
+    commentstyle=\color{codegreen},
+    keywordstyle=\color{secblue}\bfseries,
+    numberstyle=\tiny\color{codegray},
+    stringstyle=\color{codepurple},
+    basicstyle=\ttfamily\small,
+    breakatwhitespace=false,
+    breaklines=true,
+    captionpos=b,
+    keepspaces=true,
+    numbers=left,
+    numbersep=5pt,
+    showspaces=false,
+    showstringspaces=false,
+    showtabs=false,
+    tabsize=2,
+    frame=single,
+    rulecolor=\color{codegray},
+}
+
+\lstset{style=sqlstyle}
+
+% SQL language definition
+\lstdefinelanguage{sql}{
+    keywords={SELECT, FROM, WHERE, AND, OR, NOT, IN, LIKE, BETWEEN, JOIN, LEFT, RIGHT, INNER, OUTER, ON, AS, GROUP, BY, ORDER, HAVING, LIMIT, OFFSET, INSERT, UPDATE, DELETE, CREATE, DROP, ALTER, TABLE, INDEX, VIEW, UNION, ALL, DISTINCT, CASE, WHEN, THEN, ELSE, END, NULL, IS, TRUE, FALSE, COUNT, SUM, AVG, MIN, MAX, COALESCE, CAST, TIMESTAMP, DATE, TIME},
+    sensitive=false,
+    morecomment=[l]{--},
+    morecomment=[s]{/*}{*/},
+    morestring=[b]',
+    morestring=[b]",
+}
+
+% Hyperref setup
+\hypersetup{
+    colorlinks=true,
+    linkcolor=secblue,
+    filecolor=secblue,
+    urlcolor=secblue,
+    citecolor=secblue,
+    pdftitle={\VAR{title|escape_latex}},
+    pdfauthor={\VAR{author|escape_latex}},
+}
+
+% Header/Footer
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{\small\textcolor{codegray}{\VAR{title|escape_latex}}}
+\fancyhead[R]{\small\textcolor{codegray}{\VAR{generated_at.strftime('%Y-%m-%d %H:%M UTC')}}}
+\fancyfoot[C]{\thepage}
+\renewcommand{\headrulewidth}{0.4pt}
+\renewcommand{\footrulewidth}{0.4pt}
+
+% Section formatting
+\titleformat{\section}
+    {\Large\bfseries\color{secblue}}
+    {\thesection}{1em}{}
+\titleformat{\subsection}
+    {\large\bfseries\color{secblue!80}}
+    {\thesubsection}{1em}{}
+
+% Title
+\title{
+    \textcolor{secblue}{\textbf{\VAR{title|escape_latex}}}
+    \BLOCK{if subtitle}
+    \\[0.3em]\large\textcolor{codegray}{\VAR{subtitle|escape_latex}}
+    \BLOCK{endif}
+}
+\author{\VAR{author|escape_latex}}
+\date{\VAR{generated_at.strftime('%B %d, %Y')}}
+
+\begin{document}
+
+\maketitle
+\thispagestyle{fancy}
+
+\BLOCK{block content}
+% Content goes here - override in child templates
+\BLOCK{endblock}
+
+\end{document}

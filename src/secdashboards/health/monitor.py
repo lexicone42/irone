@@ -1,7 +1,7 @@
 """Health monitoring for data sources and detections."""
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 import structlog
@@ -17,7 +17,7 @@ logger = structlog.get_logger()
 class HealthReport:
     """Comprehensive health report for data sources and detections."""
 
-    generated_at: datetime = field(default_factory=datetime.utcnow)
+    generated_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     source_health: list[HealthCheckResult] = field(default_factory=list)
     detection_status: list[dict[str, Any]] = field(default_factory=list)
     overall_healthy: bool = True
@@ -142,7 +142,7 @@ class HealthMonitor:
     def get_freshness_summary(self) -> dict[str, Any]:
         """Get a summary of data freshness across all sources."""
         summary: dict[str, Any] = {
-            "checked_at": datetime.utcnow().isoformat(),
+            "checked_at": datetime.now(UTC).isoformat(),
             "sources": {},
         }
 

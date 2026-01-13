@@ -61,7 +61,7 @@ class URLAnalyzer:
         headers: dict[str, str] | None = None,
     ) -> dict[str, Any]:
         """Check if a URL endpoint is healthy and returning expected data."""
-        start_time = datetime.utcnow()
+        start_time = datetime.now(UTC)
         result: dict[str, Any] = {
             "url": url,
             "checked_at": start_time.isoformat(),
@@ -72,7 +72,7 @@ class URLAnalyzer:
 
         try:
             response = self.client.get(url, headers=headers)
-            result["response_time_ms"] = (datetime.utcnow() - start_time).total_seconds() * 1000
+            result["response_time_ms"] = (datetime.now(UTC) - start_time).total_seconds() * 1000
             result["status_code"] = response.status_code
 
             if response.status_code != 200:
@@ -127,7 +127,7 @@ class URLAnalyzer:
         """Analyze data freshness from a URL endpoint."""
         result: dict[str, Any] = {
             "url": url,
-            "checked_at": datetime.utcnow().isoformat(),
+            "checked_at": datetime.now(UTC).isoformat(),
             "healthy": False,
             "time_field": time_field,
         }

@@ -1,7 +1,7 @@
 """Base connector interface for data sources."""
 
 from abc import ABC, abstractmethod
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import polars as pl
@@ -61,7 +61,7 @@ class DataConnector(ABC):
         columns: list[str] | None = None,
     ) -> pl.DataFrame:
         """Get data from the last N minutes."""
-        end = datetime.utcnow()
+        end = datetime.now(UTC)
         start = end - timedelta(minutes=minutes)
         return self.query_time_range(time_column, start, end, columns)
 
@@ -86,14 +86,14 @@ class HealthCheckResult:
         self.latency_seconds = latency_seconds
         self.error = error
         self.details = details or {}
-        self.checked_at = datetime.utcnow()
+        self.checked_at = datetime.now(UTC)
 
     @property
     def data_age_minutes(self) -> float | None:
         """Get the age of the most recent data in minutes."""
         if not self.last_data_time:
             return None
-        delta = datetime.utcnow() - self.last_data_time
+        delta = datetime.now(UTC) - self.last_data_time
         return delta.total_seconds() / 60
 
     def to_dict(self) -> dict[str, Any]:

@@ -2,7 +2,7 @@
 
 import io
 import time
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 import boto3
@@ -132,7 +132,7 @@ class AthenaConnector(DataConnector):
             # Determine health based on freshness
             healthy = True
             if last_time:
-                delta = datetime.utcnow() - last_time.replace(tzinfo=None)
+                delta = datetime.now(UTC) - last_time.replace(tzinfo=None)
                 age_minutes = delta.total_seconds() / 60
                 healthy = age_minutes <= self.source.expected_freshness_minutes
 

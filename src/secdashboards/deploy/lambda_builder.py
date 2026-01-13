@@ -16,7 +16,7 @@ LAMBDA_HANDLER_TEMPLATE = '''"""Auto-generated Lambda handler for detection: {{ 
 
 import json
 import os
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
 import boto3
 
@@ -88,7 +88,7 @@ def handler(event, context):
     sns_topic_arn = os.environ.get("SNS_TOPIC_ARN")
 
     # Calculate time window
-    end_time = datetime.utcnow()
+    end_time = datetime.now(UTC)
     start_time = end_time - timedelta(minutes=LOOKBACK_MINUTES)
 
     # Render query
@@ -123,7 +123,7 @@ def handler(event, context):
                     "end": end_time.isoformat(),
                 },
                 "sample_matches": results[:5],
-                "triggered_at": datetime.utcnow().isoformat(),
+                "triggered_at": datetime.now(UTC).isoformat(),
             }
 
             sns.publish(

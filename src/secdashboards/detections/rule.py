@@ -1,7 +1,7 @@
 """Detection rule definitions and models."""
 
 from abc import ABC, abstractmethod
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any
 
@@ -29,7 +29,7 @@ class DetectionResult(BaseModel):
     match_count: int = 0
     matches: list[dict[str, Any]] = Field(default_factory=list)
     message: str = ""
-    executed_at: datetime = Field(default_factory=datetime.utcnow)
+    executed_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     execution_time_ms: float = 0.0
     error: str | None = None
 
@@ -59,8 +59,8 @@ class DetectionMetadata(BaseModel):
     data_sources: list[str] = Field(default_factory=list, description="Required data source names")
     schedule: str = Field(default="rate(5 minutes)", description="CloudWatch schedule expression")
     enabled: bool = Field(default=True)
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
 class DetectionRule(ABC):
@@ -142,7 +142,7 @@ class SQLDetectionRule(DetectionRule):
 
     def evaluate(self, df: pl.DataFrame) -> DetectionResult:
         """Evaluate if detection threshold is met."""
-        start_time = datetime.utcnow()
+        start_time = datetime.now(UTC)
 
         match_count = len(df)
         triggered = match_count >= self.threshold
@@ -162,7 +162,7 @@ class SQLDetectionRule(DetectionRule):
                 f"({match_count} matches, threshold: {self.threshold})"
             )
 
-        execution_time = (datetime.utcnow() - start_time).total_seconds() * 1000
+        execution_time = (datetime.now(UTC) - start_time).total_seconds() * 1000
 
         return DetectionResult(
             rule_id=self.id,
