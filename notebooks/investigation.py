@@ -43,6 +43,7 @@ def _():
     from secdashboards.graph import (
         GraphBuilder,
         GraphVisualizer,
+        NeptuneConnector,
         SecurityGraph,
     )
     return (
@@ -51,6 +52,7 @@ def _():
         DataSourceType,
         GraphBuilder,
         GraphVisualizer,
+        NeptuneConnector,
     )
 
 
@@ -97,6 +99,69 @@ def _(DataCatalog, DataSource, DataSourceType, region_input):
         )
     )
     return catalog, region
+
+
+@app.cell
+def _(mo):
+    mo.md("""
+    ### Neptune Graph Database (Optional)
+
+    Configure Neptune to persist investigation graphs for later retrieval.
+    Leave endpoint empty to skip Neptune integration.
+    """)
+    return
+
+
+@app.cell
+def _(mo):
+    neptune_endpoint = mo.ui.text(
+        value="",
+        label="Neptune Endpoint",
+        placeholder="my-cluster.xxx.us-west-2.neptune.amazonaws.com",
+        full_width=True,
+    )
+    neptune_port = mo.ui.number(
+        value=8182,
+        start=1,
+        stop=65535,
+        label="Neptune Port",
+    )
+    neptune_iam_auth = mo.ui.checkbox(
+        value=True,
+        label="Use IAM Authentication",
+    )
+
+    mo.hstack([neptune_endpoint, neptune_port, neptune_iam_auth])
+    return neptune_endpoint, neptune_iam_auth, neptune_port
+
+
+@app.cell
+def _(NeptuneConnector, mo, neptune_endpoint, neptune_iam_auth, neptune_port, region):
+    neptune_status = mo.md("_Neptune not configured_")
+    neptune_connector = None
+
+    if neptune_endpoint.value:
+        try:
+            neptune_connector = NeptuneConnector(
+                endpoint=neptune_endpoint.value,
+                port=int(neptune_port.value),
+                region=region,
+                use_iam_auth=neptune_iam_auth.value,
+            )
+            health = neptune_connector.check_health()
+            if health["status"] == "healthy":
+                neptune_status = mo.md(
+                    f"**Neptune:** Connected to `{neptune_endpoint.value}`"
+                )
+            else:
+                neptune_status = mo.md(
+                    f"**Neptune:** Connection failed - {health.get('error', 'Unknown error')}"
+                )
+        except Exception as e:
+            neptune_status = mo.md(f"**Neptune:** Error - {e}")
+
+    neptune_status
+    return (neptune_connector,)
 
 
 @app.cell
@@ -532,6 +597,266 @@ def _(
             export_output = mo.md(f"**Export Error:** {e}")
 
     export_output
+    return
+
+
+@app.cell
+def _(mo):
+    mo.md("""
+    ## Neptune Graph Persistence
+
+    Save investigation graphs to Neptune for future retrieval, or load
+    previously saved graphs.
+
+    **Benefits:**
+    - Persist graphs across sessions
+    - Share investigations with team members
+    - Build comprehensive security knowledge graphs
+    - Query historical investigation data
+    """)
+    return
+
+
+@app.cell
+def _(mo):
+    save_graph_btn = mo.ui.run_button(label="Save Graph to Neptune")
+    save_graph_btn
+    return (save_graph_btn,)
+
+
+@app.cell
+def _(graph, mo, neptune_connector, save_graph_btn):
+    save_output = mo.md("_Build a graph and configure Neptune to enable saving_")
+
+    if save_graph_btn.value:
+        try:
+            if neptune_connector is None:
+                save_output = mo.md(
+                    "**Error:** Neptune not configured. Enter endpoint above."
+                )
+            elif "graph" not in dir() or graph.node_count() == 0:
+                save_output = mo.md("**Error:** No graph to save. Build a graph first.")
+            else:
+                count = neptune_connector.save_graph(graph)
+                summary = graph.summary()
+                save_output = mo.vstack(
+                    [
+                        mo.md("**Graph saved to Neptune!**"),
+                        mo.md(f"- Entities saved: {count}"),
+                        mo.md(f"- Nodes: {summary['total_nodes']}"),
+                        mo.md(f"- Edges: {summary['total_edges']}"),
+                        mo.md("---"),
+                        mo.md(
+                            "_Tip: Use the node IDs below to load this graph later:_"
+                        ),
+                        mo.md(
+                            f"```\n{', '.join(list(graph.nodes.keys())[:5])}"
+                            + ("..." if len(graph.nodes) > 5 else "")
+                            + "\n```"
+                        ),
+                    ]
+                )
+        except NameError:
+            save_output = mo.md("_Build a graph first_")
+        except Exception as e:
+            save_output = mo.md(f"**Save Error:** {e}")
+
+    save_output
+    return
+
+
+@app.cell
+def _(mo):
+    mo.md("""
+    ### Load Graph from Neptune
+
+    Load an existing investigation graph by specifying a center node ID.
+    The graph will be loaded with all connected entities up to the specified depth.
+    """)
+    return
+
+
+@app.cell
+def _(mo):
+    load_node_id = mo.ui.text(
+        value="",
+        label="Center Node ID",
+        placeholder="e.g., Principal:admin or IPAddress:10.0.0.1",
+        full_width=True,
+    )
+    load_depth = mo.ui.slider(
+        start=1,
+        stop=5,
+        value=2,
+        label="Traversal Depth",
+    )
+
+    mo.hstack([load_node_id, load_depth])
+    return load_depth, load_node_id
+
+
+@app.cell
+def _(mo):
+    load_graph_btn = mo.ui.run_button(label="Load Graph from Neptune")
+    load_graph_btn
+    return (load_graph_btn,)
+
+
+@app.cell
+def _(
+    GraphVisualizer,
+    load_depth,
+    load_graph_btn,
+    load_node_id,
+    mo,
+    neptune_connector,
+):
+    load_output = mo.md("_Configure Neptune and enter a node ID to load a graph_")
+    loaded_graph = None
+
+    if load_graph_btn.value:
+        try:
+            if neptune_connector is None:
+                load_output = mo.md(
+                    "**Error:** Neptune not configured. Enter endpoint above."
+                )
+            elif not load_node_id.value:
+                load_output = mo.md("**Error:** Enter a node ID to load")
+            else:
+                loaded_graph = neptune_connector.load_graph(
+                    center_node_id=load_node_id.value,
+                    depth=load_depth.value,
+                )
+
+                if loaded_graph.node_count() > 0:
+                    visualizer = GraphVisualizer(height="700px")
+                    html = visualizer.to_html(loaded_graph)
+                    summary = loaded_graph.summary()
+
+                    load_output = mo.vstack(
+                        [
+                            mo.md("**Graph loaded from Neptune!**"),
+                            mo.md(
+                                f"**Summary:** {summary['total_nodes']} nodes, "
+                                f"{summary['total_edges']} edges"
+                            ),
+                            mo.md(
+                                f"**Node Types:** "
+                                + ", ".join(
+                                    f"{k}: {v}"
+                                    for k, v in summary["nodes_by_type"].items()
+                                )
+                            ),
+                            mo.Html(html),
+                            visualizer.generate_legend_html(),
+                        ]
+                    )
+                else:
+                    load_output = mo.md(
+                        f"_No graph found for node ID: {load_node_id.value}_"
+                    )
+
+        except Exception as e:
+            load_output = mo.md(f"**Load Error:** {e}")
+
+    load_output
+    return (loaded_graph,)
+
+
+@app.cell
+def _(mo):
+    mo.md("""
+    ### Search Neptune Graph
+
+    Find entities in Neptune by type or properties.
+    """)
+    return
+
+
+@app.cell
+def _(mo):
+    from secdashboards.graph import NodeType
+
+    search_node_type = mo.ui.dropdown(
+        options=[
+            ("All Types", ""),
+            ("Principal (Users)", NodeType.PRINCIPAL.value),
+            ("IP Address", NodeType.IP_ADDRESS.value),
+            ("API Operation", NodeType.API_OPERATION.value),
+            ("Resource", NodeType.RESOURCE.value),
+            ("Security Finding", NodeType.SECURITY_FINDING.value),
+        ],
+        value="",
+        label="Node Type",
+    )
+    search_limit = mo.ui.slider(
+        start=10,
+        stop=100,
+        value=25,
+        label="Max Results",
+    )
+
+    mo.hstack([search_node_type, search_limit])
+    return NodeType, search_limit, search_node_type
+
+
+@app.cell
+def _(mo):
+    search_btn = mo.ui.run_button(label="Search Neptune")
+    search_btn
+    return (search_btn,)
+
+
+@app.cell
+def _(NodeType, mo, neptune_connector, search_btn, search_limit, search_node_type):
+    search_output = mo.md("_Configure Neptune to enable search_")
+
+    if search_btn.value:
+        try:
+            if neptune_connector is None:
+                search_output = mo.md(
+                    "**Error:** Neptune not configured. Enter endpoint above."
+                )
+            else:
+                node_type = None
+                if search_node_type.value:
+                    node_type = NodeType(search_node_type.value)
+
+                nodes = neptune_connector.find_nodes(
+                    node_type=node_type,
+                    limit=search_limit.value,
+                )
+
+                if nodes:
+                    # Build a table of results
+                    rows = []
+                    for node in nodes:
+                        rows.append(
+                            f"| `{node.id}` | {node.node_type.value} | {node.label} | {node.event_count} |"
+                        )
+
+                    table = (
+                        "| Node ID | Type | Label | Events |\n"
+                        "|---------|------|-------|--------|\n"
+                        + "\n".join(rows)
+                    )
+
+                    search_output = mo.vstack(
+                        [
+                            mo.md(f"**Found {len(nodes)} nodes:**"),
+                            mo.md(table),
+                            mo.md(
+                                "_Click on a Node ID and use 'Load Graph from Neptune' to explore_"
+                            ),
+                        ]
+                    )
+                else:
+                    search_output = mo.md("_No nodes found matching criteria_")
+
+        except Exception as e:
+            search_output = mo.md(f"**Search Error:** {e}")
+
+    search_output
     return
 
 
