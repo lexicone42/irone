@@ -28,11 +28,17 @@ Example usage:
 """
 
 from .exporters import (
+    compile_latex_to_pdf,
     detection_results_to_report_data,
     export_detection_report,
+    export_detection_to_s3,
     export_investigation_report,
+    export_investigation_to_s3,
+    export_report_to_s3,
+    generate_presigned_url,
     graph_to_report_data,
     save_graph_image,
+    upload_to_s3,
 )
 from .latex_renderer import (
     LaTeXRenderer,
@@ -70,11 +76,17 @@ __all__ = [
     # Renderer
     "LaTeXRenderer",
     # Exporters
+    "compile_latex_to_pdf",
     "detection_results_to_report_data",
     "export_detection_report",
+    "export_detection_to_s3",
     "export_investigation_report",
+    "export_investigation_to_s3",
+    "export_report_to_s3",
+    "generate_presigned_url",
     "graph_to_report_data",
     "save_graph_image",
+    "upload_to_s3",
     # Utilities
     "escape_latex",
     "escape_latex_url",

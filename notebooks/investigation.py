@@ -45,29 +45,20 @@ def _():
         GraphVisualizer,
         SecurityGraph,
     )
-
     return (
         DataCatalog,
         DataSource,
         DataSourceType,
         GraphBuilder,
         GraphVisualizer,
-        SecurityGraph,
-        UTC,
-        datetime,
-        pl,
-        timedelta,
     )
-
-
-# =============================================================================
-# Configuration
-# =============================================================================
 
 
 @app.cell
 def _(mo):
-    mo.md("## Configuration")
+    mo.md("""
+    ## Configuration
+    """)
     return
 
 
@@ -105,34 +96,27 @@ def _(DataCatalog, DataSource, DataSourceType, region_input):
             description="CloudTrail management events",
         )
     )
-    return catalog, region, region_underscore
-
-
-# =============================================================================
-# Investigation Graph
-# =============================================================================
+    return catalog, region
 
 
 @app.cell
 def _(mo):
-    mo.md(
-        """
-        ## Investigation Graph
+    mo.md("""
+    ## Investigation Graph
 
-        Build an investigation graph from security events. The graph shows
-        relationships between principals (users), IP addresses, resources,
-        and API operations.
+    Build an investigation graph from security events. The graph shows
+    relationships between principals (users), IP addresses, resources,
+    and API operations.
 
-        ### Node Types
-        | Type | Color | Description |
-        |------|-------|-------------|
-        | Principal | Red | Users, roles, AWS identities |
-        | IP Address | Teal | Source/destination IPs |
-        | Resource | Blue | AWS resources (S3, EC2, etc.) |
-        | API Operation | Green | AWS API calls |
-        | Security Finding | Bright Red | Triggered detections |
-        """
-    )
+    ### Node Types
+    | Type | Color | Description |
+    |------|-------|-------------|
+    | Principal | Red | Users, roles, AWS identities |
+    | IP Address | Teal | Source/destination IPs |
+    | Resource | Blue | AWS resources (S3, EC2, etc.) |
+    | API Operation | Green | AWS API calls |
+    | Security Finding | Bright Red | Triggered detections |
+    """)
     return
 
 
@@ -155,20 +139,13 @@ def _(mo):
     return enrichment_window, max_events
 
 
-# =============================================================================
-# Manual Investigation
-# =============================================================================
-
-
 @app.cell
 def _(mo):
-    mo.md(
-        """
-        ## Manual Investigation
+    mo.md("""
+    ## Manual Investigation
 
-        Build a graph by specifying users and/or IP addresses to investigate.
-        """
-    )
+    Build a graph by specifying users and/or IP addresses to investigate.
+    """)
     return
 
 
@@ -260,24 +237,17 @@ def _(
                 graph_output = mo.md(f"**Error building graph:** {e}")
 
     graph_output
-    return graph, graph_output
-
-
-# =============================================================================
-# AI-Assisted Graph Analysis
-# =============================================================================
+    return (graph,)
 
 
 @app.cell
 def _(mo):
-    mo.md(
-        """
-        ## AI-Assisted Analysis
+    mo.md("""
+    ## AI-Assisted Analysis
 
-        Use Amazon Bedrock to analyze the investigation graph and identify
-        potential attack patterns or suspicious behavior.
-        """
-    )
+    Use Amazon Bedrock to analyze the investigation graph and identify
+    potential attack patterns or suspicious behavior.
+    """)
     return
 
 
@@ -301,7 +271,7 @@ def _(mo):
     )
 
     mo.vstack([analysis_model, analysis_focus])
-    return BedrockModel, analysis_focus, analysis_model
+    return analysis_focus, analysis_model
 
 
 @app.cell
@@ -352,37 +322,36 @@ def _(analysis_focus, analysis_model, analyze_btn, graph, mo, region):
     return (analysis_output,)
 
 
-# =============================================================================
-# Export Options
-# =============================================================================
-
-
 @app.cell
 def _(mo):
-    mo.md(
-        """
-        ## Export
+    mo.md("""
+    ## Export
 
-        Export the investigation graph for reports or further analysis.
+    Export the investigation graph for reports or further analysis.
 
-        **Export Formats:**
-        - **JSON** - Raw graph data for programmatic use
-        - **LaTeX** - Professional report for documentation
-        """
-    )
+    **Export Formats:**
+    - **JSON** - Raw graph data for programmatic use
+    - **LaTeX** - Professional report for documentation
+    """)
     return
 
 
 @app.cell
 def _(mo):
     export_format = mo.ui.dropdown(
-        options=["JSON", "LaTeX Report"],
+        options=["JSON", "LaTeX (Local)", "PDF to S3"],
         value="JSON",
         label="Export Format",
     )
+    s3_bucket_inv = mo.ui.text(
+        value="",
+        label="S3 Bucket (for S3 export)",
+        placeholder="my-reports-bucket",
+        full_width=True,
+    )
     report_title = mo.ui.text(
         value="Security Investigation Report",
-        label="Report Title (LaTeX only)",
+        label="Report Title",
         full_width=True,
     )
     investigation_id_input = mo.ui.text(
@@ -392,8 +361,8 @@ def _(mo):
         full_width=True,
     )
 
-    mo.vstack([export_format, report_title, investigation_id_input])
-    return export_format, investigation_id_input, report_title
+    mo.vstack([export_format, s3_bucket_inv, report_title, investigation_id_input])
+    return export_format, investigation_id_input, report_title, s3_bucket_inv
 
 
 @app.cell
@@ -411,7 +380,9 @@ def _(
     graph,
     investigation_id_input,
     mo,
+    region,
     report_title,
+    s3_bucket_inv,
 ):
     export_output = mo.md("_Build a graph first, then click 'Generate Export'_")
 
@@ -453,8 +424,8 @@ def _(
                         ),
                     ]
                 )
-            else:
-                # LaTeX export
+            elif export_format.value == "LaTeX (Local)":
+                # Local LaTeX export
                 from secdashboards.reports import (
                     LaTeXRenderer,
                     graph_to_report_data,
@@ -464,7 +435,6 @@ def _(
                 ai_text = ""
                 try:
                     if "analysis_output" in dir() and analysis_output:
-                        # Extract text content from analysis output
                         ai_text = str(analysis_output)
                 except Exception:
                     pass
@@ -491,6 +461,70 @@ def _(
                         ),
                     ]
                 )
+            else:
+                # S3 export with presigned URL
+                if not s3_bucket_inv.value:
+                    export_output = mo.md("**Error:** Please enter an S3 bucket name")
+                else:
+                    from secdashboards.reports import export_investigation_to_s3
+
+                    # Get AI analysis if available
+                    ai_text = ""
+                    try:
+                        if "analysis_output" in dir() and analysis_output:
+                            ai_text = str(analysis_output)
+                    except Exception:
+                        pass
+
+                    result = export_investigation_to_s3(
+                        graph=graph,
+                        bucket=s3_bucket_inv.value,
+                        key_prefix="reports/investigations",
+                        investigation_id=investigation_id_input.value,
+                        ai_analysis=ai_text,
+                        region=region,
+                        url_expiration=10800,  # 3 hours
+                    )
+
+                    if result["success"]:
+                        output_items = [
+                            mo.md("**Report uploaded to S3!**"),
+                            mo.md("---"),
+                        ]
+
+                        if result["pdf_url"]:
+                            output_items.append(
+                                mo.md("**PDF Report (expires in 3 hours):**")
+                            )
+                            output_items.append(
+                                mo.md(f"[Download PDF]({result['pdf_url']})")
+                            )
+                            output_items.append(mo.md(""))
+
+                        output_items.append(
+                            mo.md("**LaTeX Source (expires in 3 hours):**")
+                        )
+                        output_items.append(
+                            mo.md(f"[Download LaTeX]({result['latex_url']})")
+                        )
+
+                        if not result["pdf_url"]:
+                            output_items.append(mo.md(""))
+                            output_items.append(
+                                mo.md(
+                                    "_Note: PDF compilation not available. "
+                                    "Install pdflatex to enable PDF generation._"
+                                )
+                            )
+
+                        output_items.append(mo.md("---"))
+                        output_items.append(
+                            mo.md(f"**S3 Location:** `s3://{s3_bucket_inv.value}/{result['latex_key']}`")
+                        )
+
+                        export_output = mo.vstack(output_items)
+                    else:
+                        export_output = mo.md(f"**Export Error:** {result['error']}")
 
         except NameError:
             export_output = mo.md("_Build a graph to enable export_")
@@ -498,7 +532,7 @@ def _(
             export_output = mo.md(f"**Export Error:** {e}")
 
     export_output
-    return (export_output,)
+    return
 
 
 if __name__ == "__main__":

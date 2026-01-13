@@ -547,5 +547,185 @@ def _(ai_description, ai_model, generate_btn, mo, region):
     return (ai_result,)
 
 
+# =============================================================================
+# Export Report
+# =============================================================================
+
+
+@app.cell
+def _(mo):
+    mo.md(
+        """
+        ## Export Report
+
+        Export detection results as a formatted LaTeX report.
+
+        **Export Options:**
+        - **Local** - Download LaTeX source for local compilation
+        - **S3** - Upload to S3 and get a shareable presigned URL (valid 3 hours)
+        """
+    )
+    return
+
+
+@app.cell
+def _(mo):
+    export_format = mo.ui.dropdown(
+        options=["LaTeX (Local)", "PDF to S3"],
+        value="LaTeX (Local)",
+        label="Export Format",
+    )
+    s3_bucket = mo.ui.text(
+        value="",
+        label="S3 Bucket (for S3 export)",
+        placeholder="my-reports-bucket",
+        full_width=True,
+    )
+    report_title = mo.ui.text(
+        value="Detection Engineering Report",
+        label="Report Title",
+        full_width=True,
+    )
+
+    mo.vstack([export_format, s3_bucket, report_title])
+    return export_format, report_title, s3_bucket
+
+
+@app.cell
+def _(mo):
+    export_btn = mo.ui.run_button(label="Generate Report")
+    export_btn
+    return (export_btn,)
+
+
+@app.cell
+def _(
+    detection_rules,
+    export_btn,
+    export_format,
+    mo,
+    region,
+    report_title,
+    s3_bucket,
+):
+    export_output = mo.md("_Create and test detection rules, then click 'Generate Report'_")
+
+    if export_btn.value:
+        try:
+            if not detection_rules:
+                export_output = mo.md("_Please create at least one detection rule first_")
+            else:
+                # Build results from detection rules
+                results = [
+                    {
+                        "rule_id": r.metadata.id,
+                        "rule_name": r.metadata.name,
+                        "severity": r.metadata.severity.value,
+                        "triggered": False,  # Will be updated if tests were run
+                        "match_count": 0,
+                        "query": r.query_template,
+                    }
+                    for r in detection_rules
+                ]
+
+                # Get MITRE techniques from rules
+                mitre_techniques = []
+                for r in detection_rules:
+                    mitre_techniques.extend(r.metadata.mitre_attack)
+                mitre_techniques = list(set(mitre_techniques))
+
+                if export_format.value == "LaTeX (Local)":
+                    # Local LaTeX export
+                    from secdashboards.reports import (
+                        LaTeXRenderer,
+                        detection_results_to_report_data,
+                    )
+
+                    report_data = detection_results_to_report_data(
+                        results=results,
+                        mitre_techniques=mitre_techniques,
+                        test_summary=f"Report generated with {len(detection_rules)} detection rules",
+                    )
+                    report_data.title = report_title.value
+
+                    renderer = LaTeXRenderer()
+                    latex_content = renderer.render_detection_report(report_data)
+
+                    export_output = mo.vstack(
+                        [
+                            mo.md("**LaTeX Report (copy and compile with pdflatex):**"),
+                            mo.ui.code_editor(
+                                value=latex_content, language="latex", min_height=400
+                            ),
+                            mo.md(
+                                "_Tip: Save as .tex file and compile with "
+                                "`pdflatex report.tex`_"
+                            ),
+                        ]
+                    )
+                else:
+                    # S3 export with presigned URL
+                    if not s3_bucket.value:
+                        export_output = mo.md("**Error:** Please enter an S3 bucket name")
+                    else:
+                        from secdashboards.reports import export_detection_to_s3
+
+                        result = export_detection_to_s3(
+                            results=results,
+                            bucket=s3_bucket.value,
+                            key_prefix="reports/detections",
+                            mitre_techniques=mitre_techniques,
+                            test_summary=f"Report generated with {len(detection_rules)} detection rules",
+                            region=region,
+                            url_expiration=10800,  # 3 hours
+                        )
+
+                        if result["success"]:
+                            output_items = [
+                                mo.md("**Report uploaded to S3!**"),
+                                mo.md("---"),
+                            ]
+
+                            if result["pdf_url"]:
+                                output_items.append(
+                                    mo.md(f"**PDF Report (expires in 3 hours):**")
+                                )
+                                output_items.append(
+                                    mo.md(f"[Download PDF]({result['pdf_url']})")
+                                )
+                                output_items.append(mo.md(""))
+
+                            output_items.append(
+                                mo.md(f"**LaTeX Source (expires in 3 hours):**")
+                            )
+                            output_items.append(
+                                mo.md(f"[Download LaTeX]({result['latex_url']})")
+                            )
+
+                            if not result["pdf_url"]:
+                                output_items.append(mo.md(""))
+                                output_items.append(
+                                    mo.md(
+                                        "_Note: PDF compilation not available. "
+                                        "Install pdflatex to enable PDF generation._"
+                                    )
+                                )
+
+                            output_items.append(mo.md("---"))
+                            output_items.append(
+                                mo.md(f"**S3 Location:** `s3://{s3_bucket.value}/{result['latex_key']}`")
+                            )
+
+                            export_output = mo.vstack(output_items)
+                        else:
+                            export_output = mo.md(f"**Export Error:** {result['error']}")
+
+        except Exception as e:
+            export_output = mo.md(f"**Export Error:** {e}")
+
+    export_output
+    return (export_output,)
+
+
 if __name__ == "__main__":
     app.run()
