@@ -89,8 +89,9 @@ class TestSQLDetectionRule:
         end = datetime(2024, 1, 1, 1, 0, 0)
 
         query = rule.get_query(start, end)
-        assert "2024-01-01T00:00:00" in query
-        assert "2024-01-01T01:00:00" in query
+        # Timestamps should be Athena-compatible format (space-separated, no T)
+        assert "2024-01-01 00:00:00" in query
+        assert "2024-01-01 01:00:00" in query
 
     def test_evaluate_triggered(self) -> None:
         metadata = DetectionMetadata(id="test", name="Test", severity=Severity.HIGH)

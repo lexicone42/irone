@@ -122,11 +122,22 @@ class SQLDetectionRule(DetectionRule):
         self.threshold = threshold
         self.group_by_fields = group_by_fields or []
 
+    @staticmethod
+    def _format_timestamp(dt: datetime) -> str:
+        """Format datetime for Athena TIMESTAMP literal.
+
+        Athena requires format: 'YYYY-MM-DD HH:MM:SS.ffffff'
+        Python's isoformat() returns: 'YYYY-MM-DDTHH:MM:SS.ffffff+00:00'
+        """
+        # Remove timezone info and format with space separator
+        dt_naive = dt.replace(tzinfo=None) if dt.tzinfo else dt
+        return dt_naive.strftime("%Y-%m-%d %H:%M:%S.%f")
+
     def get_query(self, start: datetime, end: datetime) -> str:
         """Render the query template with time bounds."""
         return self.query_template.format(
-            start_time=start.isoformat(),
-            end_time=end.isoformat(),
+            start_time=self._format_timestamp(start),
+            end_time=self._format_timestamp(end),
         )
 
     def evaluate(self, df: pl.DataFrame) -> DetectionResult:
