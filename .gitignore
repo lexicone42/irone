@@ -28,3 +28,7 @@ htmlcov/
 # Lambda deployment artifacts
 .aws-sam/
 packaged.yaml
+
+# Tool-specific directories
+.playwright-mcp/
+.serena/
