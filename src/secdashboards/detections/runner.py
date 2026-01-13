@@ -1,6 +1,7 @@
 """Detection rule runner for executing rules against data sources."""
 
 import importlib
+import os
 import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -21,13 +22,46 @@ from secdashboards.detections.rule import (
 
 logger = structlog.get_logger()
 
+# Environment variable to control Python rule loading
+# Set SECDASH_ALLOW_PYTHON_RULES=1 to enable (NOT recommended in production)
+ALLOW_PYTHON_RULES = os.environ.get("SECDASH_ALLOW_PYTHON_RULES", "").lower() in (
+    "1",
+    "true",
+    "yes",
+)
+
 
 class DetectionRunner:
-    """Runs detection rules against data sources."""
+    """Runs detection rules against data sources.
 
-    def __init__(self, catalog: DataCatalog) -> None:
+    Security Notes:
+    - By default, only YAML rules are loaded from filesystem
+    - Python rule loading is disabled unless SECDASH_ALLOW_PYTHON_RULES=1
+    - For production, use S3RuleStore for secure rule management
+    """
+
+    def __init__(
+        self,
+        catalog: DataCatalog,
+        allow_python_rules: bool | None = None,
+    ) -> None:
+        """Initialize the detection runner.
+
+        Args:
+            catalog: Data catalog for source resolution
+            allow_python_rules: Override env var for Python rules (None = use env)
+        """
         self.catalog = catalog
         self._rules: dict[str, DetectionRule] = {}
+        self._allow_python_rules = (
+            allow_python_rules if allow_python_rules is not None else ALLOW_PYTHON_RULES
+        )
+
+        if self._allow_python_rules:
+            logger.warning(
+                "python_rules_enabled",
+                message="Python rule loading is enabled. This allows arbitrary code execution.",
+            )
 
     def register_rule(self, rule: DetectionRule) -> None:
         """Register a detection rule."""
@@ -110,9 +144,14 @@ class DetectionRunner:
         return results
 
     def load_rules_from_directory(self, rules_dir: Path) -> int:
-        """Load detection rules from YAML files in a directory."""
+        """Load detection rules from YAML files in a directory.
+
+        Security Note: Python rules are only loaded if explicitly enabled
+        via SECDASH_ALLOW_PYTHON_RULES=1 or allow_python_rules=True.
+        """
         loaded = 0
 
+        # Always load YAML rules (safe)
         for yaml_file in rules_dir.glob("*.yaml"):
             try:
                 rules = self._load_yaml_rules(yaml_file)
@@ -124,17 +163,28 @@ class DetectionRunner:
                     "Failed to load rules from file", file=str(yaml_file), error=str(e)
                 )
 
-        for py_file in rules_dir.glob("*.py"):
-            if py_file.name.startswith("_"):
-                continue
-            try:
-                rules = self._load_python_rules(py_file)
-                for rule in rules:
-                    self.register_rule(rule)
-                    loaded += 1
-            except Exception as e:
-                logger.exception(
-                    "Failed to load rules from file", file=str(py_file), error=str(e)
+        # Only load Python rules if explicitly enabled
+        if self._allow_python_rules:
+            for py_file in rules_dir.glob("*.py"):
+                if py_file.name.startswith("_"):
+                    continue
+                try:
+                    rules = self._load_python_rules(py_file)
+                    for rule in rules:
+                        self.register_rule(rule)
+                        loaded += 1
+                except Exception as e:
+                    logger.exception(
+                        "Failed to load rules from file", file=str(py_file), error=str(e)
+                    )
+        else:
+            # Log skipped Python files for visibility
+            py_files = list(rules_dir.glob("*.py"))
+            if py_files:
+                logger.info(
+                    "skipped_python_rules",
+                    count=len(py_files),
+                    message="Python rules disabled. Set SECDASH_ALLOW_PYTHON_RULES=1 to enable.",
                 )
 
         return loaded

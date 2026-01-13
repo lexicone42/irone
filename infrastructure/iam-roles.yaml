@@ -1,0 +1,561 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: |
+  Split IAM roles for SecDashboards with least-privilege access.
+
+  Roles:
+  - ReadOnly: Local development, can query but not modify
+  - Operator: Production notebook, can query and push detections
+  - Admin: Infrastructure deployment and management
+
+Parameters:
+  Environment:
+    Type: String
+    Default: prod
+    AllowedValues:
+      - dev
+      - staging
+      - prod
+
+  SecurityLakeDatabase:
+    Type: String
+    Default: amazon_security_lake_glue_db_us_west_2
+    Description: Security Lake Glue database name
+
+  SecurityLakeBucket:
+    Type: String
+    Description: Security Lake S3 bucket ARN (e.g., arn:aws:s3:::aws-security-data-lake-us-west-2-*)
+
+  AthenaResultsBucket:
+    Type: String
+    Description: S3 bucket for Athena query results (e.g., my-athena-results)
+
+  DetectionRulesBucket:
+    Type: String
+    Description: S3 bucket for detection rules storage
+    Default: ""
+
+  NeptuneClusterArn:
+    Type: String
+    Description: Neptune cluster ARN (optional)
+    Default: ""
+
+  ReportsBucket:
+    Type: String
+    Description: S3 bucket for generated reports
+    Default: ""
+
+  # Trust configuration
+  TrustedAccountId:
+    Type: String
+    Description: AWS Account ID allowed to assume these roles (for cross-account access)
+    Default: ""
+
+  TrustedSSORole:
+    Type: String
+    Description: SSO Role name that can assume operator/admin roles
+    Default: ""
+
+Conditions:
+  HasNeptune: !Not [!Equals [!Ref NeptuneClusterArn, ""]]
+  HasDetectionsBucket: !Not [!Equals [!Ref DetectionRulesBucket, ""]]
+  HasReportsBucket: !Not [!Equals [!Ref ReportsBucket, ""]]
+  HasCrossAccount: !Not [!Equals [!Ref TrustedAccountId, ""]]
+  HasSSORole: !Not [!Equals [!Ref TrustedSSORole, ""]]
+
+Resources:
+  # ============================================================================
+  # READONLY ROLE - For local development
+  # ============================================================================
+
+  ReadOnlyRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "secdash-readonly-${Environment}"
+      Description: Read-only access for local SecDashboards development
+      MaxSessionDuration: 43200  # 12 hours
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              AWS: !If
+                - HasCrossAccount
+                - !Sub "arn:aws:iam::${TrustedAccountId}:root"
+                - !Ref AWS::AccountId
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                aws:PrincipalTag/Environment: !Ref Environment
+          # Allow SSO users to assume
+          - !If
+            - HasSSORole
+            - Effect: Allow
+              Principal:
+                AWS: !Sub "arn:aws:iam::${AWS::AccountId}:role/aws-reserved/sso.amazonaws.com/${TrustedSSORole}"
+              Action: sts:AssumeRole
+            - !Ref AWS::NoValue
+      Policies:
+        - PolicyName: AthenaReadOnly
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              # Athena query execution
+              - Sid: AthenaQuery
+                Effect: Allow
+                Action:
+                  - athena:StartQueryExecution
+                  - athena:GetQueryExecution
+                  - athena:GetQueryResults
+                  - athena:StopQueryExecution
+                  - athena:GetWorkGroup
+                Resource:
+                  - !Sub "arn:aws:athena:${AWS::Region}:${AWS::AccountId}:workgroup/primary"
+                  - !Sub "arn:aws:athena:${AWS::Region}:${AWS::AccountId}:workgroup/secdash-readonly"
+
+              # Glue catalog read
+              - Sid: GlueCatalogRead
+                Effect: Allow
+                Action:
+                  - glue:GetDatabase
+                  - glue:GetDatabases
+                  - glue:GetTable
+                  - glue:GetTables
+                  - glue:GetPartition
+                  - glue:GetPartitions
+                  - glue:BatchGetPartition
+                Resource:
+                  - !Sub "arn:aws:glue:${AWS::Region}:${AWS::AccountId}:catalog"
+                  - !Sub "arn:aws:glue:${AWS::Region}:${AWS::AccountId}:database/${SecurityLakeDatabase}"
+                  - !Sub "arn:aws:glue:${AWS::Region}:${AWS::AccountId}:table/${SecurityLakeDatabase}/*"
+
+              # S3 read for Security Lake data
+              - Sid: SecurityLakeRead
+                Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:GetBucketLocation
+                  - s3:ListBucket
+                Resource:
+                  - !Ref SecurityLakeBucket
+                  - !Sub "${SecurityLakeBucket}/*"
+
+              # S3 write for Athena results only
+              - Sid: AthenaResultsWrite
+                Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:GetBucketLocation
+                  - s3:ListBucket
+                Resource:
+                  - !Sub "arn:aws:s3:::${AthenaResultsBucket}"
+                  - !Sub "arn:aws:s3:::${AthenaResultsBucket}/*"
+
+        - PolicyName: NeptuneReadOnly
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - !If
+                - HasNeptune
+                - Sid: NeptuneRead
+                  Effect: Allow
+                  Action:
+                    - neptune-db:ReadDataViaQuery
+                    - neptune-db:GetQueryStatus
+                  Resource: !Ref NeptuneClusterArn
+                - !Ref AWS::NoValue
+
+      Tags:
+        - Key: Name
+          Value: !Sub "secdash-readonly-${Environment}"
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Purpose
+          Value: "Local development - read-only access"
+
+  # ============================================================================
+  # OPERATOR ROLE - For production notebook
+  # ============================================================================
+
+  OperatorRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "secdash-operator-${Environment}"
+      Description: Operator access for production SecDashboards notebook
+      MaxSessionDuration: 43200  # 12 hours
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          # Allow App Runner service to assume
+          - Effect: Allow
+            Principal:
+              Service: tasks.apprunner.amazonaws.com
+            Action: sts:AssumeRole
+          # Allow SSO users to assume
+          - !If
+            - HasSSORole
+            - Effect: Allow
+              Principal:
+                AWS: !Sub "arn:aws:iam::${AWS::AccountId}:role/aws-reserved/sso.amazonaws.com/${TrustedSSORole}"
+              Action: sts:AssumeRole
+              Condition:
+                StringEquals:
+                  aws:PrincipalTag/OperatorAccess: "true"
+            - !Ref AWS::NoValue
+      Policies:
+        # Include all ReadOnly permissions
+        - PolicyName: AthenaAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: AthenaQuery
+                Effect: Allow
+                Action:
+                  - athena:StartQueryExecution
+                  - athena:GetQueryExecution
+                  - athena:GetQueryResults
+                  - athena:StopQueryExecution
+                  - athena:GetWorkGroup
+                  - athena:ListWorkGroups
+                Resource:
+                  - !Sub "arn:aws:athena:${AWS::Region}:${AWS::AccountId}:workgroup/*"
+
+              - Sid: GlueCatalogRead
+                Effect: Allow
+                Action:
+                  - glue:GetDatabase
+                  - glue:GetDatabases
+                  - glue:GetTable
+                  - glue:GetTables
+                  - glue:GetPartition
+                  - glue:GetPartitions
+                  - glue:BatchGetPartition
+                Resource:
+                  - !Sub "arn:aws:glue:${AWS::Region}:${AWS::AccountId}:catalog"
+                  - !Sub "arn:aws:glue:${AWS::Region}:${AWS::AccountId}:database/${SecurityLakeDatabase}"
+                  - !Sub "arn:aws:glue:${AWS::Region}:${AWS::AccountId}:table/${SecurityLakeDatabase}/*"
+
+              - Sid: SecurityLakeRead
+                Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:GetBucketLocation
+                  - s3:ListBucket
+                Resource:
+                  - !Ref SecurityLakeBucket
+                  - !Sub "${SecurityLakeBucket}/*"
+
+              - Sid: AthenaResultsWrite
+                Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:DeleteObject
+                  - s3:GetBucketLocation
+                  - s3:ListBucket
+                Resource:
+                  - !Sub "arn:aws:s3:::${AthenaResultsBucket}"
+                  - !Sub "arn:aws:s3:::${AthenaResultsBucket}/*"
+
+        # Detection rules management
+        - PolicyName: DetectionRulesAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - !If
+                - HasDetectionsBucket
+                - Sid: DetectionRulesReadWrite
+                  Effect: Allow
+                  Action:
+                    - s3:GetObject
+                    - s3:PutObject
+                    - s3:DeleteObject
+                    - s3:ListBucket
+                    - s3:GetObjectVersion
+                    - s3:ListBucketVersions
+                  Resource:
+                    - !Sub "arn:aws:s3:::${DetectionRulesBucket}"
+                    - !Sub "arn:aws:s3:::${DetectionRulesBucket}/*"
+                - !Ref AWS::NoValue
+
+        # Neptune read/write
+        - PolicyName: NeptuneAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - !If
+                - HasNeptune
+                - Sid: NeptuneReadWrite
+                  Effect: Allow
+                  Action:
+                    - neptune-db:ReadDataViaQuery
+                    - neptune-db:WriteDataViaQuery
+                    - neptune-db:DeleteDataViaQuery
+                    - neptune-db:GetQueryStatus
+                    - neptune-db:CancelQuery
+                  Resource: !Ref NeptuneClusterArn
+                - !Ref AWS::NoValue
+
+        # Reports bucket
+        - PolicyName: ReportsAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - !If
+                - HasReportsBucket
+                - Sid: ReportsReadWrite
+                  Effect: Allow
+                  Action:
+                    - s3:GetObject
+                    - s3:PutObject
+                    - s3:DeleteObject
+                    - s3:ListBucket
+                  Resource:
+                    - !Sub "arn:aws:s3:::${ReportsBucket}"
+                    - !Sub "arn:aws:s3:::${ReportsBucket}/*"
+                - !Ref AWS::NoValue
+
+        # Bedrock for AI analysis
+        - PolicyName: BedrockAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: BedrockInvoke
+                Effect: Allow
+                Action:
+                  - bedrock:InvokeModel
+                  - bedrock:InvokeModelWithResponseStream
+                Resource:
+                  - !Sub "arn:aws:bedrock:${AWS::Region}::foundation-model/anthropic.claude-*"
+                  - !Sub "arn:aws:bedrock:${AWS::Region}::foundation-model/amazon.titan-*"
+
+        # CloudWatch for logging
+        - PolicyName: CloudWatchLogs
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: CloudWatchLogsWrite
+                Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                  - logs:DescribeLogStreams
+                Resource:
+                  - !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/secdashboards/*"
+
+      Tags:
+        - Key: Name
+          Value: !Sub "secdash-operator-${Environment}"
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Purpose
+          Value: "Production notebook - query and push detections"
+
+  # ============================================================================
+  # ADMIN ROLE - For infrastructure management
+  # ============================================================================
+
+  AdminRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "secdash-admin-${Environment}"
+      Description: Admin access for SecDashboards infrastructure management
+      MaxSessionDuration: 14400  # 4 hours (shorter for privileged access)
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          # Only allow specific SSO role to assume
+          - !If
+            - HasSSORole
+            - Effect: Allow
+              Principal:
+                AWS: !Sub "arn:aws:iam::${AWS::AccountId}:role/aws-reserved/sso.amazonaws.com/${TrustedSSORole}"
+              Action: sts:AssumeRole
+              Condition:
+                StringEquals:
+                  aws:PrincipalTag/AdminAccess: "true"
+                Bool:
+                  aws:MultiFactorAuthPresent: "true"
+            - Effect: Allow
+              Principal:
+                AWS: !Sub "arn:aws:iam::${AWS::AccountId}:root"
+              Action: sts:AssumeRole
+              Condition:
+                Bool:
+                  aws:MultiFactorAuthPresent: "true"
+      Policies:
+        # Full Athena access
+        - PolicyName: AthenaAdmin
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: AthenaFull
+                Effect: Allow
+                Action:
+                  - athena:*
+                Resource: "*"
+                Condition:
+                  StringEquals:
+                    aws:ResourceTag/Environment: !Ref Environment
+
+        # Glue catalog management
+        - PolicyName: GlueAdmin
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: GlueCatalogManage
+                Effect: Allow
+                Action:
+                  - glue:*Database*
+                  - glue:*Table*
+                  - glue:*Partition*
+                  - glue:GetCatalogImportStatus
+                Resource:
+                  - !Sub "arn:aws:glue:${AWS::Region}:${AWS::AccountId}:catalog"
+                  - !Sub "arn:aws:glue:${AWS::Region}:${AWS::AccountId}:database/${SecurityLakeDatabase}"
+                  - !Sub "arn:aws:glue:${AWS::Region}:${AWS::AccountId}:table/${SecurityLakeDatabase}/*"
+
+        # S3 admin for all SecDashboards buckets
+        - PolicyName: S3Admin
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: S3FullAccess
+                Effect: Allow
+                Action:
+                  - s3:*
+                Resource:
+                  - !Sub "arn:aws:s3:::${AthenaResultsBucket}"
+                  - !Sub "arn:aws:s3:::${AthenaResultsBucket}/*"
+                  - !If
+                    - HasDetectionsBucket
+                    - !Sub "arn:aws:s3:::${DetectionRulesBucket}"
+                    - !Ref AWS::NoValue
+                  - !If
+                    - HasDetectionsBucket
+                    - !Sub "arn:aws:s3:::${DetectionRulesBucket}/*"
+                    - !Ref AWS::NoValue
+                  - !If
+                    - HasReportsBucket
+                    - !Sub "arn:aws:s3:::${ReportsBucket}"
+                    - !Ref AWS::NoValue
+                  - !If
+                    - HasReportsBucket
+                    - !Sub "arn:aws:s3:::${ReportsBucket}/*"
+                    - !Ref AWS::NoValue
+
+        # Neptune admin
+        - PolicyName: NeptuneAdmin
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - !If
+                - HasNeptune
+                - Sid: NeptuneFull
+                  Effect: Allow
+                  Action:
+                    - neptune-db:*
+                  Resource: !Ref NeptuneClusterArn
+                - !Ref AWS::NoValue
+
+        # CloudFormation for deployments
+        - PolicyName: CloudFormationDeploy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: CloudFormationAccess
+                Effect: Allow
+                Action:
+                  - cloudformation:CreateStack
+                  - cloudformation:UpdateStack
+                  - cloudformation:DeleteStack
+                  - cloudformation:DescribeStacks
+                  - cloudformation:DescribeStackEvents
+                  - cloudformation:GetTemplate
+                  - cloudformation:ValidateTemplate
+                Resource:
+                  - !Sub "arn:aws:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/secdash-*"
+
+        # IAM for role management (limited)
+        - PolicyName: IAMRoleManagement
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: IAMRoleAccess
+                Effect: Allow
+                Action:
+                  - iam:GetRole
+                  - iam:GetRolePolicy
+                  - iam:ListRolePolicies
+                  - iam:ListAttachedRolePolicies
+                  - iam:PassRole
+                Resource:
+                  - !Sub "arn:aws:iam::${AWS::AccountId}:role/secdash-*"
+              - Sid: IAMPolicyAccess
+                Effect: Allow
+                Action:
+                  - iam:GetPolicy
+                  - iam:GetPolicyVersion
+                Resource:
+                  - !Sub "arn:aws:iam::${AWS::AccountId}:policy/secdash-*"
+
+      Tags:
+        - Key: Name
+          Value: !Sub "secdash-admin-${Environment}"
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Purpose
+          Value: "Infrastructure management - privileged access"
+
+  # ============================================================================
+  # INSTANCE PROFILE FOR EC2/LOCAL DEVELOPMENT
+  # ============================================================================
+
+  ReadOnlyInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      InstanceProfileName: !Sub "secdash-readonly-profile-${Environment}"
+      Roles:
+        - !Ref ReadOnlyRole
+
+Outputs:
+  ReadOnlyRoleArn:
+    Description: ARN of the read-only role for local development
+    Value: !GetAtt ReadOnlyRole.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-ReadOnlyRoleArn"
+
+  OperatorRoleArn:
+    Description: ARN of the operator role for production notebook
+    Value: !GetAtt OperatorRole.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-OperatorRoleArn"
+
+  AdminRoleArn:
+    Description: ARN of the admin role for infrastructure management
+    Value: !GetAtt AdminRole.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-AdminRoleArn"
+
+  ReadOnlyInstanceProfileArn:
+    Description: Instance profile ARN for EC2-based development
+    Value: !GetAtt ReadOnlyInstanceProfile.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-ReadOnlyInstanceProfileArn"
+
+  AssumeRoleCommands:
+    Description: AWS CLI commands to assume these roles
+    Value: !Sub |
+      # Assume read-only role for local development:
+      aws sts assume-role --role-arn ${ReadOnlyRole.Arn} --role-session-name dev-session
+
+      # Configure AWS SSO for seamless access:
+      aws configure sso
+
+      # Or add to ~/.aws/config:
+      [profile secdash-readonly]
+      sso_start_url = https://your-sso.awsapps.com/start
+      sso_region = us-west-2
+      sso_account_id = ${AWS::AccountId}
+      sso_role_name = ${ReadOnlyRole}
+      region = us-west-2
