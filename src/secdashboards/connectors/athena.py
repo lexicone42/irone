@@ -10,6 +10,11 @@ import polars as pl
 
 from secdashboards.catalog.models import DataSource
 from secdashboards.connectors.base import DataConnector, HealthCheckResult
+from secdashboards.connectors.sql_utils import (
+    quote_identifier,
+    quote_table,
+    sanitize_string,
+)
 
 
 class AthenaConnector(DataConnector):
@@ -89,11 +94,15 @@ class AthenaConnector(DataConnector):
         if not self.source.table:
             return {}
 
+        # Sanitize database and table names to prevent SQL injection
+        safe_database = sanitize_string(self.source.database or "default")
+        safe_table = sanitize_string(self.source.table)
+
         sql = f"""
         SELECT column_name, data_type
         FROM information_schema.columns
-        WHERE table_schema = '{self.source.database}'
-          AND table_name = '{self.source.table}'
+        WHERE table_schema = '{safe_database}'
+          AND table_name = '{safe_table}'
         """
 
         df = self.query(sql)
@@ -110,7 +119,11 @@ class AthenaConnector(DataConnector):
             if self.source.health_check_query:
                 sql = self.source.health_check_query
             else:
-                table = f'"{self.source.database}"."{self.source.table}"'
+                # Use proper identifier quoting for table names
+                table = quote_table(
+                    self.source.database or "default",
+                    self.source.table or "unknown",
+                )
                 sql = f"""
                 SELECT COUNT(*) as cnt, MAX(time) as latest_time
                 FROM {table}
@@ -154,10 +167,13 @@ class AthenaConnector(DataConnector):
 
     def list_tables(self) -> list[dict[str, Any]]:
         """List all tables in the database."""
+        # Sanitize database name to prevent SQL injection
+        safe_database = sanitize_string(self.source.database or "default")
+
         sql = f"""
         SELECT table_name, table_type
         FROM information_schema.tables
-        WHERE table_schema = '{self.source.database}'
+        WHERE table_schema = '{safe_database}'
         """
         df = self.query(sql)
         return df.to_dicts()

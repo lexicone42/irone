@@ -6,10 +6,20 @@ from enum import IntEnum
 from typing import Any
 
 import polars as pl
+import structlog
 
 from secdashboards.catalog.models import DataSource
 from secdashboards.connectors.athena import AthenaConnector
 from secdashboards.connectors.base import HealthCheckResult
+from secdashboards.connectors.sql_utils import (
+    SQLSanitizationError,
+    quote_table,
+    sanitize_int,
+    sanitize_string,
+    validate_ipv4,
+)
+
+logger = structlog.get_logger()
 
 
 class OCSFEventClass(IntEnum):
@@ -101,24 +111,48 @@ class SecurityLakeConnector(AthenaConnector):
         limit: int = 1000,
         additional_filters: str | None = None,
     ) -> pl.DataFrame:
-        """Query events by OCSF event class ID."""
+        """Query events by OCSF event class ID.
+
+        SECURITY NOTE: The additional_filters parameter accepts raw SQL.
+        Callers MUST sanitize any user input before passing it here.
+        Use the helper methods (query_authentication_events, etc.) which
+        handle sanitization automatically.
+        """
         end = end or datetime.now(UTC)
         start = start or (end - timedelta(hours=1))
 
-        table = f'"{self.source.database}"."{self.source.table}"'
+        # Use proper identifier quoting for table names
+        table = quote_table(
+            self.source.database or "default",
+            self.source.table or "unknown",
+        )
+
+        # Safely convert event_class to integer
+        class_uid = sanitize_int(int(event_class))
+
+        # Sanitize limit to prevent injection
+        safe_limit = sanitize_int(limit)
+        if safe_limit > 10000:
+            safe_limit = 10000  # Cap at reasonable limit
 
         sql = f"""
         SELECT *
         FROM {table}
-        WHERE class_uid = {int(event_class)}
+        WHERE class_uid = {class_uid}
           AND time_dt >= TIMESTAMP '{self._format_timestamp(start)}'
           AND time_dt < TIMESTAMP '{self._format_timestamp(end)}'
         """
 
         if additional_filters:
+            # Log warning if filters look suspicious
+            if any(kw in additional_filters.upper() for kw in ["DROP", "DELETE", "INSERT", "UPDATE", "TRUNCATE"]):
+                logger.warning(
+                    "suspicious_sql_filter_detected",
+                    filter=additional_filters[:100],
+                )
             sql += f" AND ({additional_filters})"
 
-        sql += f" LIMIT {limit}"
+        sql += f" LIMIT {safe_limit}"
 
         return self.query(sql)
 
@@ -132,7 +166,9 @@ class SecurityLakeConnector(AthenaConnector):
         """Query authentication events."""
         filters = None
         if status:
-            filters = f"status = '{status}'"
+            # Sanitize status to prevent SQL injection
+            safe_status = sanitize_string(status)
+            filters = f"status = '{safe_status}'"
 
         return self.query_by_event_class(
             OCSFEventClass.AUTHENTICATION,
@@ -153,9 +189,13 @@ class SecurityLakeConnector(AthenaConnector):
         """Query API activity events (CloudTrail)."""
         filters = []
         if service:
-            filters.append(f"api.service.name = '{service}'")
+            # Sanitize service name to prevent SQL injection
+            safe_service = sanitize_string(service)
+            filters.append(f""""api"."service"."name" = '{safe_service}'""")
         if operation:
-            filters.append(f"api.operation = '{operation}'")
+            # Sanitize operation name to prevent SQL injection
+            safe_operation = sanitize_string(operation)
+            filters.append(f""""api"."operation" = '{safe_operation}'""")
 
         additional = " AND ".join(filters) if filters else None
 
@@ -179,11 +219,29 @@ class SecurityLakeConnector(AthenaConnector):
         """Query network activity events."""
         filters = []
         if src_ip:
-            filters.append(f"src_endpoint.ip = '{src_ip}'")
+            try:
+                # Validate IP address format to prevent injection
+                safe_ip = validate_ipv4(src_ip)
+                filters.append(f""""src_endpoint"."ip" = '{safe_ip}'""")
+            except SQLSanitizationError:
+                logger.warning("invalid_source_ip_format", ip=src_ip)
+                return pl.DataFrame()
         if dst_ip:
-            filters.append(f"dst_endpoint.ip = '{dst_ip}'")
-        if dst_port:
-            filters.append(f"dst_endpoint.port = {dst_port}")
+            try:
+                # Validate IP address format to prevent injection
+                safe_ip = validate_ipv4(dst_ip)
+                filters.append(f""""dst_endpoint"."ip" = '{safe_ip}'""")
+            except SQLSanitizationError:
+                logger.warning("invalid_dest_ip_format", ip=dst_ip)
+                return pl.DataFrame()
+        if dst_port is not None:
+            # Validate port is an integer to prevent injection
+            safe_port = sanitize_int(dst_port)
+            if 0 <= safe_port <= 65535:
+                filters.append(f""""dst_endpoint"."port" = {safe_port}""")
+            else:
+                logger.warning("invalid_port_range", port=dst_port)
+                return pl.DataFrame()
 
         additional = " AND ".join(filters) if filters else None
 
@@ -205,7 +263,9 @@ class SecurityLakeConnector(AthenaConnector):
         """Query security findings."""
         filters = None
         if severity:
-            filters = f"severity = '{severity}'"
+            # Sanitize severity to prevent SQL injection
+            safe_severity = sanitize_string(severity)
+            filters = f"severity = '{safe_severity}'"
 
         return self.query_by_event_class(
             OCSFEventClass.SECURITY_FINDING,
@@ -224,7 +284,11 @@ class SecurityLakeConnector(AthenaConnector):
         end = end or datetime.now(UTC)
         start = start or (end - timedelta(hours=24))
 
-        table = f'"{self.source.database}"."{self.source.table}"'
+        # Use proper identifier quoting for table names
+        table = quote_table(
+            self.source.database or "default",
+            self.source.table or "unknown",
+        )
 
         sql = f"""
         SELECT
@@ -247,7 +311,11 @@ class SecurityLakeConnector(AthenaConnector):
         start_time = time.time()
 
         try:
-            table = f'"{self.source.database}"."{self.source.table}"'
+            # Use proper identifier quoting for table names
+            table = quote_table(
+                self.source.database or "default",
+                self.source.table or "unknown",
+            )
             sql = f"""
             SELECT
                 COUNT(*) as cnt,
