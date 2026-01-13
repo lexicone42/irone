@@ -32,3 +32,9 @@ packaged.yaml
 # Tool-specific directories
 .playwright-mcp/
 .serena/
+
+# Generated output
+output/
+
+# Marimo session state
+notebooks/__marimo__/

@@ -73,14 +73,14 @@
     filecolor=secblue,
     urlcolor=secblue,
     citecolor=secblue,
-    pdftitle={Detection Engineering Report},
+    pdftitle={\VAR{report.title|escape_latex}},
     pdfauthor={SecDashboards},
 }
 
 % Header/Footer
 \pagestyle{fancy}
 \fancyhf{}
-\fancyhead[L]{\small\textcolor{codegray}{Detection Engineering Report}}
+\fancyhead[L]{\small\textcolor{codegray}{\VAR{report.title|escape_latex}}}
 \fancyhead[R]{\small\textcolor{codegray}{\VAR{report.generated_at.strftime('%Y-%m-%d %H:%M UTC')}}}
 \fancyfoot[C]{\thepage}
 \renewcommand{\headrulewidth}{0.4pt}
@@ -115,7 +115,7 @@
     \centering
     \vspace*{3cm}
 
-    {\Huge\bfseries\textcolor{secblue}{Detection Engineering Report}\par}
+    {\Huge\bfseries\textcolor{secblue}{\VAR{report.title|escape_latex}}\par}
     \vspace{1cm}
 
     {\large\textcolor{codegray}{Security Detection Rules Analysis}\par}
