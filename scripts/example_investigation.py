@@ -342,7 +342,7 @@ retrieving production database credentials from Secrets Manager.
         from secdashboards.reports.exporters import compile_latex_to_pdf
 
         pdf_output = output_dir / "investigation_report.pdf"
-        result = compile_latex_to_pdf(latex_path, pdf_output)
+        result = compile_latex_to_pdf(latex_content, pdf_output)
         if result and result.exists():
             pdf_path = result
             print(f"      PDF:   {pdf_path}")
