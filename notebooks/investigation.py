@@ -308,6 +308,228 @@ def _(
 @app.cell
 def _(mo):
     mo.md("""
+    ## Investigation Timeline
+
+    View events in chronological order, tag them for classification,
+    and generate AI-assisted summaries.
+
+    **Event Tags:**
+    - **Unreviewed** - Not yet analyzed (gray)
+    - **Important** - Significant but not malicious (gold)
+    - **Suspicious** - Potentially malicious activity (red)
+    - **Benign** - Confirmed legitimate activity (teal)
+    - **Attack phases** - Initial Access, Persistence, Lateral Movement, etc.
+    """)
+    return
+
+
+@app.cell
+def _(graph, mo):
+    from secdashboards.graph import (
+        EventTag,
+        InvestigationTimeline,
+        TimelineVisualizer,
+        extract_timeline_from_graph,
+    )
+
+    timeline_output = mo.md("_Build a graph first to see the timeline_")
+    timeline = None
+
+    try:
+        if "graph" in dir() and graph.node_count() > 0:
+            timeline = extract_timeline_from_graph(
+                graph, include_nodes=True, include_edges=False
+            )
+            if timeline.events:
+                visualizer = TimelineVisualizer(height="400px")
+                timeline_html = visualizer.to_html(timeline)
+                legend_html = visualizer.generate_legend_html()
+                summary = timeline.summary()
+
+                timeline_output = mo.vstack(
+                    [
+                        mo.md(
+                            f"**Timeline:** {summary['total_events']} events "
+                            f"from {summary['time_range']['start'][:19] if summary['time_range']['start'] else 'N/A'} "
+                            f"to {summary['time_range']['end'][:19] if summary['time_range']['end'] else 'N/A'}"
+                        ),
+                        mo.Html(timeline_html),
+                        mo.Html(legend_html),
+                    ]
+                )
+            else:
+                timeline_output = mo.md("_No events with timestamps in the graph_")
+    except NameError:
+        pass
+
+    timeline_output
+    return EventTag, InvestigationTimeline, TimelineVisualizer, extract_timeline_from_graph, timeline
+
+
+@app.cell
+def _(mo):
+    mo.md("""
+    ### Event Tagging
+
+    Tag events to classify them during your investigation.
+    Select an event and choose a tag to apply.
+    """)
+    return
+
+
+@app.cell
+def _(EventTag, mo, timeline):
+    # Build event options for tagging
+    event_options = [("-- Select Event --", "")]
+    if timeline and timeline.events:
+        for evt in timeline.events:
+            label = f"{evt.timestamp.strftime('%H:%M:%S')} - {evt.title[:50]}"
+            event_options.append((label, evt.id))
+
+    tag_event_select = mo.ui.dropdown(
+        options=event_options,
+        value="",
+        label="Event to Tag",
+    )
+
+    tag_options = [
+        ("Unreviewed", EventTag.UNREVIEWED.value),
+        ("Important", EventTag.IMPORTANT.value),
+        ("Suspicious", EventTag.SUSPICIOUS.value),
+        ("Benign", EventTag.BENIGN.value),
+        ("Initial Access", EventTag.INITIAL_ACCESS.value),
+        ("Persistence", EventTag.PERSISTENCE.value),
+        ("Privilege Escalation", EventTag.PRIVILEGE_ESCALATION.value),
+        ("Lateral Movement", EventTag.LATERAL_MOVEMENT.value),
+        ("Data Exfiltration", EventTag.DATA_EXFILTRATION.value),
+    ]
+
+    tag_select = mo.ui.dropdown(
+        options=tag_options,
+        value=EventTag.SUSPICIOUS.value,
+        label="Tag",
+    )
+
+    tag_notes = mo.ui.text(
+        value="",
+        label="Analyst Notes",
+        placeholder="Optional notes about this event",
+        full_width=True,
+    )
+
+    mo.vstack([tag_event_select, mo.hstack([tag_select, tag_notes])])
+    return tag_event_select, tag_notes, tag_select
+
+
+@app.cell
+def _(mo):
+    apply_tag_btn = mo.ui.run_button(label="Apply Tag")
+    apply_tag_btn
+    return (apply_tag_btn,)
+
+
+@app.cell
+def _(EventTag, apply_tag_btn, mo, tag_event_select, tag_notes, tag_select, timeline):
+    tag_result = mo.md("")
+
+    if apply_tag_btn.value and tag_event_select.value:
+        try:
+            event_id = tag_event_select.value
+            tag = EventTag(tag_select.value)
+            notes = tag_notes.value
+
+            success = timeline.tag_event(event_id, tag, notes)
+            if success:
+                tag_result = mo.md(f"**Tagged event** with `{tag.value}`")
+            else:
+                tag_result = mo.md("_Event not found_")
+        except Exception as e:
+            tag_result = mo.md(f"**Error:** {e}")
+
+    tag_result
+    return (tag_result,)
+
+
+@app.cell
+def _(mo):
+    mo.md("""
+    ### Timeline Summary
+
+    Generate an AI summary of the timeline events, then edit it to create
+    your final investigation summary.
+    """)
+    return
+
+
+@app.cell
+def _(mo):
+    generate_summary_btn = mo.ui.run_button(label="Generate AI Summary")
+    generate_summary_btn
+    return (generate_summary_btn,)
+
+
+@app.cell
+def _(generate_summary_btn, mo, region, timeline):
+    ai_timeline_summary = mo.md("_Click 'Generate AI Summary' to create a timeline analysis_")
+
+    if generate_summary_btn.value and timeline:
+        try:
+            from secdashboards.ai import BedrockAssistant, TaskConfig
+            from secdashboards.graph import generate_timeline_summary_prompt
+
+            assistant = BedrockAssistant(region=region)
+            config = TaskConfig()
+
+            prompt = generate_timeline_summary_prompt(timeline)
+            response = assistant.generate(prompt=prompt, config=config)
+
+            # Store AI summary in timeline
+            timeline.ai_summary = response.content
+
+            ai_timeline_summary = mo.vstack(
+                [
+                    mo.md(f"**AI Analysis** (${response.cost_usd:.4f})"),
+                    mo.md("---"),
+                    mo.md(response.content),
+                ]
+            )
+        except Exception as e:
+            ai_timeline_summary = mo.md(f"**Error generating summary:** {e}")
+
+    ai_timeline_summary
+    return (ai_timeline_summary,)
+
+
+@app.cell
+def _(mo, timeline):
+    # Editable analyst summary field
+    initial_summary = ""
+    if timeline and timeline.ai_summary:
+        initial_summary = timeline.ai_summary
+
+    analyst_summary_editor = mo.ui.text_area(
+        value=initial_summary,
+        label="Analyst Summary (edit the AI summary or write your own)",
+        full_width=True,
+        rows=10,
+    )
+    analyst_summary_editor
+    return (analyst_summary_editor,)
+
+
+@app.cell
+def _(analyst_summary_editor, mo, timeline):
+    # Update timeline with analyst edits
+    if timeline and analyst_summary_editor.value:
+        timeline.analyst_summary = analyst_summary_editor.value
+
+    mo.md("_Edit the summary above. Changes are saved automatically._")
+    return
+
+
+@app.cell
+def _(mo):
+    mo.md("""
     ## AI-Assisted Analysis
 
     Use Amazon Bedrock to analyze the investigation graph and identify
@@ -440,6 +662,7 @@ def _(mo):
 @app.cell
 def _(
     analysis_output,
+    analyst_summary_editor,
     export_btn,
     export_format,
     graph,
@@ -448,6 +671,7 @@ def _(
     region,
     report_title,
     s3_bucket_inv,
+    timeline,
 ):
     export_output = mo.md("_Build a graph first, then click 'Generate Export'_")
 
@@ -456,7 +680,7 @@ def _(
             if "graph" not in dir() or graph.node_count() == 0:
                 export_output = mo.md("_Please build an investigation graph first_")
             elif export_format.value == "JSON":
-                # JSON export
+                # JSON export - includes timeline data
                 import json
 
                 export_data = {
@@ -478,6 +702,12 @@ def _(
                         for e in graph.edges
                     ],
                 }
+
+                # Add timeline data if available
+                if timeline and timeline.events:
+                    export_data["timeline"] = timeline.to_dict()
+                    if analyst_summary_editor and analyst_summary_editor.value:
+                        export_data["timeline"]["analyst_summary"] = analyst_summary_editor.value
 
                 json_str = json.dumps(export_data, indent=2, default=str)
 

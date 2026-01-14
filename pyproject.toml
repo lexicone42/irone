@@ -22,6 +22,7 @@ dependencies = [
     "pyvis>=0.3.2",
     "gremlinpython>=3.7.0",
     "networkx>=3.2",
+    "plotly>=5.24.0",
 ]
 
 [dependency-groups]

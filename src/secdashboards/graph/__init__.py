@@ -55,6 +55,14 @@ from secdashboards.graph.models import (
     SecurityGraph,
 )
 from secdashboards.graph.queries import GremlinQueries, OpenCypherQueries
+from secdashboards.graph.timeline import (
+    EventTag,
+    InvestigationTimeline,
+    TimelineEvent,
+    TimelineVisualizer,
+    extract_timeline_from_graph,
+    generate_timeline_summary_prompt,
+)
 from secdashboards.graph.visualization import (
     GraphVisualizer,
     create_investigation_visualization,
@@ -86,4 +94,11 @@ __all__ = [
     "NeptuneConnector",
     "GremlinQueries",
     "OpenCypherQueries",
+    # Timeline
+    "TimelineEvent",
+    "EventTag",
+    "InvestigationTimeline",
+    "TimelineVisualizer",
+    "extract_timeline_from_graph",
+    "generate_timeline_summary_prompt",
 ]

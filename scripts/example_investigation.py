@@ -102,19 +102,21 @@ def create_demo_graph():
         )
     )
 
-    # API Operation nodes
+    # API Operation nodes with timestamps for timeline
+    base_time = datetime.now(UTC) - timedelta(hours=2)
     api_operations = [
-        ("iam", "CreateUser", 1, 0),
-        ("iam", "CreateAccessKey", 2, 0),
-        ("iam", "AttachUserPolicy", 1, 0),
-        ("s3", "ListBuckets", 1, 0),
-        ("s3", "GetObject", 15, 2),
-        ("sts", "GetCallerIdentity", 3, 0),
-        ("ec2", "DescribeInstances", 5, 0),
-        ("secretsmanager", "GetSecretValue", 8, 1),
+        ("iam", "CreateUser", 1, 0, 5),       # minute offset
+        ("iam", "CreateAccessKey", 2, 0, 7),
+        ("iam", "AttachUserPolicy", 1, 0, 10),
+        ("sts", "GetCallerIdentity", 3, 0, 0),   # first action
+        ("s3", "ListBuckets", 1, 0, 15),
+        ("s3", "GetObject", 15, 2, 20),
+        ("ec2", "DescribeInstances", 5, 0, 45),
+        ("secretsmanager", "GetSecretValue", 8, 1, 60),
     ]
 
-    for service, operation, success, failed in api_operations:
+    for service, operation, success, failed, minute_offset in api_operations:
+        event_time = base_time + timedelta(minutes=minute_offset)
         graph.add_node(
             GraphNode(
                 id=f"APIOperation:{service}:{operation}",
@@ -127,6 +129,8 @@ def create_demo_graph():
                     "failure_count": failed,
                 },
                 event_count=success + failed,
+                first_seen=event_time,
+                last_seen=event_time + timedelta(minutes=success + failed),
             )
         )
 
@@ -162,6 +166,7 @@ def create_demo_graph():
     )
 
     # Security Finding node
+    finding_time = base_time + timedelta(minutes=6)  # Shortly after CreateUser
     graph.add_node(
         GraphNode(
             id="Finding:iam-user-creation:2024-01-15T10:30:00",
@@ -170,11 +175,13 @@ def create_demo_graph():
             properties={
                 "rule_id": "iam-user-creation",
                 "severity": "high",
-                "triggered_at": "2024-01-15T10:30:00Z",
+                "triggered_at": finding_time.isoformat(),
                 "match_count": 1,
                 "description": "New IAM user created outside of normal process",
             },
             event_count=1,
+            first_seen=finding_time,
+            last_seen=finding_time,
         )
     )
 
@@ -195,7 +202,7 @@ def create_demo_graph():
     )
 
     # Principal called APIs
-    for service, operation, _, _ in api_operations:
+    for service, operation, _, _, _ in api_operations:
         graph.add_edge(
             GraphEdge(
                 id=GraphEdge.create_id(
@@ -298,8 +305,52 @@ def run_demo_investigation(output_dir: Path):
     print(f"      Saved: {html_path}")
     print()
 
+    # Generate timeline
+    print("[3/5] Building investigation timeline...")
+    from secdashboards.graph import (
+        extract_timeline_from_graph,
+        TimelineVisualizer,
+        EventTag,
+    )
+
+    timeline = extract_timeline_from_graph(graph, include_nodes=True, include_edges=False)
+
+    # Tag some events as suspicious for demonstration
+    for event in timeline.events:
+        if "CreateUser" in event.title:
+            timeline.tag_event(event.id, EventTag.INITIAL_ACCESS, "Backdoor account creation")
+        elif "GetSecretValue" in event.title:
+            timeline.tag_event(event.id, EventTag.DATA_EXFILTRATION, "Credential theft")
+        elif "GetObject" in event.title and "sensitive" in event.title.lower():
+            timeline.tag_event(event.id, EventTag.DATA_EXFILTRATION, "Data access")
+
+    timeline_summary = timeline.summary()
+    print(f"      Events:     {timeline_summary['total_events']}")
+    print(f"      Time range: {timeline_summary['time_range']['start'][:19] if timeline_summary['time_range']['start'] else 'N/A'} to {timeline_summary['time_range']['end'][:19] if timeline_summary['time_range']['end'] else 'N/A'}")
+    print(f"      Tags:       {timeline_summary['tag_counts']}")
+
+    # Save timeline visualization
+    timeline_vis = TimelineVisualizer(height="500px")
+    timeline_html = f"""<!DOCTYPE html>
+<html>
+<head>
+    <title>Investigation Timeline - INC-2024-0115-001</title>
+    <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+</head>
+<body>
+    <h1>Investigation Timeline</h1>
+    <p>Investigation ID: INC-2024-0115-001</p>
+    {timeline_vis.to_html(timeline)}
+    {timeline_vis.generate_legend_html()}
+</body>
+</html>"""
+    timeline_html_path = output_dir / "investigation_timeline.html"
+    timeline_html_path.write_text(timeline_html)
+    print(f"      Saved: {timeline_html_path}")
+    print()
+
     # Generate report data
-    print("[3/4] Generating report...")
+    print("[4/5] Generating report...")
     from secdashboards.reports import graph_to_report_data, LaTeXRenderer
 
     report_data = graph_to_report_data(
@@ -351,7 +402,7 @@ retrieving production database credentials from Secrets Manager.
     print()
 
     # Export JSON
-    print("[4/4] Exporting graph data...")
+    print("[5/5] Exporting graph data...")
     json_data = {
         "investigation_id": "INC-2024-0115-001",
         "generated_at": datetime.now(UTC).isoformat(),
@@ -374,6 +425,7 @@ retrieving production database credentials from Secrets Manager.
             }
             for e in graph.edges
         ],
+        "timeline": timeline.to_dict(),
     }
     json_path = output_dir / "investigation_data.json"
     json_path.write_text(json.dumps(json_data, indent=2, default=str))
@@ -385,14 +437,16 @@ retrieving production database credentials from Secrets Manager.
     print("=" * 60)
     print()
     print("Output files:")
-    print(f"  - Graph:  {html_path}")
-    print(f"  - Report: {latex_path}")
+    print(f"  - Graph:    {html_path}")
+    print(f"  - Timeline: {timeline_html_path}")
+    print(f"  - Report:   {latex_path}")
     if pdf_path:
-        print(f"  - PDF:    {pdf_path}")
-    print(f"  - Data:   {json_path}")
+        print(f"  - PDF:      {pdf_path}")
+    print(f"  - Data:     {json_path}")
     print()
-    print("To view the interactive graph, open the HTML file in a browser:")
+    print("To view the interactive graph and timeline, open the HTML files in a browser:")
     print(f"  open {html_path}")
+    print(f"  open {timeline_html_path}")
     print()
 
     return graph
