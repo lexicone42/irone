@@ -172,7 +172,8 @@ This report summarizes the execution of \textbf{\VAR{report.total_rules}} detect
 % Detection Results Overview
 \section{Detection Results Overview}
 
-\begin{longtable}{|l|l|l|r|l|}
+{\small
+\begin{longtable}{|p{0.18\textwidth}|p{0.35\textwidth}|l|r|l|}
 \hline
 \textbf{Rule ID} & \textbf{Rule Name} & \textbf{Severity} & \textbf{Matches} & \textbf{Status} \\ \hline
 \endfirsthead
@@ -182,7 +183,7 @@ This report summarizes the execution of \textbf{\VAR{report.total_rules}} detect
 \hline
 \endfoot
 \BLOCK{for result in report.detection_results}
-\VAR{result.rule_id|escape_latex} & \VAR{result.rule_name|escape_latex} &
+{\scriptsize\texttt{\VAR{result.rule_id|truncate(25)|escape_latex}}} & \VAR{result.rule_name|truncate(40)|escape_latex} &
 \BLOCK{if result.severity == 'critical'}
 \severitycritical
 \BLOCK{elif result.severity == 'high'}
@@ -204,6 +205,7 @@ This report summarizes the execution of \textbf{\VAR{report.total_rules}} detect
 \BLOCK{endfor}
 \hline
 \end{longtable}
+}
 
 % Detailed Detection Results
 \section{Detailed Detection Results}

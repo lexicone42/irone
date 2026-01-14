@@ -180,7 +180,8 @@ This investigation analyzed \textbf{\VAR{report.total_nodes}} entities connected
 \BLOCK{if report.principals}
 The investigation identified \textbf{\VAR{report.principals|length}} principal entities (users, roles, or services).
 
-\begin{longtable}{|l|l|l|p{5cm}|}
+{\small
+\begin{longtable}{|p{0.18\textwidth}|l|l|p{0.38\textwidth}|}
 \hline
 \textbf{Name} & \textbf{Type} & \textbf{Account} & \textbf{ARN} \\ \hline
 \endfirsthead
@@ -190,13 +191,14 @@ The investigation identified \textbf{\VAR{report.principals|length}} principal e
 \hline
 \endfoot
 \BLOCK{for principal in report.principals[:20]}
-\VAR{principal.get('user_name', 'N/A')|escape_latex} & \VAR{principal.get('user_type', 'N/A')|escape_latex} & \VAR{principal.get('account_id', 'N/A')|escape_latex} & {\small\VAR{principal.get('arn', 'N/A')|escape_latex}} \\
+\VAR{principal.get('user_name', 'N/A')|truncate(25)|escape_latex} & \VAR{principal.get('user_type', 'N/A')|escape_latex} & \VAR{principal.get('account_id', 'N/A')|escape_latex} & {\scriptsize\texttt{\VAR{principal.get('arn', 'N/A')|truncate_arn|escape_latex}}} \\
 \BLOCK{endfor}
 \BLOCK{if report.principals|length > 20}
 \multicolumn{4}{|c|}{\textit{... and \VAR{report.principals|length - 20} more principals}} \\
 \BLOCK{endif}
 \hline
 \end{longtable}
+}
 \BLOCK{else}
 \textit{No principals identified in this investigation.}
 \BLOCK{endif}
@@ -232,7 +234,8 @@ The investigation identified \textbf{\VAR{report.ip_addresses|length}} unique IP
 \BLOCK{if report.resources}
 The investigation identified \textbf{\VAR{report.resources|length}} AWS resources.
 
-\begin{longtable}{|l|l|l|}
+{\small
+\begin{longtable}{|p{0.22\textwidth}|p{0.50\textwidth}|l|}
 \hline
 \textbf{Resource Type} & \textbf{Resource ID} & \textbf{Region} \\ \hline
 \endfirsthead
@@ -242,13 +245,14 @@ The investigation identified \textbf{\VAR{report.resources|length}} AWS resource
 \hline
 \endfoot
 \BLOCK{for resource in report.resources[:20]}
-\VAR{resource.get('resource_type', 'N/A')|escape_latex} & {\small\VAR{resource.get('resource_id', 'N/A')|escape_latex}} & \VAR{resource.get('region', 'N/A')|escape_latex} \\
+\VAR{resource.get('resource_type', 'N/A')|escape_latex} & {\scriptsize\texttt{\VAR{resource.get('resource_id', 'N/A')|truncate_id|escape_latex}}} & \VAR{resource.get('region', 'N/A')|escape_latex} \\
 \BLOCK{endfor}
 \BLOCK{if report.resources|length > 20}
 \multicolumn{3}{|c|}{\textit{... and \VAR{report.resources|length - 20} more resources}} \\
 \BLOCK{endif}
 \hline
 \end{longtable}
+}
 \BLOCK{else}
 \textit{No resources identified in this investigation.}
 \BLOCK{endif}

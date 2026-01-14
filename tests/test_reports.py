@@ -23,6 +23,10 @@ from secdashboards.reports import (
     format_figure,
     format_table,
 )
+from secdashboards.reports.latex_renderer import (
+    _calculate_column_widths,
+    truncate_text,
+)
 
 
 class TestEscapeLatex:
@@ -86,6 +90,49 @@ class TestEscapeLatexUrl:
         assert r"\#" in escaped
 
 
+class TestTruncateText:
+    """Tests for text truncation utility."""
+
+    def test_truncate_short_text(self) -> None:
+        """Test that short text is not truncated."""
+        text = "Short text"
+        assert truncate_text(text, 50) == text
+
+    def test_truncate_long_text(self) -> None:
+        """Test truncation of long text."""
+        text = "This is a very long text that should be truncated"
+        result = truncate_text(text, 20)
+        assert len(result) == 20
+        assert result.endswith("...")
+
+    def test_truncate_exact_length(self) -> None:
+        """Test text at exact max length."""
+        text = "Exact"
+        assert truncate_text(text, 5) == "Exact"
+
+    def test_truncate_none(self) -> None:
+        """Test truncating None returns empty string."""
+        assert truncate_text(None, 50) == ""
+
+    def test_truncate_non_string(self) -> None:
+        """Test truncating non-string values."""
+        assert truncate_text(12345, 3) == "..."
+
+    def test_truncate_custom_suffix(self) -> None:
+        """Test truncation with custom suffix."""
+        text = "Long text here"
+        result = truncate_text(text, 10, suffix="[...]")
+        assert result.endswith("[...]")
+
+    def test_truncate_arn(self) -> None:
+        """Test truncating AWS ARN."""
+        arn = "arn:aws:iam::123456789012:user/very-long-username-that-exceeds-limits"
+        result = truncate_text(arn, 40)
+        assert len(result) == 40
+        assert result.startswith("arn:aws:iam")
+        assert result.endswith("...")
+
+
 class TestTableData:
     """Tests for TableData model."""
 
@@ -146,6 +193,132 @@ class TestFormatTable:
         latex = format_table(table)
         assert r"\caption{My caption}" in latex
         assert r"\label{tab:test}" in latex
+
+    def test_format_table_truncates_long_cells(self) -> None:
+        """Test that long cell content is truncated."""
+        long_arn = "arn:aws:iam::123456789012:user/" + "x" * 100
+        table = TableData(
+            headers=["ARN"],
+            rows=[[long_arn]],
+        )
+        latex = format_table(table, max_cell_width=40)
+        # The truncated value should be shorter and end with ...
+        assert "..." in latex
+        # Original full ARN should not be present
+        assert "x" * 100 not in latex
+
+    def test_format_table_small_font(self) -> None:
+        """Test table with small font option."""
+        table = TableData(
+            headers=["A"],
+            rows=[["1"]],
+        )
+        latex = format_table(table, use_small_font=True)
+        assert r"{\small" in latex
+
+    def test_format_table_respects_custom_alignments(self) -> None:
+        """Test that custom column alignments are respected."""
+        table = TableData(
+            headers=["Name", "Count"],
+            rows=[["test", "5"]],
+            column_alignments="|l|r|",
+        )
+        latex = format_table(table)
+        assert r"\begin{longtable}{|l|r|}" in latex
+
+
+class TestCalculateColumnWidths:
+    """Tests for column width calculation."""
+
+    def test_short_columns_use_auto_width(self) -> None:
+        """Test that short columns use auto width (l alignment)."""
+        headers = ["ID", "Name"]
+        rows = [["1", "Joe"], ["2", "Amy"]]
+        widths = _calculate_column_widths(headers, rows, 2)
+        # Short columns should use 'l' alignment
+        assert all(w == "l" for w in widths)
+
+    def test_numeric_columns_right_aligned(self) -> None:
+        """Test that numeric columns are right-aligned."""
+        headers = ["Name", "Count", "Total Matches"]
+        rows = [["test", "5", "100"]]
+        widths = _calculate_column_widths(headers, rows, 3)
+        # "Count" and "Total Matches" headers should trigger right alignment
+        assert widths[1] == "r"
+        assert widths[2] == "r"
+
+    def test_long_content_uses_p_column(self) -> None:
+        """Test that long content triggers p{} column specification."""
+        headers = ["Short", "Very Long Description Column"]
+        rows = [["x", "This is a very long description that needs wrapping"]]
+        widths = _calculate_column_widths(headers, rows, 2)
+        # Second column should use p{} for wrapping
+        assert widths[1].startswith("p{")
+        assert r"\textwidth" in widths[1]
+
+    def test_handles_empty_cells(self) -> None:
+        """Test handling of empty cells."""
+        headers = ["A", "B"]
+        rows = [["x", ""], [None, "y"]]
+        # Should not raise an error
+        widths = _calculate_column_widths(headers, rows, 2)
+        assert len(widths) == 2
+
+
+class TestTableOverflowProtection:
+    """Tests to verify tables don't overflow page width."""
+
+    def test_arn_column_truncated(self) -> None:
+        """Test that AWS ARNs are truncated to prevent overflow."""
+        long_arn = "arn:aws:iam::123456789012:role/very-long-role-name-that-would-overflow-the-page-margin"
+        table = TableData(
+            headers=["User", "ARN"],
+            rows=[["admin", long_arn]],
+        )
+        latex = format_table(table, max_cell_width=45)
+        # ARN should be truncated
+        assert "..." in latex
+        # The full ARN should not appear
+        assert "very-long-role-name-that-would-overflow-the-page-margin" not in latex
+
+    def test_multiple_long_columns(self) -> None:
+        """Test table with multiple potentially long columns."""
+        table = TableData(
+            headers=["Resource Type", "Resource ID", "ARN"],
+            rows=[
+                [
+                    "AWS::S3::Bucket",
+                    "my-very-long-bucket-name-that-exceeds-normal-limits",
+                    "arn:aws:s3:::my-very-long-bucket-name-that-exceeds-normal-limits",
+                ]
+            ],
+        )
+        latex = format_table(table, max_cell_width=35)
+        # Both long values should be truncated
+        assert latex.count("...") >= 2
+
+    def test_empty_string_values_handled(self) -> None:
+        """Test that empty string values in cells are handled gracefully."""
+        table = TableData(
+            headers=["A", "B", "C"],
+            rows=[["", "value", ""]],
+        )
+        latex = format_table(table)
+        # Should not raise an error and should produce valid LaTeX
+        assert r"\begin{longtable}" in latex
+
+    def test_total_table_width_constrained(self) -> None:
+        """Test that calculated p{} widths are within reasonable bounds."""
+        headers = ["A" * 50, "B" * 50, "C" * 50]  # Long headers
+        rows = [["x" * 60, "y" * 60, "z" * 60]]  # Long content
+        widths = _calculate_column_widths(headers, rows, 3)
+
+        # Check that all p{} columns have widths <= 0.4\textwidth
+        for w in widths:
+            if w.startswith("p{"):
+                # Extract the fraction value
+                fraction = float(w.split("{")[1].split(r"\textwidth")[0])
+                assert fraction <= 0.4, f"Column width {fraction} exceeds 0.4"
 
 
 class TestCodeBlock:

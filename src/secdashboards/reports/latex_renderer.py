@@ -67,28 +67,76 @@ def escape_latex_url(url: str) -> str:
     return url.replace("%", r"\%").replace("#", r"\#").replace("&", r"\&")
 
 
-def format_table(table: TableData) -> str:
-    """Format a TableData object as a LaTeX longtable.
+def truncate_text(text: str, max_length: int = 50, suffix: str = "...") -> str:
+    """Truncate text to a maximum length with ellipsis.
+
+    Args:
+        text: Text to truncate
+        max_length: Maximum length before truncation
+        suffix: Suffix to append when truncated
+
+    Returns:
+        Truncated text
+    """
+    if text is None:
+        return ""
+    text = str(text)
+    if len(text) <= max_length:
+        return text
+    return text[: max_length - len(suffix)] + suffix
+
+
+# Maximum character widths for common column types (for table overflow prevention)
+COLUMN_MAX_WIDTHS = {
+    "arn": 40,  # AWS ARNs can be very long
+    "resource_id": 35,
+    "user_name": 30,
+    "ip_address": 15,
+    "default": 45,
+}
+
+
+def format_table(
+    table: TableData,
+    max_cell_width: int = 45,
+    use_small_font: bool = False,
+) -> str:
+    """Format a TableData object as a LaTeX longtable with overflow protection.
 
     Args:
         table: TableData object with headers and rows
+        max_cell_width: Maximum characters per cell before truncation
+        use_small_font: Use smaller font for table content
 
     Returns:
-        LaTeX longtable string
+        LaTeX longtable string with proper column widths
     """
     if not table.headers or not table.rows:
         return ""
 
-    # Determine column alignment
+    num_cols = len(table.headers)
+
+    # Calculate column widths based on content analysis
+    # Use p{width} columns for text wrapping instead of l columns
     if table.column_alignments:
         alignments = table.column_alignments
     else:
-        alignments = "|" + "|".join(["l"] * len(table.headers)) + "|"
+        # Calculate proportional widths based on header names and content
+        col_widths = _calculate_column_widths(table.headers, table.rows, num_cols)
+        alignments = "|" + "|".join(col_widths) + "|"
 
-    lines = [
-        r"\begin{longtable}{" + alignments + "}",
-        r"\hline",
-    ]
+    lines = []
+
+    # Optional smaller font
+    if use_small_font:
+        lines.append(r"{\small")
+
+    lines.extend(
+        [
+            r"\begin{longtable}{" + alignments + "}",
+            r"\hline",
+        ]
+    )
 
     # Header row
     escaped_headers = [escape_latex(h) for h in table.headers]
@@ -104,9 +152,15 @@ def format_table(table: TableData) -> str:
     lines.append(r"\hline")
     lines.append(r"\endfoot")
 
-    # Data rows
+    # Data rows - truncate long values to prevent overflow
     for row in table.rows:
-        escaped_row = [escape_latex(str(cell)) for cell in row]
+        escaped_row = []
+        for cell in row:
+            cell_str = str(cell) if cell is not None else ""
+            # Truncate very long cells
+            if len(cell_str) > max_cell_width:
+                cell_str = truncate_text(cell_str, max_cell_width)
+            escaped_row.append(escape_latex(cell_str))
         lines.append(" & ".join(escaped_row) + r" \\")
 
     lines.append(r"\hline")
@@ -119,7 +173,59 @@ def format_table(table: TableData) -> str:
 
     lines.append(r"\end{longtable}")
 
+    if use_small_font:
+        lines.append(r"}")
+
     return "\n".join(lines)
+
+
+def _calculate_column_widths(
+    headers: list[str], rows: list[list[str]], num_cols: int
+) -> list[str]:
+    """Calculate proportional column widths based on content.
+
+    Uses p{} columns which allow text wrapping.
+    Total width is constrained to \\textwidth.
+
+    Args:
+        headers: Column headers
+        rows: Data rows
+        num_cols: Number of columns
+
+    Returns:
+        List of LaTeX column specifications
+    """
+    # Analyze max content length per column
+    max_lengths = [len(h) for h in headers]
+
+    for row in rows[:20]:  # Sample first 20 rows for performance
+        for i, cell in enumerate(row):
+            if i < len(max_lengths):
+                cell_len = len(str(cell)) if cell else 0
+                max_lengths[i] = max(max_lengths[i], min(cell_len, 60))
+
+    # Identify columns that should be fixed-width vs flexible
+    col_specs = []
+    total_weight = sum(max_lengths)
+
+    for i, (header, max_len) in enumerate(zip(headers, max_lengths)):
+        header_lower = header.lower()
+
+        # Fixed-width columns for specific types
+        if any(
+            kw in header_lower
+            for kw in ["count", "matches", "total", "success", "failed"]
+        ):
+            col_specs.append("r")  # Right-align numbers, auto-width
+        elif max_len <= 15:
+            col_specs.append("l")  # Short columns, auto-width
+        else:
+            # Proportional width for longer text columns
+            # Calculate fraction of total width (0.1 to 0.4 range)
+            fraction = max(0.1, min(0.4, max_len / total_weight * num_cols * 0.8))
+            col_specs.append(f"p{{{fraction:.2f}\\textwidth}}")
+
+    return col_specs
 
 
 def format_code_block(code_block: CodeBlock) -> str:
@@ -207,6 +313,9 @@ class LaTeXRenderer:
         self.env.filters["format_table"] = format_table
         self.env.filters["format_code"] = format_code_block
         self.env.filters["format_figure"] = format_figure
+        self.env.filters["truncate"] = truncate_text
+        self.env.filters["truncate_arn"] = lambda x: truncate_text(x, 40)
+        self.env.filters["truncate_id"] = lambda x: truncate_text(x, 35)
 
     def render_report(self, report: Report) -> str:
         """Render a report to LaTeX.
