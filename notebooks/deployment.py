@@ -1,6 +1,6 @@
 """Deployment Notebook (Security-Sensitive)
 
-Deploy detection rules to AWS Lambda and manage infrastructure.
+Deploy detection rules to AWS Lambda and manage infrastructure via CDK.
 
 **SECURITY NOTE:** This notebook contains operations that can modify
 AWS infrastructure. Only authorized personnel should have access.
@@ -22,16 +22,16 @@ def _():
         """
         # Deployment Management
 
-        Deploy detection rules to AWS Lambda and manage infrastructure.
+        Deploy detection rules to AWS Lambda and manage infrastructure via CDK.
 
         ⚠️ **SECURITY NOTICE:** This notebook performs infrastructure operations.
         Ensure you have appropriate authorization before proceeding.
 
         **Capabilities:**
-        - Generate SAM/CloudFormation templates
-        - Deploy detection Lambda functions
+        - Build Lambda deployment packages for detection rules
+        - Build notifications Lambda Layer
+        - Deploy via AWS CDK stacks
         - Manage EventBridge schedules
-        - Infrastructure stack management
         """
     )
     return (mo,)
@@ -48,7 +48,8 @@ def _(mo):
             - Lambda function management
             - IAM role creation
             - EventBridge rule management
-            - CloudFormation stack operations
+            - CDK / CloudFormation stack operations
+            - SNS topic management
 
             Verify your credentials have the necessary permissions.
             """
@@ -149,7 +150,7 @@ def _(DataCatalog, DataSource, DataSourceType, region_input):
 
 
 # =============================================================================
-# Generate Deployment Package
+# Build Lambda Packages
 # =============================================================================
 
 
@@ -157,10 +158,10 @@ def _(DataCatalog, DataSource, DataSourceType, region_input):
 def _(mo):
     mo.md(
         """
-        ## Generate Deployment Package
+        ## Build Lambda Packages
 
-        Create SAM/CloudFormation templates and Lambda deployment packages
-        for detection rules.
+        Build deployment packages for detection rules and the shared
+        notifications Lambda Layer. These are consumed by the CDK stacks.
         """
     )
     return
@@ -168,11 +169,104 @@ def _(mo):
 
 @app.cell
 def _(mo):
-    output_dir = mo.ui.text(
-        value="./deploy_output",
-        label="Output Directory",
+    build_dir = mo.ui.text(
+        value="./build",
+        label="Build Output Directory",
         full_width=True,
     )
+    rules_dir = mo.ui.text(
+        value="./detections",
+        label="Rules Directory",
+        full_width=True,
+    )
+
+    mo.vstack([build_dir, rules_dir])
+    return build_dir, rules_dir
+
+
+@app.cell
+def _(mo):
+    build_btn = mo.ui.run_button(label="Build Deployment Packages")
+    build_btn
+    return (build_btn,)
+
+
+@app.cell
+def _(LambdaBuilder, Path, build_btn, build_dir, mo, region, rules_dir):
+    build_output = mo.md("_Configure options and click 'Build Deployment Packages'_")
+
+    if build_btn.value:
+        try:
+            builder = LambdaBuilder(
+                output_dir=Path(build_dir.value),
+                region=region,
+            )
+
+            # Build notifications layer
+            layer_path = builder.build_notifications_layer()
+
+            # Build handler packages for each rule
+            rules_path = Path(rules_dir.value)
+            packages = []
+            if rules_path.exists():
+                for rule_file in sorted(rules_path.glob("*.yaml")):
+                    pkg = builder.build_handler_package(rule_file)
+                    packages.append(str(pkg))
+
+            build_output = mo.vstack(
+                [
+                    mo.callout(
+                        mo.md(f"**Built {len(packages)} packages** + notifications layer"),
+                        kind="success",
+                    ),
+                    mo.md(f"**Notifications Layer:** `{layer_path}`"),
+                    mo.md(f"**Rule Packages:** {len(packages)}"),
+                    mo.md("---"),
+                    mo.md(
+                        """
+                    **Next step:** Deploy with CDK:
+                    ```bash
+                    cd infrastructure/cdk
+                    npx cdk deploy secdash-detections
+                    ```
+                    """
+                    ),
+                ]
+            )
+        except Exception as e:
+            build_output = mo.md(f"**Error:** {e}")
+
+    build_output
+    return (build_output,)
+
+
+# =============================================================================
+# CDK Deployment
+# =============================================================================
+
+
+@app.cell
+def _(mo):
+    mo.md(
+        """
+        ## CDK Deployment
+
+        Deploy infrastructure using AWS CDK stacks.
+
+        | Stack | Description | Key Resources |
+        |-------|-------------|---------------|
+        | `secdash-alerting` | Health monitoring & alerting | Lambda, SNS, EventBridge |
+        | `secdash-detections` | Detection rule Lambdas | Lambda per rule, shared Layer |
+        | `secdash-health-dashboard` | Health dashboard API | Lambda, API Gateway, Cognito |
+        | Neptune | Graph database | Neptune Serverless (`neptune.yaml`) |
+        | App Runner | Marimo hosting | App Runner VPC (`marimo-apprunner.yaml`) |
+        """
+    )
+    return
+
+
+@app.cell
+def _(mo):
     athena_bucket = mo.ui.text(
         value="",
         label="Athena Output S3 Bucket",
@@ -185,140 +279,56 @@ def _(mo):
         full_width=True,
         placeholder="security@example.com",
     )
-
-    mo.vstack([output_dir, athena_bucket, alert_email])
-    return alert_email, athena_bucket, output_dir
-
-
-@app.cell
-def _(mo):
-    template_type = mo.ui.radio(
-        options=["SAM Template", "CloudFormation Template"],
-        value="SAM Template",
-        label="Template Type",
-    )
-    schedule_rate = mo.ui.dropdown(
-        options=[
-            ("Every 5 minutes", "rate(5 minutes)"),
-            ("Every 15 minutes", "rate(15 minutes)"),
-            ("Every hour", "rate(1 hour)"),
-            ("Every 6 hours", "rate(6 hours)"),
-            ("Daily", "rate(1 day)"),
-        ],
-        value="rate(15 minutes)",
-        label="Detection Schedule",
+    slack_webhook = mo.ui.text(
+        value="",
+        label="Slack Webhook URL (optional)",
+        full_width=True,
+        placeholder="https://hooks.slack.com/services/...",
     )
 
-    mo.hstack([template_type, schedule_rate])
-    return schedule_rate, template_type
+    mo.vstack([athena_bucket, alert_email, slack_webhook])
+    return alert_email, athena_bucket, slack_webhook
 
 
 @app.cell
-def _(mo):
-    generate_btn = mo.ui.run_button(label="Generate Deployment Package")
-    generate_btn
-    return (generate_btn,)
+def _(alert_email, athena_bucket, environment, mo, region, slack_webhook):
+    # CDK deploy commands
+    alerting_cmd = f"""cd infrastructure/cdk
+npx cdk deploy secdash-alerting \\
+  --context region={region} \\
+  --context environment={environment.value} \\
+  --context athenaOutput=s3://{athena_bucket.value or 'YOUR-BUCKET'}/ \\
+  --context alertEmail={alert_email.value or ''} \\
+  --context slackWebhookUrl={slack_webhook.value or ''}"""
 
+    detections_cmd = f"""cd infrastructure/cdk
+npx cdk deploy secdash-detections \\
+  --context region={region} \\
+  --context environment={environment.value} \\
+  --context buildDir=../../build \\
+  --context layerPath=../../build/notifications_layer"""
 
-@app.cell
-def _(
-    LambdaBuilder,
-    Path,
-    alert_email,
-    athena_bucket,
-    environment,
-    generate_btn,
-    mo,
-    output_dir,
-    region,
-    schedule_rate,
-    template_type,
-):
-    deploy_output = mo.md("_Configure options and click 'Generate Deployment Package'_")
+    all_cmd = f"""cd infrastructure/cdk
+npx cdk deploy --all \\
+  --context region={region} \\
+  --context environment={environment.value}"""
 
-    if generate_btn.value:
-        if not athena_bucket.value:
-            deploy_output = mo.md("**Error:** Athena Output S3 Bucket is required")
-        else:
-            try:
-                builder = LambdaBuilder(
-                    output_dir=Path(output_dir.value),
-                    region=region,
-                )
-
-                # Generate template based on selection
-                if "SAM" in template_type.value:
-                    template = builder.generate_sam_template(
-                        athena_bucket=athena_bucket.value,
-                        schedule_rate=schedule_rate.value,
-                        alert_email=alert_email.value if alert_email.value else None,
-                        environment=environment.value,
-                    )
-                else:
-                    template = builder.generate_cloudformation_template(
-                        athena_bucket=athena_bucket.value,
-                        schedule_rate=schedule_rate.value,
-                        alert_email=alert_email.value if alert_email.value else None,
-                        environment=environment.value,
-                    )
-
-                deploy_output = mo.vstack(
-                    [
-                        mo.md(f"**Generated:** {template_type.value}"),
-                        mo.md(f"**Output Directory:** {output_dir.value}"),
-                        mo.md("---"),
-                        mo.md("**Template Preview:**"),
-                        mo.ui.code_editor(value=template, language="yaml", min_height=400),
-                        mo.md("---"),
-                        mo.md(
-                            f"""
-                        **Deploy with AWS SAM CLI:**
-                        ```bash
-                        cd {output_dir.value}
-                        sam build
-                        sam deploy --guided
-                        ```
-
-                        **Or with CloudFormation:**
-                        ```bash
-                        aws cloudformation deploy \\
-                          --template-file {output_dir.value}/template.yaml \\
-                          --stack-name secdash-detections-{environment.value} \\
-                          --capabilities CAPABILITY_NAMED_IAM
-                        ```
-                        """
-                        ),
-                    ]
-                )
-
-            except Exception as e:
-                deploy_output = mo.md(f"**Error:** {e}")
-
-    deploy_output
-    return deploy_output, template
+    mo.vstack(
+        [
+            mo.md("### Deploy Alerting Stack"),
+            mo.ui.code_editor(value=alerting_cmd, language="bash", min_height=130),
+            mo.md("### Deploy Detection Rules Stack"),
+            mo.ui.code_editor(value=detections_cmd, language="bash", min_height=110),
+            mo.md("### Deploy All Stacks"),
+            mo.ui.code_editor(value=all_cmd, language="bash", min_height=90),
+        ]
+    )
+    return alerting_cmd, all_cmd, detections_cmd
 
 
 # =============================================================================
-# Infrastructure Stacks
+# CloudFormation Stacks (Non-CDK)
 # =============================================================================
-
-
-@app.cell
-def _(mo):
-    mo.md(
-        """
-        ## Infrastructure Stacks
-
-        Pre-built CloudFormation stacks for secdashboards infrastructure.
-
-        | Stack | Description | Template |
-        |-------|-------------|----------|
-        | Neptune | Graph database for investigations | `infrastructure/neptune.yaml` |
-        | App Runner | Marimo notebook hosting | `infrastructure/marimo-apprunner.yaml` |
-        | Detections | Lambda + EventBridge | `infrastructure/template.yaml` |
-        """
-    )
-    return
 
 
 @app.cell
@@ -347,9 +357,9 @@ def _(environment, mo, region):
 
     mo.vstack(
         [
-            mo.md("### Deploy Neptune"),
+            mo.md("### Deploy Neptune (CloudFormation)"),
             mo.ui.code_editor(value=neptune_cmd, language="bash", min_height=120),
-            mo.md("### Deploy App Runner"),
+            mo.md("### Deploy App Runner (CloudFormation)"),
             mo.ui.code_editor(value=apprunner_cmd, language="bash", min_height=150),
         ]
     )
@@ -383,16 +393,16 @@ def _(mo, region):
             f"https://{region}.console.aws.amazon.com/events/home?region={region}#/rules",
         ),
         (
+            "SNS Topics",
+            f"https://{region}.console.aws.amazon.com/sns/v3/home?region={region}#/topics",
+        ),
+        (
             "App Runner Services",
             f"https://{region}.console.aws.amazon.com/apprunner/home?region={region}#/services",
         ),
         (
             "Neptune Databases",
             f"https://{region}.console.aws.amazon.com/neptune/home?region={region}#databases",
-        ),
-        (
-            "ECR Repositories",
-            f"https://{region}.console.aws.amazon.com/ecr/repositories?region={region}",
         ),
     ]
 

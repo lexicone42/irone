@@ -5,6 +5,7 @@ Extracted from the CDK AlertingStack inline code to enable use of the
 """
 
 import json
+import logging
 import os
 import time
 from datetime import datetime
@@ -18,6 +19,8 @@ from secdashboards.notifications import (
     SNSNotifier,
 )
 
+logger = logging.getLogger(__name__)
+
 # Configuration from environment
 SECURITY_LAKE_DB = os.environ.get("SECURITY_LAKE_DB", "amazon_security_lake_glue_db_us_west_2")
 ATHENA_OUTPUT = os.environ.get("ATHENA_OUTPUT", "")
@@ -25,6 +28,9 @@ ALERTS_TOPIC_ARN = os.environ.get("ALERTS_TOPIC_ARN", "")
 CRITICAL_TOPIC_ARN = os.environ.get("CRITICAL_TOPIC_ARN", "")
 FRESHNESS_THRESHOLD = int(os.environ.get("FRESHNESS_THRESHOLD_MINUTES", "60"))
 SLACK_WEBHOOK_URL = os.environ.get("SLACK_WEBHOOK_URL", "")
+RULES_BUCKET = os.environ.get("RULES_BUCKET", "")
+RULES_PREFIX = os.environ.get("RULES_PREFIX", "detection-rules/")
+LOOKBACK_MINUTES = int(os.environ.get("LOOKBACK_MINUTES", "15"))
 
 # Security Lake table mappings
 TABLES = {
@@ -162,6 +168,75 @@ def send_alert(alert_data: dict) -> None:
         )
 
 
+def run_detections(event: dict) -> list:
+    """Run detection rules via DetectionRunner and return alerts for triggered rules."""
+    from secdashboards.catalog import DataCatalog
+    from secdashboards.detections.rule import Severity
+    from secdashboards.detections.rule_store import S3RuleStore
+    from secdashboards.detections.runner import DetectionRunner
+
+    lookback = event.get("lookback_minutes", LOOKBACK_MINUTES)
+    rule_ids = event.get("rule_ids")
+
+    # Build catalog with Security Lake connector
+    catalog = DataCatalog()
+    catalog.create_security_lake_source(
+        name="cloudtrail",
+        database=SECURITY_LAKE_DB,
+        table=TABLES["cloud_trail_mgmt"],
+        connector_config={"output_location": ATHENA_OUTPUT},
+    )
+    connector = catalog.get_connector("cloudtrail")
+
+    # Load rules from S3RuleStore
+    runner = DetectionRunner(catalog=catalog, allow_python_rules=False)
+    if RULES_BUCKET:
+        store = S3RuleStore(bucket=RULES_BUCKET, prefix=RULES_PREFIX)
+        for rule, _version in store.load_all_rules():
+            runner.register_rule(rule)
+    else:
+        logger.warning("No RULES_BUCKET configured, no detection rules loaded")
+        return []
+
+    # Filter to specific rule IDs if requested
+    if rule_ids:
+        for rid in list(runner.list_rules()):
+            if rid not in rule_ids:
+                runner._rules.pop(rid, None)
+
+    results = runner.run_all(connector, lookback_minutes=lookback)
+
+    # Convert triggered results to alert dicts
+    alerts = []
+    for result in results:
+        if result.triggered:
+            alert_dict = result.to_alert_dict()
+            alerts.append(
+                {
+                    "type": "DETECTION",
+                    "severity": result.severity.value
+                    if isinstance(result.severity, Severity)
+                    else str(result.severity),
+                    "source": result.rule_id,
+                    "message": result.message or f"Detection triggered: {result.rule_name}",
+                    "rule_name": result.rule_name,
+                    "match_count": result.match_count,
+                    "sample_matches": alert_dict.get("sample_matches", []),
+                }
+            )
+        elif result.error:
+            alerts.append(
+                {
+                    "type": "DETECTION_ERROR",
+                    "severity": "low",
+                    "source": result.rule_id,
+                    "message": f"Detection rule error: {result.error}",
+                }
+            )
+
+    return alerts
+
+
 def handler(event, context):
     """Main Lambda handler."""
     check_type = event.get("check_type", "freshness")
@@ -171,8 +246,7 @@ def handler(event, context):
         sources = event.get("sources", list(TABLES.keys()))
         alerts = check_freshness(sources)
     elif check_type == "detections":
-        # TODO: Integrate with DetectionRunner
-        pass
+        alerts = run_detections(event)
 
     # Send alerts
     for alert_data in alerts:

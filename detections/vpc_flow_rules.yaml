@@ -1,0 +1,125 @@
+# VPC Flow Log Detection Rules for AWS Security Lake
+# Query OCSF-formatted VPC flow logs (class_uid = 4001)
+# Table: amazon_security_lake_table_us_west_2_vpc_flow_2_0
+
+- id: detect-port-scan
+  name: Port Scanning Activity
+  description: Detects a single source IP connecting to many distinct destination ports
+  author: secdashboards
+  severity: medium
+  tags:
+    - network
+    - reconnaissance
+    - port-scan
+  mitre_attack:
+    - T1046  # Network Service Discovery
+  data_sources:
+    - vpc_flow
+  schedule: rate(15 minutes)
+  threshold: 1
+  query: |
+    SELECT
+        src_endpoint.ip as source_ip,
+        dst_endpoint.ip as dest_ip,
+        COUNT(DISTINCT dst_endpoint.port) as unique_ports,
+        COUNT(*) as connection_count,
+        MIN(time_dt) as first_seen,
+        MAX(time_dt) as last_seen
+    FROM "{database}"."amazon_security_lake_table_us_west_2_vpc_flow_2_0"
+    WHERE time_dt >= TIMESTAMP '{start_time}'
+      AND time_dt < TIMESTAMP '{end_time}'
+      AND activity_id = 6
+    GROUP BY src_endpoint.ip, dst_endpoint.ip
+    HAVING COUNT(DISTINCT dst_endpoint.port) > 20
+    ORDER BY unique_ports DESC
+
+- id: detect-large-outbound-transfer
+  name: Large Outbound Data Transfer
+  description: Detects unusually large outbound data transfers from a single source
+  author: secdashboards
+  severity: high
+  tags:
+    - network
+    - exfiltration
+    - data-transfer
+  mitre_attack:
+    - T1048  # Exfiltration Over Alternative Protocol
+  data_sources:
+    - vpc_flow
+  schedule: rate(15 minutes)
+  threshold: 1
+  query: |
+    SELECT
+        src_endpoint.ip as source_ip,
+        dst_endpoint.ip as dest_ip,
+        SUM(traffic.bytes) as total_bytes,
+        COUNT(*) as flow_count,
+        MIN(time_dt) as first_seen,
+        MAX(time_dt) as last_seen
+    FROM "{database}"."amazon_security_lake_table_us_west_2_vpc_flow_2_0"
+    WHERE time_dt >= TIMESTAMP '{start_time}'
+      AND time_dt < TIMESTAMP '{end_time}'
+      AND activity_id = 6
+      AND direction_id = 2
+    GROUP BY src_endpoint.ip, dst_endpoint.ip
+    HAVING SUM(traffic.bytes) > 1073741824
+    ORDER BY total_bytes DESC
+
+- id: detect-rejected-traffic-spike
+  name: High Volume of Rejected Traffic
+  description: Detects IPs generating a high volume of rejected network traffic
+  author: secdashboards
+  severity: medium
+  tags:
+    - network
+    - brute-force
+    - blocked-traffic
+  mitre_attack:
+    - T1595  # Active Scanning
+  data_sources:
+    - vpc_flow
+  schedule: rate(15 minutes)
+  threshold: 1
+  query: |
+    SELECT
+        src_endpoint.ip as source_ip,
+        COUNT(*) as rejected_count,
+        COUNT(DISTINCT dst_endpoint.ip) as unique_targets,
+        COUNT(DISTINCT dst_endpoint.port) as unique_ports
+    FROM "{database}"."amazon_security_lake_table_us_west_2_vpc_flow_2_0"
+    WHERE time_dt >= TIMESTAMP '{start_time}'
+      AND time_dt < TIMESTAMP '{end_time}'
+      AND action = 'Denied'
+    GROUP BY src_endpoint.ip
+    HAVING COUNT(*) > 500
+    ORDER BY rejected_count DESC
+
+- id: detect-ssh-brute-force
+  name: SSH Brute Force Attempt
+  description: Detects multiple SSH connection attempts from a single source to port 22
+  author: secdashboards
+  severity: high
+  tags:
+    - network
+    - brute-force
+    - ssh
+  mitre_attack:
+    - T1110  # Brute Force
+  data_sources:
+    - vpc_flow
+  schedule: rate(5 minutes)
+  threshold: 1
+  query: |
+    SELECT
+        src_endpoint.ip as source_ip,
+        dst_endpoint.ip as dest_ip,
+        COUNT(*) as connection_attempts,
+        MIN(time_dt) as first_attempt,
+        MAX(time_dt) as last_attempt
+    FROM "{database}"."amazon_security_lake_table_us_west_2_vpc_flow_2_0"
+    WHERE time_dt >= TIMESTAMP '{start_time}'
+      AND time_dt < TIMESTAMP '{end_time}'
+      AND dst_endpoint.port = 22
+    GROUP BY src_endpoint.ip, dst_endpoint.ip
+    HAVING COUNT(*) > 50
+    ORDER BY connection_attempts DESC

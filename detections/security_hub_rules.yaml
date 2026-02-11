@@ -1,0 +1,134 @@
+# Security Hub Finding Detection Rules for AWS Security Lake
+# Query OCSF-formatted Security Hub findings (class_uid = 2001)
+# Table: amazon_security_lake_table_us_west_2_sh_findings_2_0
+
+- id: detect-critical-findings
+  name: Critical Security Hub Finding
+  description: Detects new critical severity findings from Security Hub
+  author: secdashboards
+  severity: critical
+  tags:
+    - security-hub
+    - compliance
+    - critical
+  mitre_attack:
+    - T1190  # Exploit Public-Facing Application
+  data_sources:
+    - sh_findings
+  schedule: rate(15 minutes)
+  threshold: 1
+  query: |
+    SELECT
+        finding.title as finding_title,
+        finding.uid as finding_id,
+        finding.types as finding_types,
+        resources[1].uid as resource_id,
+        resources[1].type as resource_type,
+        severity as severity_label,
+        cloud.account.uid as account_id,
+        cloud.region as region,
+        time_dt
+    FROM "{database}"."amazon_security_lake_table_us_west_2_sh_findings_2_0"
+    WHERE time_dt >= TIMESTAMP '{start_time}'
+      AND time_dt < TIMESTAMP '{end_time}'
+      AND severity_id = 5
+      AND status = 'New'
+    ORDER BY time_dt DESC
+
+- id: detect-public-s3-bucket
+  name: Public S3 Bucket Detected
+  description: Detects Security Hub findings for publicly accessible S3 buckets
+  author: secdashboards
+  severity: high
+  tags:
+    - security-hub
+    - s3
+    - exposure
+  mitre_attack:
+    - T1530  # Data from Cloud Storage
+  data_sources:
+    - sh_findings
+  schedule: rate(15 minutes)
+  threshold: 1
+  query: |
+    SELECT
+        finding.title as finding_title,
+        finding.uid as finding_id,
+        resources[1].uid as bucket_name,
+        cloud.account.uid as account_id,
+        cloud.region as region,
+        time_dt
+    FROM "{database}"."amazon_security_lake_table_us_west_2_sh_findings_2_0"
+    WHERE time_dt >= TIMESTAMP '{start_time}'
+      AND time_dt < TIMESTAMP '{end_time}'
+      AND resources[1].type = 'AwsS3Bucket'
+      AND finding.title LIKE '%public%'
+      AND status = 'New'
+    ORDER BY time_dt DESC
+
+- id: detect-unencrypted-resources
+  name: Unencrypted Resource Detected
+  description: Detects findings for resources without encryption at rest
+  author: secdashboards
+  severity: medium
+  tags:
+    - security-hub
+    - encryption
+    - compliance
+  mitre_attack:
+    - T1565  # Data Manipulation
+  data_sources:
+    - sh_findings
+  schedule: rate(30 minutes)
+  threshold: 1
+  query: |
+    SELECT
+        finding.title as finding_title,
+        finding.uid as finding_id,
+        resources[1].uid as resource_id,
+        resources[1].type as resource_type,
+        cloud.account.uid as account_id,
+        cloud.region as region,
+        time_dt
+    FROM "{database}"."amazon_security_lake_table_us_west_2_sh_findings_2_0"
+    WHERE time_dt >= TIMESTAMP '{start_time}'
+      AND time_dt < TIMESTAMP '{end_time}'
+      AND (
+          finding.title LIKE '%encrypt%'
+          OR finding.title LIKE '%Encrypt%'
+      )
+      AND status = 'New'
+    ORDER BY time_dt DESC
+
+- id: detect-guardduty-findings
+  name: GuardDuty Finding via Security Hub
+  description: Detects new GuardDuty findings surfaced through Security Hub
+  author: secdashboards
+  severity: high
+  tags:
+    - security-hub
+    - guardduty
+    - threat-detection
+  mitre_attack:
+    - T1190  # Exploit Public-Facing Application
+  data_sources:
+    - sh_findings
+  schedule: rate(5 minutes)
+  threshold: 1
+  query: |
+    SELECT
+        finding.title as finding_title,
+        finding.uid as finding_id,
+        finding.types as finding_types,
+        resources[1].uid as resource_id,
+        resources[1].type as resource_type,
+        severity as severity_label,
+        cloud.account.uid as account_id,
+        cloud.region as region,
+        time_dt
+    FROM "{database}"."amazon_security_lake_table_us_west_2_sh_findings_2_0"
+    WHERE time_dt >= TIMESTAMP '{start_time}'
+      AND time_dt < TIMESTAMP '{end_time}'
+      AND metadata.product.name = 'GuardDuty'
+      AND status = 'New'
+    ORDER BY time_dt DESC

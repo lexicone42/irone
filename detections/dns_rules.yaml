@@ -1,0 +1,130 @@
+# Route53 DNS Detection Rules for AWS Security Lake
+# Query OCSF-formatted DNS logs (class_uid = 4003)
+# Table: amazon_security_lake_table_us_west_2_route53_2_0
+
+- id: detect-dga-domains
+  name: DGA Domain Resolution
+  description: Detects DNS queries for domains with high entropy names (potential DGA)
+  author: secdashboards
+  severity: high
+  tags:
+    - dns
+    - dga
+    - c2
+  mitre_attack:
+    - T1568.002  # Dynamic Resolution: Domain Generation Algorithms
+  data_sources:
+    - route53
+  schedule: rate(15 minutes)
+  threshold: 1
+  query: |
+    SELECT
+        query.hostname as domain,
+        src_endpoint.ip as source_ip,
+        COUNT(*) as query_count,
+        MIN(time_dt) as first_seen,
+        MAX(time_dt) as last_seen
+    FROM "{database}"."amazon_security_lake_table_us_west_2_route53_2_0"
+    WHERE time_dt >= TIMESTAMP '{start_time}'
+      AND time_dt < TIMESTAMP '{end_time}'
+      AND LENGTH(SPLIT_PART(query.hostname, '.', 1)) > 20
+      AND query.hostname NOT LIKE '%.amazonaws.com'
+      AND query.hostname NOT LIKE '%.amazon.com'
+    GROUP BY query.hostname, src_endpoint.ip
+    HAVING COUNT(*) >= 3
+    ORDER BY query_count DESC
+
+- id: detect-suspicious-tld
+  name: Suspicious TLD DNS Query
+  description: Detects DNS queries to high-risk top-level domains commonly used in attacks
+  author: secdashboards
+  severity: medium
+  tags:
+    - dns
+    - suspicious-domain
+    - threat-intel
+  mitre_attack:
+    - T1071.004  # Application Layer Protocol: DNS
+  data_sources:
+    - route53
+  schedule: rate(15 minutes)
+  threshold: 1
+  query: |
+    SELECT
+        query.hostname as domain,
+        src_endpoint.ip as source_ip,
+        COUNT(*) as query_count,
+        MIN(time_dt) as first_seen,
+        MAX(time_dt) as last_seen
+    FROM "{database}"."amazon_security_lake_table_us_west_2_route53_2_0"
+    WHERE time_dt >= TIMESTAMP '{start_time}'
+      AND time_dt < TIMESTAMP '{end_time}'
+      AND (
+          query.hostname LIKE '%.tk'
+          OR query.hostname LIKE '%.ml'
+          OR query.hostname LIKE '%.ga'
+          OR query.hostname LIKE '%.cf'
+          OR query.hostname LIKE '%.gq'
+          OR query.hostname LIKE '%.xyz'
+          OR query.hostname LIKE '%.top'
+          OR query.hostname LIKE '%.buzz'
+      )
+    GROUP BY query.hostname, src_endpoint.ip
+    ORDER BY query_count DESC
+
+- id: detect-dns-tunneling
+  name: DNS Tunneling Activity
+  description: Detects high volume of TXT record queries from a single source (potential data exfil)
+  author: secdashboards
+  severity: high
+  tags:
+    - dns
+    - tunneling
+    - exfiltration
+  mitre_attack:
+    - T1048.003  # Exfiltration Over Alternative Protocol: DNS
+  data_sources:
+    - route53
+  schedule: rate(15 minutes)
+  threshold: 1
+  query: |
+    SELECT
+        src_endpoint.ip as source_ip,
+        COUNT(*) as txt_query_count,
+        COUNT(DISTINCT query.hostname) as unique_domains,
+        APPROX_PERCENTILE(LENGTH(query.hostname), 0.5) as median_domain_length
+    FROM "{database}"."amazon_security_lake_table_us_west_2_route53_2_0"
+    WHERE time_dt >= TIMESTAMP '{start_time}'
+      AND time_dt < TIMESTAMP '{end_time}'
+      AND query.type = 'TXT'
+    GROUP BY src_endpoint.ip
+    HAVING COUNT(*) > 100
+    ORDER BY txt_query_count DESC
+
+- id: detect-nxdomain-spike
+  name: NXDOMAIN Response Spike
+  description: Detects sources receiving many NXDOMAIN responses (failed lookups)
+  author: secdashboards
+  severity: medium
+  tags:
+    - dns
+    - reconnaissance
+    - nxdomain
+  mitre_attack:
+    - T1595.002  # Active Scanning: Vulnerability Scanning
+  data_sources:
+    - route53
+  schedule: rate(15 minutes)
+  threshold: 1
+  query: |
+    SELECT
+        src_endpoint.ip as source_ip,
+        COUNT(*) as nxdomain_count,
+        COUNT(DISTINCT query.hostname) as unique_failed_domains
+    FROM "{database}"."amazon_security_lake_table_us_west_2_route53_2_0"
+    WHERE time_dt >= TIMESTAMP '{start_time}'
+      AND time_dt < TIMESTAMP '{end_time}'
+      AND answers.rcode = 'NXDOMAIN'
+    GROUP BY src_endpoint.ip
+    HAVING COUNT(*) > 50
+    ORDER BY nxdomain_count DESC
