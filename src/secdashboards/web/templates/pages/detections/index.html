@@ -1,0 +1,94 @@
+{% extends "base.html" %}
+{% block title %}Detection Rules — secdashboards{% endblock %}
+
+{% block content %}
+<h1>Detection Rules</h1>
+
+<div style="margin-bottom: 1rem;">
+    <a href="/detections/new" class="btn btn-primary">+ New Rule</a>
+    <a href="/detections/query-explorer" class="btn">Query Explorer</a>
+</div>
+
+<div class="card">
+    <div class="card-header">Registered Rules ({{ rules | length }})</div>
+    {% if rules %}
+    <table class="data-table">
+        <thead>
+            <tr>
+                <th>Name</th>
+                <th>Severity</th>
+                <th>Tags</th>
+                <th>Enabled</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for rule in rules %}
+            <tr>
+                <td>{{ rule.name }}</td>
+                <td>
+                    {% if rule.metadata.severity.value == "critical" %}
+                    <span class="badge badge-error">{{ rule.metadata.severity.value }}</span>
+                    {% elif rule.metadata.severity.value == "high" %}
+                    <span class="badge badge-warn">{{ rule.metadata.severity.value }}</span>
+                    {% else %}
+                    <span class="badge badge-ok">{{ rule.metadata.severity.value }}</span>
+                    {% endif %}
+                </td>
+                <td>{{ rule.metadata.tags | join(", ") }}</td>
+                <td>
+                    {% if rule.metadata.enabled %}
+                    <span class="status-ok">yes</span>
+                    {% else %}
+                    <span class="status-error">no</span>
+                    {% endif %}
+                </td>
+                <td>
+                    <button class="btn"
+                            hx-post="/detections/{{ rule.id }}/test"
+                            hx-target="#test-result-{{ loop.index }}"
+                            hx-indicator="#test-spinner-{{ loop.index }}">
+                        Test
+                    </button>
+                    <span id="test-spinner-{{ loop.index }}" class="htmx-indicator">
+                        <span class="spinner"></span>
+                    </span>
+                </td>
+            </tr>
+            <tr id="test-result-{{ loop.index }}" style="display: table-row;"></tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p style="color: var(--text-muted);">No rules registered. Create one or load from a rules directory.</p>
+    {% endif %}
+</div>
+
+<div class="card">
+    <div class="card-header">AI Rule Generation</div>
+    <form hx-post="/detections/ai-generate"
+          hx-target="#ai-result"
+          hx-indicator="#ai-spinner">
+        <div style="margin-bottom: 0.75rem;">
+            <label style="display: block; color: var(--text-secondary); margin-bottom: 0.25rem;">
+                Describe the detection you want:
+            </label>
+            <textarea name="description" rows="3"
+                      style="width: 100%;"
+                      placeholder="e.g. Detect unauthorized API calls from non-whitelisted IPs"></textarea>
+        </div>
+        <div style="margin-bottom: 0.75rem;">
+            <label style="display: block; color: var(--text-secondary); margin-bottom: 0.25rem;">
+                Additional context (optional):
+            </label>
+            <input type="text" name="context" style="width: 100%;"
+                   placeholder="e.g. CloudTrail logs, focus on IAM actions">
+        </div>
+        <button type="submit" class="btn btn-primary">Generate Rule</button>
+        <span id="ai-spinner" class="htmx-indicator">
+            <span class="spinner"></span> Generating...
+        </span>
+    </form>
+    <div id="ai-result" style="margin-top: 1rem;"></div>
+</div>
+{% endblock %}

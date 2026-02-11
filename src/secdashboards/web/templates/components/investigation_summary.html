@@ -1,0 +1,12 @@
+{# Investigation enrichment summary fragment — swapped in by HTMX #}
+{% if error %}
+<div class="alert alert-warning">Enrichment partial: {{ error }}</div>
+{% else %}
+<div class="alert alert-success">Investigation enriched successfully.</div>
+{% endif %}
+
+<div style="margin-top: 0.5rem; color: var(--text-secondary); font-size: 0.85rem;">
+    Nodes: {{ summary.get("node_count", 0) }} |
+    Edges: {{ summary.get("edge_count", 0) }} |
+    Types: {{ summary.get("node_types", {}).keys() | list | join(", ") }}
+</div>

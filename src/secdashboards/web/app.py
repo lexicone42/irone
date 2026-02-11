@@ -12,7 +12,15 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from secdashboards.web.config import WebConfig
-from secdashboards.web.routers import dashboard, monitoring, security_lake
+from secdashboards.web.routers import (
+    api,
+    dashboard,
+    deploy,
+    detections,
+    investigations,
+    monitoring,
+    security_lake,
+)
 from secdashboards.web.state import create_app_state
 
 _WEB_DIR = Path(__file__).parent
@@ -57,6 +65,10 @@ def create_app(config: WebConfig | None = None) -> FastAPI:
     app.include_router(dashboard.router)
     app.include_router(monitoring.router)
     app.include_router(security_lake.router)
+    app.include_router(detections.router)
+    app.include_router(investigations.router)
+    app.include_router(deploy.router)
+    app.include_router(api.router)
 
     # --- Health endpoint ---
     @app.get("/api/health")

@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block title %}Security Lake — secdashboards{% endblock %}
+
+{% block content %}
+<h1>Security Lake</h1>
+<p style="color: var(--text-secondary); margin-bottom: 1rem;">
+    Region: <span class="status-info">{{ region }}</span>
+    &mdash; {{ sources | length }} Security Lake source(s) registered
+</p>
+
+<div class="card">
+    <div class="card-header">
+        Connectivity Test
+        <button class="btn btn-primary" style="float: right;"
+                hx-post="/security-lake/test"
+                hx-target="#sl-results"
+                hx-indicator="#sl-spinner">
+            Test Connections
+        </button>
+    </div>
+
+    <div id="sl-results">
+        {% if sources %}
+        <table class="data-table">
+            <thead>
+                <tr><th>Source</th><th>Database</th><th>Table</th></tr>
+            </thead>
+            <tbody>
+                {% for src in sources %}
+                <tr>
+                    <td>{{ src.name }}</td>
+                    <td>{{ src.database or "—" }}</td>
+                    <td>{{ src.table or "—" }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <p style="color: var(--text-muted);">
+            No Security Lake sources registered. Add sources with tag "security-lake" to the catalog.
+        </p>
+        {% endif %}
+    </div>
+    <div id="sl-spinner" class="htmx-indicator" style="text-align: center; padding: 1rem;">
+        <span class="spinner"></span> Testing connections...
+    </div>
+</div>
+{% endblock %}

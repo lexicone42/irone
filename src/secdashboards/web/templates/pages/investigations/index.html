@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block title %}Investigations — secdashboards{% endblock %}
+
+{% block content %}
+<h1>Investigations</h1>
+
+{% if error is defined and error %}
+<div class="alert alert-error">{{ error }}</div>
+{% endif %}
+
+<div style="margin-bottom: 1rem;">
+    <a href="/investigations/new" class="btn btn-primary">+ New Investigation</a>
+</div>
+
+<div class="card">
+    <div class="card-header">Active Investigations ({{ investigations | length }})</div>
+    {% if investigations %}
+    <table class="data-table">
+        <thead>
+            <tr>
+                <th>Name</th>
+                <th>Nodes</th>
+                <th>Edges</th>
+                <th>Created</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for inv in investigations %}
+            <tr>
+                <td><a href="/investigations/{{ inv.id }}" style="color: var(--cyan);">{{ inv.name }}</a></td>
+                <td>{{ inv.node_count }}</td>
+                <td>{{ inv.edge_count }}</td>
+                <td>{{ inv.created_at[:19] if inv.created_at else "" }}</td>
+                <td>
+                    <a href="/investigations/{{ inv.id }}" class="btn">View</a>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p style="color: var(--text-muted);">No active investigations. Start one by providing user or IP identifiers.</p>
+    {% endif %}
+</div>
+{% endblock %}
