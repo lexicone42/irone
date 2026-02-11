@@ -33,7 +33,7 @@ from __future__ import annotations
 import os
 
 import aws_cdk as cdk
-from stacks import AlertingStack, DetectionRulesStack, HealthDashboardStack
+from stacks import AlertingStack, DetectionRulesStack, FastAPIStack, HealthDashboardStack
 
 app = cdk.App()
 
@@ -138,6 +138,20 @@ DetectionRulesStack(
     slack_webhook_url=slack_webhook,
     alerting_stack_name="secdash-alerting",
     description="Security Dashboards - Detection Rule Lambdas",
+)
+
+# =============================================================================
+# FastAPI Web Dashboard Stack
+# =============================================================================
+# Deploys the FastAPI app as a Lambda behind HTTP API Gateway.
+# Reports are stored in a dedicated S3 bucket.
+FastAPIStack(
+    app,
+    "secdash-web",
+    env=env,
+    security_lake_db=security_lake_db,
+    athena_output=athena_output,
+    description="Security Dashboards - FastAPI Web Dashboard",
 )
 
 # =============================================================================
