@@ -371,7 +371,7 @@ class LambdaBuilder:
                     "Tags": {
                         "Application": "secdashboards",
                         "RuleId": rule.id,
-                        "Severity": rule.metadata.severity,
+                        "Severity": str(rule.metadata.severity),
                     },
                 },
             }
@@ -779,7 +779,7 @@ class DualTargetLambdaBuilder(LambdaBuilder):
                     "Tags": {
                         "Application": "secdashboards",
                         "RuleId": rule.id,
-                        "Severity": rule.metadata.severity,
+                        "Severity": str(rule.metadata.severity),
                         "DualTarget": "true",
                     },
                 },
