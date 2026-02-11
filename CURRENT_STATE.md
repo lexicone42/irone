@@ -1,6 +1,6 @@
 # Security Dashboards - Current State
 
-**Last Updated**: 2026-02-10
+**Last Updated**: 2026-02-11
 
 ## Project Overview
 
@@ -65,9 +65,12 @@ secdashboards/
 │   │   └── auth.py        # OIDCAuthenticator for ALB/Cognito auth
 │   └── cli.py             # Command-line interface
 ├── notebooks/
-│   ├── main.py            # Main Marimo notebook (navigation hub)
-│   ├── investigation.py   # Investigation notebook with graph + timeline
-│   └── deployment.py      # CDK deployment management notebook
+│   ├── main.py                  # Main Marimo notebook (navigation hub)
+│   ├── investigation.py         # Investigation notebook with graph + timeline
+│   ├── detection_engineering.py # Detection rule creation and testing
+│   ├── monitoring.py            # Data source health monitoring
+│   ├── security_lake_health.py  # Quick Security Lake connectivity check
+│   └── deployment.py            # CDK deployment management notebook
 ├── scripts/
 │   └── example_investigation.py  # Demo investigation workflow
 ├── detections/
@@ -88,7 +91,7 @@ secdashboards/
 │           ├── test_alerting_stack.py          # 7 tests
 │           └── test_detection_rules_stack.py   # 10 tests
 ├── docs/                    # mkdocs-material API documentation
-├── tests/                   # 484 tests total (+ 29 CDK tests separate)
+├── tests/                   # 498 tests total (+ 29 CDK tests separate)
 ├── Dockerfile.marimo        # Container for AWS App Runner deployment
 ├── catalog.example.yaml     # Example catalog configuration
 ├── mkdocs.yml               # Documentation site config
@@ -96,10 +99,40 @@ secdashboards/
 └── README.md                # Documentation
 ```
 
-## Recent Changes (2026-02-10)
+## Recent Changes (2026-02-11)
+
+### Type Hints & Any Audit
+- Tightened ty rules: `possibly-missing-attribute` from "warn" to "error", added `division-by-zero = "warn"`
+- Replaced 8 `Any` annotations with concrete types (GraphNode, GraphEdge, NeptuneConnector, etc.)
+- Added missing return type annotations to `TimelineVisualizer.__init__` and `alerting_handler.handler`
+- Fixed `import importlib.util` in runner.py for ty compliance
+
+### Notebook Fixes (API Drift)
+- **detection_engineering.py**: Fixed `DetectionRunner` API (catalog kwarg + register_rule), `matched_events` → `matches`, dict iteration instead of DataFrame
+- **investigation.py**: Fixed `graph` variable scope (added `graph = None` initialization)
+- **monitoring.py**: Removed unused datetime import
+- Added `F821` to notebook ruff per-file-ignores for Marimo cross-cell type annotations
+
+### New Security Lake Health Notebook
+- **security_lake_health.py**: Quick connectivity check for 6 Security Lake tables
+- Auto-discovers Athena output bucket via STS account ID
+- Handles OCSF 2.0 bigint epoch time format (`to_unixtime`/`from_unixtime`)
+- Shows record counts, latest event time, data age, and health status
+
+### Detection Lifecycle Tests
+- 14 new tests in `test_detections.py` covering register/get/list/delete/overwrite/run/export
+- Full create-delete-roundtrip lifecycle test
+- Test count: 484 → 498
+
+### Housekeeping
+- Removed forced eval hook (`.claude/hooks/skill-forced-eval-hook.sh`)
+- Untracked `notebooks/__marimo__/session/main.py.json` (already in .gitignore)
+- ty added to pre-commit via prek
+
+## Previous Changes (2026-02-10)
 
 ### PR #5: Detection Runner Wiring, CDK Tests, Detection Rules, Neptune Tests
-- **DetectionRunner in alerting Lambda**: Wired `DetectionRunner` + `S3RuleStore` into `alerting_handler.py`, completing the last TODO
+- **DetectionRunner in alerting Lambda**: Wired `DetectionRunner` + `S3RuleStore` into `alerting_handler.py`
 - **CDK assertion tests**: 17 new tests for AlertingStack (7) and DetectionRulesStack (10)
 - **Detection rules expansion**: 12 new rules across VPC Flow (4), DNS/Route53 (4), Security Hub (4)
 - **Deployment notebook**: Rewrote for CDK workflow (removed SAM references)
@@ -131,7 +164,7 @@ secdashboards/
 
 - **Package Manager**: uv
 - **Linter**: ruff (line-length=100)
-- **Type Checker**: ty (Astral) — manual only, not in pre-commit or CI
+- **Type Checker**: ty (Astral) — in pre-commit via prek, `possibly-missing-attribute = "error"`
 - **Pre-commit**: prek (Rust-based)
 - **Default Region**: us-west-2
 - **Python Version**: 3.13
@@ -151,14 +184,14 @@ Key dependencies in pyproject.toml:
 
 ## Test Status
 
-### Unit Tests (484 total - all passing)
+### Unit Tests (498 total - all passing)
 ```bash
 uv run pytest tests/ -v --ignore=tests/test_notebook_main.py
 ```
 
 Test breakdown:
 - Catalog: 8
-- Detection: 9
+- Detection: 23 (was 9, +14 lifecycle tests)
 - Adversary: 36
 - Graph: 50
 - AI/Bedrock: 26
@@ -187,7 +220,7 @@ RUN_NEPTUNE_TESTS=1 uv run pytest tests/test_neptune_integration.py -v
 ### Type Checking
 ```bash
 uv run ty check src/
-# Available but not automated — not in pre-commit or CI
+# Also runs automatically in pre-commit via prek
 ```
 
 ## Detection Rules (18 total)
@@ -247,6 +280,9 @@ uv run pytest tests/ --ignore=tests/test_notebook_main.py
 # Launch main Marimo notebook
 uv run marimo edit notebooks/main.py
 
+# Launch Security Lake health check
+uv run marimo edit notebooks/security_lake_health.py
+
 # Launch investigation notebook
 uv run marimo edit notebooks/investigation.py
 
@@ -264,22 +300,25 @@ uv run secdash notebook
 
 1. amazon_security_lake_table_us_west_2_cloud_trail_mgmt_2_0 (CloudTrail)
 2. amazon_security_lake_table_us_west_2_eks_audit_2_0
-3. amazon_security_lake_table_us_west_2_lambda_2_0
+3. amazon_security_lake_table_us_west_2_lambda_execution_2_0
 4. amazon_security_lake_table_us_west_2_route53_2_0
 5. amazon_security_lake_table_us_west_2_sh_findings_2_0 (Security Hub)
 6. amazon_security_lake_table_us_west_2_vpc_flow_2_0
 
+Note: OCSF 2.0 `time` field is epoch milliseconds (bigint), not a SQL timestamp.
+
 ## Git Commit History (Recent)
 
 ```
+56207ba Fix Security Lake health notebook: add Athena output location and OCSF time format
+ccbedd6 Fix notebook API drift, add Security Lake health notebook and detection lifecycle tests
+bd9a4f8 Add type hints, tighten ty rules, and replace Any with concrete types
+829b9b3 Add ty to pre-commit, fix type errors, disable CI, update CURRENT_STATE
 69f688b Merge pull request #5 from lexicone42/enhance-detection-ci-neptune
 f86810f Merge pull request #4 from lexicone42/add-mkdocs-timeline-wiring
 283eb4b Merge pull request #3 from lexicone42/consolidate-cdk-notifications
 2682802 Add input validation for security-sensitive parameters (#2)
 9f49558 Add documentation updates, SECURITY.md, and property-based tests (#1)
-4bcbd64 Add notification integrations module (SNS, Slack) with multi-channel routing
-be0d9b0 Add deployment E2E tests and fix StrEnum serialization in SAM templates
-82a0dcb Add timeline features, Neptune persistence, and upgrade to Claude Opus 4.6
 ```
 
 ## Completed Improvements
@@ -307,5 +346,5 @@ All 14 originally tracked improvements are done:
 - Build and push Docker image to ECR for App Runner
 - Set up real VPC/subnets for App Runner and Neptune templates
 - Add GitHub Actions CI back when ruff version alignment is sorted out
-- Add ty type checking to pre-commit or CI
 - Real-world detection rule tuning against live Security Lake data
+- Verify all notebooks work end-to-end against live Security Lake
