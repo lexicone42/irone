@@ -1,6 +1,6 @@
 # Security Dashboards - Current State
 
-**Last Updated**: 2026-01-17
+**Last Updated**: 2026-02-10
 
 ## Project Overview
 
@@ -50,6 +50,11 @@ secdashboards/
 │   │   ├── runner.py      # Adversary test runner
 │   │   ├── lambda_handler.py # Lambda for network-based testing
 │   │   └── deploy.py      # Lambda deployment utilities
+│   ├── notifications/     # Alert delivery
+│   │   ├── base.py        # SecurityAlert model, NotificationChannel ABC
+│   │   ├── sns.py         # SNSNotifier for AWS SNS topics
+│   │   ├── slack.py       # SlackNotifier for Slack webhooks
+│   │   └── manager.py     # NotificationManager multi-channel routing
 │   ├── ai/                # AI/Bedrock integration
 │   │   ├── assistant.py   # BedrockAssistant for AI analysis
 │   │   ├── models.py      # Model configs and pricing
@@ -66,10 +71,12 @@ secdashboards/
 ├── detections/
 │   └── sample_rules.yaml  # 6 sample detection rules
 ├── infrastructure/
-│   ├── template.yaml      # Lambda SAM/CloudFormation template
-│   ├── neptune.yaml       # Neptune Serverless CloudFormation stack
-│   └── marimo-apprunner.yaml  # App Runner VPC deployment
-├── tests/                 # 284 tests total
+│   ├── template.yaml          # Lambda SAM/CloudFormation template
+│   ├── neptune.yaml           # Neptune Serverless CloudFormation stack
+│   ├── marimo-apprunner.yaml  # App Runner VPC deployment
+│   ├── health-dashboard.yaml  # Health dashboard Lambda + API Gateway
+│   └── cdk/                   # AWS CDK stacks (alerting, monitoring)
+├── tests/                 # 414 tests total
 │   ├── test_catalog.py    # Catalog tests (8)
 │   ├── test_detections.py # Detection tests (9)
 │   ├── test_adversary.py  # Adversary tests (37)
@@ -79,6 +86,8 @@ secdashboards/
 │   ├── test_rule_store.py # S3RuleStore tests (32)
 │   ├── test_sql_utils.py  # SQL injection protection tests (32)
 │   ├── test_timeline.py   # Timeline tests (24)
+│   ├── test_notifications.py # Notification tests (28)
+│   ├── test_deploy_e2e.py # Deployment E2E tests
 │   └── test_security_lake_integration.py  # Integration tests (10)
 ├── output/investigations/ # Demo output directory
 ├── Dockerfile.marimo      # Container for AWS App Runner deployment
@@ -171,7 +180,7 @@ Key dependencies in pyproject.toml:
 
 ## Test Status
 
-### Unit Tests (284 total - all passing)
+### Unit Tests (414 total - all passing)
 ```bash
 uv run pytest tests/ -v --ignore=tests/test_notebook_main.py
 ```
@@ -186,6 +195,8 @@ Test breakdown:
 - Rule Store: 32
 - SQL Utils: 32
 - Timeline: 24
+- Notifications: 28
+- Deploy E2E + others: 110
 
 ### Integration Tests (10 total - all passing)
 ```bash
@@ -346,36 +357,27 @@ secdash adversary invoke-lambda --scenario port_scan_sim
 ## Git Commit History (Recent)
 
 ```
+4bcbd64 Add notification integrations module (SNS, Slack) with multi-channel routing
+be0d9b0 Add deployment E2E tests and fix StrEnum serialization in SAM templates
+82a0dcb Add timeline features, Neptune persistence, and upgrade to Claude Opus 4.6
+2a02feb Switch from pre-commit to prek for faster hook execution
+061f338 Add CloudWatch Logs connector, dual-target detections, and health dashboard
 8a8a92e Add investigation timeline with event tagging and AI summaries
-76694b9 Fix PDF compilation in example investigation script
-682b242 Add example incident investigation script
-292e978 Fix table overflow in LaTeX PDF reports
-fcefaac Add comprehensive tests for S3RuleStore
-76085c2 Add security infrastructure and safe rule loading
 ```
 
 ## Pending Improvements
 
 1. Fix remaining `datetime.utcnow()` deprecation warnings
-2. ~~Add more detection rules for VPC Flow, Route53, Security Hub data~~ ✅ Done
-3. Test Lambda deployment workflow end-to-end
-4. Add alert notification integrations (SNS, Slack, etc.)
+2. ~~Add more detection rules for VPC Flow, Route53, Security Hub data~~ Done
+3. ~~Test Lambda deployment workflow end-to-end~~ Done (test_deploy_e2e.py)
+4. ~~Add alert notification integrations (SNS, Slack, etc.)~~ Done (notifications module)
 5. Add `py.typed` marker for PEP 561 type checking support
 6. Consider adding mkdocs or sphinx for API documentation
 7. Add timeline export to LaTeX reports
 8. Implement Neptune persistence for timelines
-9. **NEW**: Create serverless health dashboard with Cognito passkey authentication
-   - User: bryan.egan@gmail.com in existing Cognito pool
-   - Display data source health, detection status, cost metrics
-   - API Gateway + Lambda + DynamoDB architecture
-10. **REVIEW**: Evaluate App Runner vs simpler serverless alternatives for Marimo deployment
-    - Current: `infrastructure/marimo-apprunner.yaml` - Container-based with VPC connector, auto-scaling, private ingress
-    - Pros of App Runner: Managed container orchestration, built-in auto-scaling, VPC connectivity for Neptune/Security Lake
-    - Alternatives to evaluate:
-      a) **Lambda + API Gateway**: Could work for read-only dashboards, but Marimo requires persistent WebSocket connections
-      b) **ECS Fargate**: More control than App Runner, but more configuration; similar cost model
-      c) **Lambda Web Adapter**: New option for running web frameworks in Lambda with response streaming
-      d) **Lightsail Containers**: Simpler/cheaper for low-traffic internal tools
-      e) **CloudFront + S3 + Lambda**: Static export of Marimo notebooks (loses interactivity)
-    - Key constraints: Marimo needs persistent process for notebook state, WebSocket support for real-time updates
-    - Question: Is App Runner overkill for an internal-only security tool used by 1-2 people?
+9. Wire notification module into Lambda handler templates (replace inline SNS publishing)
+10. Wire notification module into CDK alerting stack (replace inline Slack webhook code)
+11. Add property-based tests for SQL sanitization and alert serialization
+12. Fix case-sensitive SQL keyword detection in `rule_store.py` (sharp edges finding)
+13. Add URL validation to `SlackNotifier` and `URLAnalyzer` constructors
+14. Add bounds validation to `LambdaBuilder.deploy_lambda()` parameters

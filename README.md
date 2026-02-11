@@ -1,12 +1,18 @@
 # Security Data Lake Analytics (secdashboards)
 
+[![Built with Claude Code](https://img.shields.io/badge/Built%20with-Claude%20Code-6B48FF?style=flat&logo=claude)](https://claude.com/claude-code)
+
 A Marimo notebook-based security analytics platform for AWS Security Lake. Create detection rules, visualize security investigation graphs, and deploy automated monitoring to AWS.
 
 ## Features
 
 - **AWS Security Lake Integration**: Native support for OCSF-formatted Security Lake data
+- **CloudWatch Logs Integration**: Query Lambda, EKS, ALB, and API Gateway logs via Logs Insights
+- **Hybrid Hot/Cold Architecture**: Dual-target detection rules across CloudWatch (0-7 days) and Security Lake (7+ days)
 - **Detection Rules Framework**: Create, test, and manage SQL-based security detection rules
+- **Alert Notifications**: Route alerts to SNS topics and Slack webhooks with severity filtering
 - **Investigation Graph Visualization**: Interactive graph visualization for security investigations using pyvis
+- **Investigation Timeline**: Plotly-based interactive timelines with event tagging and AI summaries
 - **Neptune Graph Database**: Persist and query security graphs with AWS Neptune Serverless
 - **Adversary Emulation**: Test detections with MITRE ATT&CK-aligned attack scenarios
 - **Lambda Deployment**: Deploy detection rules to Lambda with CloudWatch schedules
@@ -15,6 +21,13 @@ A Marimo notebook-based security analytics platform for AWS Security Lake. Creat
 - **Interactive Marimo Notebook**: Visual interface for exploration and rule development
 
 ## Quick Start
+
+### Prerequisites
+
+- **Python 3.13+**
+- **[uv](https://docs.astral.sh/uv/)** package manager
+- **AWS credentials** configured via `aws configure` or environment variables
+- **pdflatex** (optional, for PDF report generation)
 
 ### Installation
 
@@ -149,15 +162,17 @@ aws cloudformation deploy \
 secdashboards/
 ├── src/secdashboards/
 │   ├── catalog/          # Data catalog and source management
-│   ├── connectors/       # Data source connectors (Athena, Security Lake)
-│   ├── detections/       # Detection rules framework
+│   ├── connectors/       # Data source connectors (Athena, Security Lake, CloudWatch)
+│   ├── detections/       # Detection rules framework (SQL, dual-target)
 │   ├── graph/            # Investigation graph module
 │   │   ├── models.py     # Node/edge entity models
 │   │   ├── builder.py    # Graph construction from detections
 │   │   ├── connector.py  # Neptune database connector
 │   │   ├── enrichment.py # Security Lake enrichment queries
 │   │   ├── visualization.py  # pyvis graph visualization
+│   │   ├── timeline.py   # Plotly timeline visualization
 │   │   └── queries.py    # Gremlin/openCypher templates
+│   ├── notifications/    # Alert delivery (SNS, Slack)
 │   ├── ai/               # AI assistance (Bedrock)
 │   │   ├── assistant.py  # BedrockAssistant class
 │   │   ├── models.py     # Model configs and pricing
@@ -176,9 +191,11 @@ secdashboards/
 ├── detections/
 │   └── sample_rules.yaml # Example detection rules
 ├── infrastructure/
-│   ├── template.yaml     # Lambda SAM/CloudFormation template
-│   ├── neptune.yaml      # Neptune Serverless stack
-│   └── marimo-apprunner.yaml  # App Runner VPC deployment
+│   ├── template.yaml          # Lambda SAM/CloudFormation template
+│   ├── neptune.yaml           # Neptune Serverless stack
+│   ├── marimo-apprunner.yaml  # App Runner VPC deployment
+│   ├── health-dashboard.yaml  # Health dashboard Lambda + API Gateway
+│   └── cdk/                   # AWS CDK stacks (alerting, monitoring)
 ├── tests/                # Unit and integration tests
 ├── Dockerfile.marimo     # Container for AWS deployment
 ├── catalog.example.yaml  # Example catalog configuration
@@ -241,6 +258,37 @@ neptune.save_graph(graph)
 | Resource | AWS resources (S3, EC2, etc.) | Blue |
 | APIOperation | AWS API calls | Green |
 | SecurityFinding | Detection triggers | Bright Red |
+
+## Alert Notifications
+
+Route detection alerts to SNS topics and Slack webhooks:
+
+```python
+from secdashboards.notifications import (
+    NotificationManager, SecurityAlert, SlackNotifier, SNSNotifier,
+)
+from secdashboards.detections.rule import Severity
+
+# Configure channels
+sns = SNSNotifier(topic_arn="arn:aws:sns:us-west-2:123456789:security-alerts")
+slack = SlackNotifier(webhook_url="https://hooks.slack.com/services/T.../B.../xxx")
+
+# Create manager with severity filter (only HIGH+ alerts go to Slack)
+manager = NotificationManager(channels=[sns, slack], severity_filter=Severity.HIGH)
+
+# Send from a detection result
+results = manager.notify_detection(detection_result)
+
+# Or create an alert directly
+alert = SecurityAlert(
+    rule_id="custom-001",
+    rule_name="Manual Alert",
+    severity=Severity.CRITICAL,
+    message="Suspicious activity detected",
+    match_count=5,
+)
+manager.notify(alert)
+```
 
 ## AI Assistance (Amazon Bedrock)
 
@@ -324,7 +372,11 @@ aws cloudformation deploy \
 ### Run Tests
 
 ```bash
-uv run pytest
+# Full test suite (414 tests)
+uv run pytest tests/ --ignore=tests/test_notebook_main.py
+
+# Integration tests (require AWS credentials)
+RUN_INTEGRATION_TESTS=1 uv run pytest tests/test_security_lake_integration.py -v
 ```
 
 ### Linting and Type Checking
@@ -333,9 +385,11 @@ uv run pytest
 # Lint with ruff
 uv run ruff check src/
 
-# Type check with ty
+# Type check with ty (Astral)
 uv run ty check src/
 ```
+
+Pre-commit hooks run automatically via [prek](https://github.com/catppuccin/prek) (Rust-based, drop-in replacement for pre-commit). Hooks include ruff, ruff-format, YAML/JSON validation, and Lambda handler syntax checks.
 
 ### Adding Custom Connectors
 
@@ -360,6 +414,22 @@ class MyCustomConnector(DataConnector):
 # Register with catalog
 catalog.register_connector(DataSourceType.CUSTOM, MyCustomConnector)
 ```
+
+## Troubleshooting
+
+**"No AWS credentials found"** — Ensure `aws configure` has been run or `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` environment variables are set. For SSO, run `aws sso login` first.
+
+**Athena query fails with "Access Denied"** — Check that your IAM user/role has `s3:GetObject` on the Security Lake S3 buckets and `s3:PutObject` on the Athena results bucket.
+
+**"No data returned" for health checks** — Verify the data catalog (`catalog.yaml`) has the correct database/table names. Run `uv run secdash init-catalog --region <your-region>` to auto-discover tables.
+
+**pdflatex not found** — PDF report generation requires a LaTeX distribution. On Debian/Ubuntu: `apt install texlive-latex-base`. On macOS: `brew install --cask mactex-no-gui`.
+
+**Pre-commit hooks fail** — This project uses `prek` instead of `pre-commit`. Install with `uv sync --group dev`, which includes prek as a dependency.
+
+## Security
+
+See [SECURITY.md](SECURITY.md) for security design decisions, known sharp edges, and responsible disclosure guidelines.
 
 ## License
 
