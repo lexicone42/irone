@@ -21,6 +21,8 @@ class SNSNotifier(NotificationChannel):
     """Send security alerts to an AWS SNS topic."""
 
     def __init__(self, topic_arn: str, region: str = "us-west-2") -> None:
+        if not topic_arn.startswith("arn:aws:sns:"):
+            raise ValueError("topic_arn must be a valid SNS ARN (arn:aws:sns:...)")
         self._topic_arn = topic_arn
         self._region = region
         self._client: Any = None

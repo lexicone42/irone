@@ -5,6 +5,7 @@ from datetime import datetime
 from unittest.mock import MagicMock, patch
 
 import httpx
+import pytest
 
 from secdashboards.detections.rule import DetectionResult, Severity
 from secdashboards.notifications.base import (
@@ -179,6 +180,14 @@ class TestSNSNotifier:
             _ = notifier.client
             mock_boto3.client.assert_called_once_with("sns", region_name="us-west-2")
 
+    def test_rejects_invalid_arn(self) -> None:
+        with pytest.raises(ValueError, match="valid SNS ARN"):
+            SNSNotifier(topic_arn="not-an-arn")
+
+    def test_rejects_non_sns_arn(self) -> None:
+        with pytest.raises(ValueError, match="valid SNS ARN"):
+            SNSNotifier(topic_arn="arn:aws:sqs:us-west-2:123:my-queue")
+
 
 # ---------------------------------------------------------------------------
 # TestSlackNotifier
@@ -191,6 +200,14 @@ class TestSlackNotifier:
     def test_channel_name(self) -> None:
         notifier = SlackNotifier(webhook_url="https://hooks.slack.com/test")
         assert notifier.channel_name == "slack"
+
+    def test_rejects_http_url(self) -> None:
+        with pytest.raises(ValueError, match="HTTPS"):
+            SlackNotifier(webhook_url="http://hooks.slack.com/test")
+
+    def test_rejects_non_url(self) -> None:
+        with pytest.raises(ValueError, match="HTTPS"):
+            SlackNotifier(webhook_url="not-a-url")
 
     def test_send_success(self) -> None:
         notifier = SlackNotifier(webhook_url="https://hooks.slack.com/test")
