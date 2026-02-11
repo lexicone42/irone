@@ -28,6 +28,14 @@ repos:
   # Local hooks (use uv-installed tools)
   - repo: local
     hooks:
+      # Type checking (fast, every commit)
+      - id: ty-check
+        name: Type Check (ty)
+        entry: uv run ty check src/
+        language: system
+        files: ^src/.*\.py$
+        pass_filenames: false
+
       # Lambda handler syntax check (fast, every commit)
       - id: dashboard-handler-syntax
         name: Lambda Handler Syntax Check

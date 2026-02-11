@@ -7,7 +7,7 @@ and AI-generated summaries for incident investigation workflows.
 from __future__ import annotations
 
 from datetime import datetime
-from enum import Enum
+from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, Field
@@ -16,7 +16,7 @@ if TYPE_CHECKING:
     from secdashboards.graph.models import SecurityGraph
 
 
-class EventTag(str, Enum):
+class EventTag(StrEnum):
     """Tags for categorizing timeline events during investigation."""
 
     UNREVIEWED = "unreviewed"

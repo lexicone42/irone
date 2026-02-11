@@ -100,8 +100,8 @@ unresolved-import = "warn"
 # Allow missing type stubs for third-party libraries
 possibly-missing-attribute = "warn"
 
-[tool.ty.ignore]
-# Optional dependencies that may not be installed
-paths = [
+[tool.ty.src]
+# Exclude files with optional dependencies that may not be installed
+exclude = [
     "src/secdashboards/reports/exporters.py",  # playwright is optional
 ]

@@ -8,7 +8,7 @@ import json
 import logging
 import os
 import time
-from datetime import datetime
+from datetime import UTC, datetime
 
 import boto3
 
@@ -89,7 +89,7 @@ def run_query(query: str, timeout: int = 60) -> list:
 def check_freshness(sources: list) -> list:
     """Check data freshness for Security Lake sources."""
     alerts = []
-    now = datetime.now(datetime.UTC)
+    now = datetime.now(UTC)
 
     for source in sources:
         table = TABLES.get(source)
@@ -118,9 +118,7 @@ def check_freshness(sources: list) -> list:
 
             latest = results[0]["latest_event"]
             clean_ts = latest.replace("Z", "").replace("T", " ").split(".")[0]
-            latest_dt = datetime.strptime(clean_ts, "%Y-%m-%d %H:%M:%S").replace(
-                tzinfo=datetime.UTC
-            )
+            latest_dt = datetime.strptime(clean_ts, "%Y-%m-%d %H:%M:%S").replace(tzinfo=UTC)
             minutes_ago = int((now - latest_dt).total_seconds() / 60)
 
             if minutes_ago > FRESHNESS_THRESHOLD:
@@ -200,9 +198,9 @@ def run_detections(event: dict) -> list:
 
     # Filter to specific rule IDs if requested
     if rule_ids:
-        for rid in list(runner.list_rules()):
+        for rid in list(runner._rules):
             if rid not in rule_ids:
-                runner._rules.pop(rid, None)
+                del runner._rules[rid]
 
     results = runner.run_all(connector, lookback_minutes=lookback)
 

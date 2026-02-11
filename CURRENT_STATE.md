@@ -39,7 +39,7 @@ secdashboards/
 │   │   └── templates/     # Jinja2 LaTeX templates
 │   ├── health/            # Health monitoring
 │   │   ├── monitor.py     # HealthMonitor for checking data sources
-│   │   ├── alerting_handler.py # Lambda handler for alerting stack
+│   │   ├── alerting_handler.py # Lambda handler for alerting stack (with DetectionRunner)
 │   │   └── url_analyzer.py # URLAnalyzer for external URL health
 │   ├── deploy/            # Lambda deployment
 │   │   ├── lambda_builder.py  # LambdaBuilder for deployment packages
@@ -66,113 +66,73 @@ secdashboards/
 │   └── cli.py             # Command-line interface
 ├── notebooks/
 │   ├── main.py            # Main Marimo notebook (navigation hub)
-│   └── investigation.py   # Investigation notebook with graph + timeline
+│   ├── investigation.py   # Investigation notebook with graph + timeline
+│   └── deployment.py      # CDK deployment management notebook
 ├── scripts/
 │   └── example_investigation.py  # Demo investigation workflow
 ├── detections/
-│   └── sample_rules.yaml  # 6 sample detection rules
+│   ├── sample_rules.yaml         # 6 CloudTrail detection rules
+│   ├── vpc_flow_rules.yaml       # 4 VPC Flow detection rules
+│   ├── dns_rules.yaml            # 4 Route53 DNS detection rules
+│   └── security_hub_rules.yaml   # 4 Security Hub detection rules
 ├── infrastructure/
 │   ├── neptune.yaml           # Neptune Serverless CloudFormation stack
 │   ├── marimo-apprunner.yaml  # App Runner VPC deployment
-│   └── cdk/                   # AWS CDK stacks (alerting, detections, monitoring)
-├── tests/                 # 414 tests total
-│   ├── test_catalog.py    # Catalog tests (8)
-│   ├── test_detections.py # Detection tests (9)
-│   ├── test_adversary.py  # Adversary tests (37)
-│   ├── test_graph.py      # Graph tests (50)
-│   ├── test_ai.py         # AI/Bedrock tests (26)
-│   ├── test_reports.py    # Report generation tests (58)
-│   ├── test_rule_store.py # S3RuleStore tests (32)
-│   ├── test_sql_utils.py  # SQL injection protection tests (32)
-│   ├── test_timeline.py   # Timeline tests (24)
-│   ├── test_notifications.py # Notification tests (28)
-│   ├── test_deploy_e2e.py # Deployment E2E tests
-│   └── test_security_lake_integration.py  # Integration tests (10)
-├── output/investigations/ # Demo output directory
-├── Dockerfile.marimo      # Container for AWS App Runner deployment
-├── catalog.example.yaml   # Example catalog configuration
-├── pyproject.toml         # Project configuration (uv, ruff, ty)
-└── README.md              # Documentation
+│   └── cdk/                   # AWS CDK stacks (alerting, detections, health dashboard)
+│       ├── stacks/
+│       │   ├── alerting.py          # AlertingStack (SNS, Lambda, EventBridge)
+│       │   ├── detection_rules.py   # DetectionRulesStack (Lambda per rule, shared Layer)
+│       │   └── health_dashboard.py  # HealthDashboardStack (API Gateway, Cognito)
+│       └── tests/
+│           ├── test_health_dashboard_stack.py  # 12 tests
+│           ├── test_alerting_stack.py          # 7 tests
+│           └── test_detection_rules_stack.py   # 10 tests
+├── docs/                    # mkdocs-material API documentation
+├── tests/                   # 484 tests total (+ 29 CDK tests separate)
+├── Dockerfile.marimo        # Container for AWS App Runner deployment
+├── catalog.example.yaml     # Example catalog configuration
+├── mkdocs.yml               # Documentation site config
+├── pyproject.toml           # Project configuration (uv, ruff, ty)
+└── README.md                # Documentation
 ```
 
 ## Recent Changes (2026-02-10)
 
-### CDK Consolidation & Notifications Wiring
+### PR #5: Detection Runner Wiring, CDK Tests, Detection Rules, Neptune Tests
+- **DetectionRunner in alerting Lambda**: Wired `DetectionRunner` + `S3RuleStore` into `alerting_handler.py`, completing the last TODO
+- **CDK assertion tests**: 17 new tests for AlertingStack (7) and DetectionRulesStack (10)
+- **Detection rules expansion**: 12 new rules across VPC Flow (4), DNS/Route53 (4), Security Hub (4)
+- **Deployment notebook**: Rewrote for CDK workflow (removed SAM references)
+- **Neptune mock tests**: 39 tests covering CRUD, graph ops, health checks, result conversion
+- **CI pipeline**: Added GitHub Actions (lint, test, docs) — **disabled for now** (ruff version mismatch)
 
+### PR #4: Mkdocs, Timeline Wiring, Neptune Workflows
+- **mkdocs-material**: API documentation with mkdocstrings auto-generated from docstrings
+- **Timeline in reports**: Wired timeline events into LaTeX report generation
+- **Neptune in notebook**: Wired save/load graph to Neptune into investigation notebook
+
+### PR #3: CDK Consolidation & Notifications Wiring
 - **Removed SAM templates**: Deleted `template.yaml`, `health-dashboard.yaml`, `deploy-dashboard.sh`
-- **New DetectionRulesStack** (`infrastructure/cdk/stacks/detection_rules.py`): CDK stack for deploying detection Lambdas with shared notifications layer, EventBridge schedules, and cross-stack SNS topic import
-- **Updated AlertingStack**: Extracted inline Lambda code into `alerting_handler.py`, switched from `Code.from_inline()` to `Code.from_asset()`, removed separate Slack Lambda in favor of NotificationManager multi-channel routing
-- **Lambda handler templates**: Now use `NotificationManager` (SNS + Slack) instead of inline `sns.publish()` calls
-- **Notifications Lambda Layer**: `LambdaBuilder.build_notifications_layer()` packages the notifications module with httpx/pydantic deps
-- **CLI updates**: Removed `--sam` flag from `deploy`, removed `--api` flag from `adversary deploy-lambda`
+- **New DetectionRulesStack**: CDK stack for deploying detection Lambdas with shared notifications layer
+- **Updated AlertingStack**: Extracted inline Lambda code into `alerting_handler.py`
+- **Lambda handler templates**: Now use `NotificationManager` (SNS + Slack)
+- **Notifications Lambda Layer**: `LambdaBuilder.build_notifications_layer()`
 
-## Previous Changes (2026-01-17)
+### PR #2: Input Validation
+- URL validation for SlackNotifier and URLAnalyzer (HTTPS enforcement)
+- Bounds validation for LambdaBuilder.deploy_lambda() parameters
 
-### Application Log Onboarding
-
-**CloudWatch Logs Connector** (`cloudwatch_logs.py`):
-- Query Lambda, EKS, ALB, API Gateway, and Cloudflare logs via Logs Insights
-- Async query handling with exponential backoff
-- Log group discovery with pattern matching
-- Pre-built query methods: `query_lambda_errors()`, `query_eks_pod_errors()`, `query_alb_access_logs()`, `query_cloudflare_waf_events()`
-
-**Log ETL Pipeline** (`log_etl.py`):
-- OCSF transformers for Lambda, ALB, EKS, and Cloudflare logs
-- Cost-effective CloudWatch Export Task API (avoids Firehose costs)
-- Parquet/JSON Lines export for Security Lake ingestion
-- Hot/cold tier architecture: CloudWatch (0-7 days) → Security Lake (7+ days)
-
-**Security Lake Enhancements**:
-- `query_vpc_flow()` - VPC Flow log queries with IP/port/action filters
-- `query_dns_logs()` - Route53 resolver log queries
-- `query_suspicious_dns()` - DGA and suspicious TLD detection
-- `query_lambda_execution()` - Lambda execution logs from Security Lake
-- `get_data_source_health_summary()` - Unified health check across event classes
-
-**Dual-Target Detection Rules** (`DualTargetDetectionRule`):
-- Single rule definition works on both CloudWatch and Athena/Security Lake
-- Automatic query format adaptation per target
-- Run against hot tier (real-time) or cold tier (historical) or both
-
-**Application Detection Rules** (`application_rules.yaml`):
-- 20+ rules for Lambda, EKS, ALB, Cloudflare, API Gateway
-- MITRE ATT&CK mapping for each rule
-- Severity-based threshold evaluation
-
-**Dual-Target Lambda Builder**:
-- Generate Lambda handlers that query both CloudWatch and Athena
-- CDK-based deployment via DetectionRulesStack
-- Shared notifications Lambda Layer (SNS + Slack via NotificationManager)
-- Scheduled execution via EventBridge
-
-### Previous Changes (2026-01-14)
-
-### Timeline Visualization Feature
-- **New module**: `src/secdashboards/graph/timeline.py`
-- Interactive Plotly timeline for investigation events
-- Event tagging with 11 classification options (including MITRE ATT&CK phases)
-- AI summary generation via Bedrock with editable analyst field
-- Auto-tagging of high-severity security findings
-- Integrated into investigation notebook and example script
-
-### Report Generation
-- LaTeX/PDF report generation with professional formatting
-- Table overflow protection with intelligent column sizing and truncation
-- Templates for investigation reports and detection reports
-- S3 export with presigned URLs
-- pdflatex integration for local PDF compilation
-
-### Security Infrastructure
-- S3RuleStore for secure YAML-only detection rule storage
-- SQL injection protection with parameterized queries
-- OIDCAuthenticator for ALB/Cognito authentication
-- Comprehensive input validation and sanitization
+### PR #1: Documentation, Security, Property-Based Tests
+- SECURITY.md with vulnerability reporting guidelines
+- Property-based tests for SQL sanitization and alert serialization
+- py.typed marker for PEP 561
 
 ## Configuration
 
 - **Package Manager**: uv
-- **Linter**: ruff
-- **Type Checker**: ty (Astral)
+- **Linter**: ruff (line-length=100)
+- **Type Checker**: ty (Astral) — manual only, not in pre-commit or CI
+- **Pre-commit**: prek (Rust-based)
 - **Default Region**: us-west-2
 - **Python Version**: 3.13
 
@@ -191,7 +151,7 @@ Key dependencies in pyproject.toml:
 
 ## Test Status
 
-### Unit Tests (437 total - all passing)
+### Unit Tests (484 total - all passing)
 ```bash
 uv run pytest tests/ -v --ignore=tests/test_notebook_main.py
 ```
@@ -208,18 +168,47 @@ Test breakdown:
 - Timeline: 24
 - Notifications: 28
 - Deployment: 33
+- Alerting Handler: 8
+- Neptune Connector: 39
 - Deploy E2E + others: 99
+- Property-based: 2
 
-### Integration Tests (10 total - all passing)
+### CDK Tests (29 total - all passing, requires `uv sync --group cdk`)
+```bash
+cd infrastructure/cdk && uv run pytest tests/ -v
+```
+
+### Integration Tests (20 total - skipped without AWS)
 ```bash
 RUN_INTEGRATION_TESTS=1 uv run pytest tests/test_security_lake_integration.py -v
+RUN_NEPTUNE_TESTS=1 uv run pytest tests/test_neptune_integration.py -v
 ```
 
 ### Type Checking
 ```bash
 uv run ty check src/
-# All checks passed!
+# Available but not automated — not in pre-commit or CI
 ```
+
+## Detection Rules (18 total)
+
+| File | Count | Data Source | OCSF Class |
+|------|-------|-------------|------------|
+| `sample_rules.yaml` | 6 | CloudTrail | 3002 (Auth) |
+| `vpc_flow_rules.yaml` | 4 | VPC Flow | 4001 (Network) |
+| `dns_rules.yaml` | 4 | Route53 | 4003 (DNS) |
+| `security_hub_rules.yaml` | 4 | Security Hub | 2001 (Findings) |
+
+## Infrastructure Status
+
+| Component | Template | Status |
+|-----------|----------|--------|
+| CDK AlertingStack | `cdk/stacks/alerting.py` | Ready (tested) |
+| CDK DetectionRulesStack | `cdk/stacks/detection_rules.py` | Ready (tested) |
+| CDK HealthDashboardStack | `cdk/stacks/health_dashboard.py` | Ready (tested) |
+| Neptune Serverless | `neptune.yaml` | CloudFormation template ready |
+| App Runner + VPC | `marimo-apprunner.yaml` | CloudFormation template ready, placeholder values |
+| Dockerfile | `Dockerfile.marimo` | Ready, not pushed to ECR |
 
 ## Investigation Graph Module
 
@@ -253,10 +242,7 @@ uv run ty check src/
 uv sync
 
 # Run unit tests
-uv run pytest
-
-# Run integration tests (requires AWS credentials)
-RUN_INTEGRATION_TESTS=1 uv run pytest tests/test_security_lake_integration.py -v
+uv run pytest tests/ --ignore=tests/test_notebook_main.py
 
 # Launch main Marimo notebook
 uv run marimo edit notebooks/main.py
@@ -267,30 +253,12 @@ uv run marimo edit notebooks/investigation.py
 # Run demo investigation (no AWS required)
 uv run python scripts/example_investigation.py --demo
 
+# Build API docs
+uv sync --group docs && uv run mkdocs serve
+
 # Via CLI
 uv run secdash notebook
 ```
-
-## Demo Investigation Output
-
-Running `--demo` generates:
-```
-output/investigations/
-├── investigation_graph.html      # Interactive pyvis graph
-├── investigation_timeline.html   # Interactive Plotly timeline
-├── investigation_report.tex      # LaTeX source
-├── investigation_report.pdf      # PDF report (if pdflatex installed)
-└── investigation_data.json       # Full data export with timeline
-```
-
-## AWS Configuration
-
-- **Account**: 651804262336
-- **User**: bryan
-- **Region**: us-west-2
-- **Security Lake Database**: amazon_security_lake_glue_db_us_west_2
-- **CloudTrail Table**: amazon_security_lake_table_us_west_2_cloud_trail_mgmt_2_0
-- **Athena Output Bucket**: s3://aws-athena-query-results-651804262336-us-west-2/
 
 ## Available Security Lake Tables
 
@@ -301,95 +269,43 @@ output/investigations/
 5. amazon_security_lake_table_us_west_2_sh_findings_2_0 (Security Hub)
 6. amazon_security_lake_table_us_west_2_vpc_flow_2_0
 
-## Adversary Emulation Module
-
-### Available Attack Scenarios
-
-| Scenario ID | MITRE Techniques | Expected Detections |
-|-------------|------------------|---------------------|
-| root-account-compromise | T1078.004 | detect-root-login |
-| iam-privilege-escalation | T1098, T1098.001 | detect-iam-policy-changes, detect-access-key-creation |
-| credential-brute-force | T1110 | detect-failed-logins |
-| security-group-evasion | T1562.007 | detect-security-group-changes |
-| api-reconnaissance | T1106, T1595 | detect-unusual-api-calls |
-| network-discovery | T1046 | VPC Flow detections |
-| dns-c2-exfil | T1071.004, T1048.003 | Route53 detections |
-| full-attack-chain | Multiple | All detections |
-
-### CLI Commands
-
-```bash
-# List available attack scenarios
-secdash adversary list-scenarios
-
-# Run a scenario and generate events
-secdash adversary run-scenario root-account-compromise -o events.json
-
-# Test detection rules against scenarios
-secdash adversary test-detections --rules ./detections
-
-# Run network tests locally
-secdash adversary network-test --target 10.0.0.50 --type scan
-
-# Build Lambda deployment package
-secdash adversary deploy-lambda --output ./build
-
-# Invoke deployed Lambda
-secdash adversary invoke-lambda --scenario port_scan_sim
-```
-
-## AI/Bedrock Module
-
-### Capabilities
-- Detection rule generation from natural language
-- Alert triage and analysis
-- Investigation graph analysis
-- Natural language to SQL conversion
-- Incident report generation
-- Timeline summary generation
-- Cost tracking per session
-
-### Supported Models
-- Claude 3.5 Sonnet (default)
-- Claude 3.5 Haiku (fast/cheap)
-- Claude 3 Opus (deep analysis)
-- Claude Sonnet 4
-- Claude Opus 4
-
-## Notebooks
-
-| Notebook | Purpose | Roles |
-|----------|---------|-------|
-| `main.py` | Navigation hub | All |
-| `investigation.py` | Graph + timeline visualization, AI analysis | SOC/IR |
-| `detection_engineering.py` | Create/test rules + AI generation | Detection Engineers |
-| `monitoring.py` | Health checks, data freshness | SOC |
-| `deployment.py` | Infrastructure deployment | Admin only |
-
 ## Git Commit History (Recent)
 
 ```
+69f688b Merge pull request #5 from lexicone42/enhance-detection-ci-neptune
+f86810f Merge pull request #4 from lexicone42/add-mkdocs-timeline-wiring
+283eb4b Merge pull request #3 from lexicone42/consolidate-cdk-notifications
+2682802 Add input validation for security-sensitive parameters (#2)
+9f49558 Add documentation updates, SECURITY.md, and property-based tests (#1)
 4bcbd64 Add notification integrations module (SNS, Slack) with multi-channel routing
 be0d9b0 Add deployment E2E tests and fix StrEnum serialization in SAM templates
 82a0dcb Add timeline features, Neptune persistence, and upgrade to Claude Opus 4.6
-2a02feb Switch from pre-commit to prek for faster hook execution
-061f338 Add CloudWatch Logs connector, dual-target detections, and health dashboard
-8a8a92e Add investigation timeline with event tagging and AI summaries
 ```
 
-## Pending Improvements
+## Completed Improvements
 
-1. ~~Fix remaining `datetime.utcnow()` deprecation warnings~~ Done (already fixed)
-2. ~~Add more detection rules for VPC Flow, Route53, Security Hub data~~ Done
+All 14 originally tracked improvements are done:
+
+1. ~~Fix remaining `datetime.utcnow()` deprecation warnings~~ Done
+2. ~~Add more detection rules for VPC Flow, Route53, Security Hub data~~ Done (18 rules across 4 sources)
 3. ~~Test Lambda deployment workflow end-to-end~~ Done (test_deploy_e2e.py)
 4. ~~Add alert notification integrations (SNS, Slack, etc.)~~ Done (notifications module)
 5. ~~Add `py.typed` marker for PEP 561 type checking support~~ Done
 6. ~~Consider adding mkdocs or sphinx for API documentation~~ Done (mkdocs-material + mkdocstrings)
-7. ~~Add timeline export to LaTeX reports~~ Done (wired timeline into report generation)
-8. ~~Implement Neptune persistence for timelines~~ Done (already implemented, wired into notebook)
-9. ~~Wire notification module into Lambda handler templates (replace inline SNS publishing)~~ Done (uses NotificationManager)
-10. ~~Wire notification module into CDK alerting stack (replace inline Slack webhook code)~~ Done (alerting_handler.py + DetectionRulesStack)
-11. ~~Add property-based tests for SQL sanitization and alert serialization~~ Done (test_property_based.py)
-12. ~~Fix case-sensitive SQL keyword detection in `rule_store.py`~~ Verified as false positive (already case-insensitive)
+7. ~~Add timeline export to LaTeX reports~~ Done
+8. ~~Implement Neptune persistence for timelines~~ Done
+9. ~~Wire notification module into Lambda handler templates~~ Done (NotificationManager)
+10. ~~Wire notification module into CDK alerting stack~~ Done (alerting_handler.py + DetectionRulesStack)
+11. ~~Add property-based tests for SQL sanitization and alert serialization~~ Done
+12. ~~Fix case-sensitive SQL keyword detection in `rule_store.py`~~ Verified (already case-insensitive)
 13. ~~Add URL validation to `SlackNotifier` and `URLAnalyzer` constructors~~ Done (HTTPS enforcement)
-14. ~~Add bounds validation to `LambdaBuilder.deploy_lambda()` parameters~~ Done (memory 128-10240, timeout 1-900)
+14. ~~Add bounds validation to `LambdaBuilder.deploy_lambda()` parameters~~ Done
+
+## Potential Next Steps
+
+- Deploy infrastructure to AWS (CDK stacks, Neptune, App Runner)
+- Build and push Docker image to ECR for App Runner
+- Set up real VPC/subnets for App Runner and Neptune templates
+- Add GitHub Actions CI back when ruff version alignment is sorted out
+- Add ty type checking to pre-commit or CI
+- Real-world detection rule tuning against live Security Lake data
