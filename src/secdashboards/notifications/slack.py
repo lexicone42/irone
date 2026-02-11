@@ -39,6 +39,8 @@ class SlackNotifier(NotificationChannel):
     """Send security alerts to a Slack incoming webhook."""
 
     def __init__(self, webhook_url: str, channel: str | None = None) -> None:
+        if not webhook_url.startswith("https://"):
+            raise ValueError("webhook_url must use HTTPS")
         self._webhook_url = webhook_url
         self._channel = channel
 

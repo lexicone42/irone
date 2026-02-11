@@ -278,6 +278,32 @@ class TestLambdaBuilderDeploy:
         assert env_vars["ATHENA_DATABASE"] == "my_db"
         assert env_vars["SNS_TOPIC_ARN"] == "arn:aws:sns:topic"
 
+    def test_deploy_rejects_invalid_memory(
+        self, builder: LambdaBuilder, sql_rule: SQLDetectionRule
+    ) -> None:
+        """deploy_lambda() rejects memory outside 128-10240 range."""
+        zip_path = builder.build_package(sql_rule, data_source="security_lake")
+        with pytest.raises(ValueError, match="memory_mb"):
+            builder.deploy_lambda(
+                rule=sql_rule,
+                package_path=zip_path,
+                role_arn="arn:aws:iam::123456789012:role/test-role",
+                memory_mb=64,
+            )
+
+    def test_deploy_rejects_invalid_timeout(
+        self, builder: LambdaBuilder, sql_rule: SQLDetectionRule
+    ) -> None:
+        """deploy_lambda() rejects timeout outside 1-900 range."""
+        zip_path = builder.build_package(sql_rule, data_source="security_lake")
+        with pytest.raises(ValueError, match="timeout_seconds"):
+            builder.deploy_lambda(
+                rule=sql_rule,
+                package_path=zip_path,
+                role_arn="arn:aws:iam::123456789012:role/test-role",
+                timeout_seconds=1000,
+            )
+
 
 # ---------------------------------------------------------------------------
 # LambdaBuilder — SAM template generation

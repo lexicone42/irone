@@ -253,6 +253,11 @@ class LambdaBuilder:
         timeout_seconds: int = 300,
     ) -> dict[str, Any]:
         """Deploy or update a Lambda function."""
+        if not 128 <= memory_mb <= 10240:
+            raise ValueError(f"memory_mb must be 128-10240, got {memory_mb}")
+        if not 1 <= timeout_seconds <= 900:
+            raise ValueError(f"timeout_seconds must be 1-900, got {timeout_seconds}")
+
         function_name = f"secdash-detection-{rule.id}"
 
         env_vars = {
