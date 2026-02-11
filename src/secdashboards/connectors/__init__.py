@@ -1,8 +1,9 @@
-"""Data connectors for various AWS data sources."""
+"""Data connectors for various data sources."""
 
 from secdashboards.connectors.athena import AthenaConnector
 from secdashboards.connectors.base import DataConnector, HealthCheckResult
 from secdashboards.connectors.cloudwatch_logs import CloudWatchLogsConnector, LogSourceType
+from secdashboards.connectors.duckdb import DuckDBConnector
 from secdashboards.connectors.log_etl import (
     CloudWatchLogExporter,
     LogETLPipeline,
@@ -14,6 +15,7 @@ __all__ = [
     "DataConnector",
     "HealthCheckResult",
     "AthenaConnector",
+    "DuckDBConnector",
     "SecurityLakeConnector",
     "OCSFEventClass",
     "CloudWatchLogsConnector",

@@ -13,6 +13,7 @@ class DataSourceType(StrEnum):
     ATHENA = "athena"
     S3 = "s3"
     CLOUDWATCH_LOGS = "cloudwatch_logs"
+    DUCKDB = "duckdb"
     CUSTOM = "custom"
 
 

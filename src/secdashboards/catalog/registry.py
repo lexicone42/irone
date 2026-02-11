@@ -27,11 +27,13 @@ class DataCatalog:
         """Register built-in connector types."""
         from secdashboards.connectors.athena import AthenaConnector
         from secdashboards.connectors.cloudwatch_logs import CloudWatchLogsConnector
+        from secdashboards.connectors.duckdb import DuckDBConnector
         from secdashboards.connectors.security_lake import SecurityLakeConnector
 
         self._connectors[DataSourceType.SECURITY_LAKE] = SecurityLakeConnector
         self._connectors[DataSourceType.ATHENA] = AthenaConnector
         self._connectors[DataSourceType.CLOUDWATCH_LOGS] = CloudWatchLogsConnector
+        self._connectors[DataSourceType.DUCKDB] = DuckDBConnector
 
     def register_connector(
         self, source_type: DataSourceType | str, connector_class: type["DataConnector"]
