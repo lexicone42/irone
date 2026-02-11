@@ -33,7 +33,7 @@ from __future__ import annotations
 import os
 
 import aws_cdk as cdk
-from stacks import AlertingStack, HealthDashboardStack
+from stacks import AlertingStack, DetectionRulesStack, HealthDashboardStack
 
 app = cdk.App()
 
@@ -120,6 +120,24 @@ AlertingStack(
     freshness_threshold_minutes=60,  # Alert if data older than 1 hour
     check_interval_minutes=15,  # Check every 15 minutes
     description="Security Dashboards - Real-Time Alerting",
+)
+
+# =============================================================================
+# Detection Rules Stack (replaces SAM template generation)
+# =============================================================================
+# Deploys detection rule Lambdas from pre-built packages in ./build.
+# Requires: secdash deploy --rules detections/ --output ./build
+DetectionRulesStack(
+    app,
+    "secdash-detections",
+    env=env,
+    build_dir="./build",
+    notifications_layer_path="./build/notifications_layer",
+    security_lake_db=security_lake_db,
+    athena_output=athena_output,
+    slack_webhook_url=slack_webhook,
+    alerting_stack_name="secdash-alerting",
+    description="Security Dashboards - Detection Rule Lambdas",
 )
 
 # =============================================================================

@@ -559,18 +559,6 @@ class TestAdversaryDeployment:
         assert package_path.exists()
         assert package_path.suffix == ".zip"
 
-    def test_sam_template_generation(self, tmp_path: Path) -> None:
-        """Test SAM template generation."""
-        from secdashboards.adversary.deploy import AdversaryLambdaBuilder
-
-        builder = AdversaryLambdaBuilder(tmp_path)
-        template = builder.generate_sam_template(include_api_gateway=True)
-
-        assert "AWSTemplateFormatVersion" in template
-        assert "Transform" in template
-        assert "AdversaryNetworkTester" in template["Resources"]
-        assert "ApiEvent" in template["Resources"]["AdversaryNetworkTester"]["Properties"]["Events"]
-
     def test_cloudformation_template_generation(self, tmp_path: Path) -> None:
         """Test CloudFormation template generation."""
         from secdashboards.adversary.deploy import AdversaryLambdaBuilder

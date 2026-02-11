@@ -4,7 +4,7 @@ Covers:
 - Handler code generation from detection rules
 - Deployment package (zip) creation
 - Lambda function deployment via boto3 (mocked)
-- SAM template generation (single and dual-target)
+- Notifications layer building
 - EventBridge schedule management (mocked)
 - End-to-end build → deploy → schedule workflow
 """
@@ -14,7 +14,6 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
-import yaml
 
 from secdashboards.deploy.lambda_builder import (
     DualTargetLambdaBuilder,
@@ -128,6 +127,20 @@ class TestLambdaBuilderHandler:
         assert "THRESHOLD = 1" in code
         assert "LOOKBACK_MINUTES = 15" in code
         assert "actor_user = 'root'" in code
+
+    def test_build_handler_uses_notification_manager(
+        self, builder: LambdaBuilder, sql_rule: SQLDetectionRule
+    ) -> None:
+        """Generated handler imports and uses NotificationManager."""
+        handler_path = builder.build_handler(sql_rule, data_source="security_lake")
+        code = handler_path.read_text()
+
+        assert "from secdashboards.notifications import" in code
+        assert "NotificationManager" in code
+        assert "SecurityAlert" in code
+        assert "build_notification_manager" in code
+        # No longer has inline SNS client
+        assert "get_sns_client" not in code
 
     def test_build_handler_custom_lookback(
         self, builder: LambdaBuilder, sql_rule: SQLDetectionRule
@@ -306,98 +319,51 @@ class TestLambdaBuilderDeploy:
 
 
 # ---------------------------------------------------------------------------
-# LambdaBuilder — SAM template generation
+# Notifications Layer
 # ---------------------------------------------------------------------------
 
 
-class TestSAMTemplateGeneration:
-    """Tests for SAM/CloudFormation template generation."""
+class TestNotificationsLayer:
+    """Tests for the notifications Lambda Layer builder."""
 
-    def test_generate_sam_template_structure(
-        self, builder: LambdaBuilder, sql_rule: SQLDetectionRule
+    @patch("secdashboards.deploy.lambda_builder.subprocess.run")
+    def test_build_notifications_layer_structure(
+        self, mock_run: MagicMock, builder: LambdaBuilder
     ) -> None:
-        """SAM template has required top-level keys."""
-        template = builder.generate_sam_template([sql_rule], data_source="security_lake")
+        """build_notifications_layer() creates the correct directory structure."""
+        layer_path = builder.build_notifications_layer()
 
-        assert template["AWSTemplateFormatVersion"] == "2010-09-09"
-        assert template["Transform"] == "AWS::Serverless-2016-10-31"
-        assert "Parameters" in template
-        assert "Resources" in template
+        python_dir = layer_path / "python"
+        assert python_dir.is_dir()
+        assert (python_dir / "secdashboards" / "__init__.py").exists()
+        assert (python_dir / "secdashboards" / "notifications" / "__init__.py").exists()
+        assert (python_dir / "secdashboards" / "notifications" / "base.py").exists()
+        assert (python_dir / "secdashboards" / "notifications" / "manager.py").exists()
+        assert (python_dir / "secdashboards" / "notifications" / "sns.py").exists()
+        assert (python_dir / "secdashboards" / "notifications" / "slack.py").exists()
 
-    def test_generate_sam_template_has_function(
-        self, builder: LambdaBuilder, sql_rule: SQLDetectionRule
+    @patch("secdashboards.deploy.lambda_builder.subprocess.run")
+    def test_build_notifications_layer_includes_severity(
+        self, mock_run: MagicMock, builder: LambdaBuilder
     ) -> None:
-        """SAM template contains a Lambda function resource for the rule."""
-        template = builder.generate_sam_template([sql_rule], data_source="security_lake")
+        """Layer includes detections/rule.py for the Severity enum."""
+        layer_path = builder.build_notifications_layer()
+        python_dir = layer_path / "python"
+        assert (python_dir / "secdashboards" / "detections" / "__init__.py").exists()
+        assert (python_dir / "secdashboards" / "detections" / "rule.py").exists()
 
-        # Rule id "root-login" → safe_name "Root-Login" → "RootLogin" after replace
-        resources = template["Resources"]
-        assert len(resources) == 1
-
-        # Find the function resource
-        func_key = list(resources.keys())[0]
-        func = resources[func_key]
-        assert func["Type"] == "AWS::Serverless::Function"
-        assert func["Properties"]["Runtime"] == "python3.12"
-        assert func["Properties"]["Handler"] == "handler.handler"
-
-    def test_generate_sam_template_schedule(
-        self, builder: LambdaBuilder, sql_rule: SQLDetectionRule
+    @patch("secdashboards.deploy.lambda_builder.subprocess.run")
+    def test_build_notifications_layer_installs_deps(
+        self, mock_run: MagicMock, builder: LambdaBuilder
     ) -> None:
-        """SAM template includes EventBridge schedule from rule metadata."""
-        template = builder.generate_sam_template([sql_rule], data_source="security_lake")
+        """build_notifications_layer() invokes pip to install httpx and pydantic."""
+        builder.build_notifications_layer()
 
-        func = list(template["Resources"].values())[0]
-        event = func["Properties"]["Events"]["ScheduleEvent"]
-        assert event["Type"] == "Schedule"
-        assert event["Properties"]["Schedule"] == "rate(15 minutes)"
-        assert event["Properties"]["Enabled"] is True
-
-    def test_generate_sam_template_tags(
-        self, builder: LambdaBuilder, sql_rule: SQLDetectionRule
-    ) -> None:
-        """SAM template includes tags with rule metadata."""
-        template = builder.generate_sam_template([sql_rule], data_source="security_lake")
-
-        func = list(template["Resources"].values())[0]
-        tags = func["Properties"]["Tags"]
-        assert tags["Application"] == "secdashboards"
-        assert tags["RuleId"] == "root-login"
-        assert tags["Severity"] == "high"
-
-    def test_generate_sam_template_multiple_rules(
-        self, builder: LambdaBuilder, sql_rule: SQLDetectionRule
-    ) -> None:
-        """SAM template supports multiple rules in one template."""
-        meta2 = DetectionMetadata(
-            id="iam-key-creation",
-            name="IAM Key Creation",
-            severity=Severity.MEDIUM,
-            schedule="rate(5 minutes)",
-        )
-        rule2 = SQLDetectionRule(
-            metadata=meta2,
-            query_template="SELECT * FROM events WHERE event_name = 'CreateAccessKey'",
-            threshold=1,
-        )
-
-        template = builder.generate_sam_template([sql_rule, rule2], data_source="security_lake")
-
-        assert len(template["Resources"]) == 2
-
-    def test_write_sam_template(
-        self, builder: LambdaBuilder, sql_rule: SQLDetectionRule, tmp_path: Path
-    ) -> None:
-        """write_sam_template() writes valid YAML to disk."""
-        template = builder.generate_sam_template([sql_rule], data_source="security_lake")
-        output_path = tmp_path / "template.yaml"
-
-        builder.write_sam_template(template, output_path)
-
-        assert output_path.exists()
-        parsed = yaml.safe_load(output_path.read_text())
-        assert parsed["AWSTemplateFormatVersion"] == "2010-09-09"
-        assert "Resources" in parsed
+        mock_run.assert_called_once()
+        args = mock_run.call_args[0][0]
+        assert "pip" in args
+        assert "httpx" in args
+        assert "pydantic" in args
 
 
 # ---------------------------------------------------------------------------
@@ -431,6 +397,23 @@ class TestDualTargetLambdaBuilder:
         assert "CLOUDWATCH_QUERY" in code
         assert "ATHENA_QUERY" in code
         assert "LOG_GROUPS" in code
+
+    def test_build_dual_target_handler_uses_notification_manager(
+        self, dual_builder: DualTargetLambdaBuilder
+    ) -> None:
+        """Generated dual-target handler uses NotificationManager."""
+        handler_path = dual_builder.build_dual_target_handler(
+            rule_id="test-dual",
+            rule_name="Test",
+            severity="low",
+            cloudwatch_query="fields @timestamp",
+            athena_query="SELECT 1",
+            log_groups=["/aws/lambda/test"],
+        )
+        code = handler_path.read_text()
+        assert "from secdashboards.notifications import" in code
+        assert "NotificationManager" in code
+        assert "get_sns_client" not in code
 
     def test_build_dual_target_handler_is_valid_python(
         self, dual_builder: DualTargetLambdaBuilder
@@ -469,22 +452,6 @@ class TestDualTargetLambdaBuilder:
         """build_from_dual_rule() raises TypeError for non-dual rule."""
         with pytest.raises(TypeError, match="Expected DualTargetDetectionRule"):
             dual_builder.build_from_dual_rule(sql_rule, log_groups=[])  # type: ignore[arg-type]
-
-    def test_generate_dual_target_sam_template(
-        self, dual_builder: DualTargetLambdaBuilder, dual_rule: DualTargetDetectionRule
-    ) -> None:
-        """Dual-target SAM template includes CloudWatch Logs policy."""
-        template = dual_builder.generate_dual_target_sam_template(
-            rules=[dual_rule],
-            log_groups_map={"lambda-errors": ["/aws/lambda/test"]},
-            sns_topic_arn="arn:aws:sns:us-west-2:123456789012:alerts",
-        )
-
-        assert template["AWSTemplateFormatVersion"] == "2010-09-09"
-        func = list(template["Resources"].values())[0]
-        policies = func["Properties"]["Policies"]
-        assert "CloudWatchLogsReadOnlyAccess" in policies
-        assert func["Properties"]["Tags"]["DualTarget"] == "true"
 
 
 # ---------------------------------------------------------------------------
@@ -708,9 +675,8 @@ class TestE2EDeploymentWorkflow:
         assert schedule_result["schedule"] == "rate(15 minutes)"
         assert schedule_result["enabled"] is True
 
-    def test_multi_rule_sam_workflow(self, tmp_path: Path) -> None:
-        """Build handlers for multiple rules and generate a single SAM template."""
-        # Create multiple rules
+    def test_multi_rule_build_workflow(self, tmp_path: Path) -> None:
+        """Build handlers for multiple rules."""
         rules = []
         for rule_id, name, severity, schedule in [
             ("root-login", "Root Login", Severity.HIGH, "rate(15 minutes)"),
@@ -738,29 +704,13 @@ class TestE2EDeploymentWorkflow:
         for rule in rules:
             handler_path = builder.build_handler(rule, data_source="security_lake")
             assert handler_path.exists()
-
-        # Generate SAM template
-        template = builder.generate_sam_template(
-            rules,
-            data_source="security_lake",
-            sns_topic_arn="arn:aws:sns:us-west-2:123456789012:detection-alerts",
-        )
-
-        assert len(template["Resources"]) == 3
-        assert template["Parameters"]["SnsTopicArn"]["Default"] == (
-            "arn:aws:sns:us-west-2:123456789012:detection-alerts"
-        )
-
-        # Write and verify YAML
-        output_path = tmp_path / "template.yaml"
-        builder.write_sam_template(template, output_path)
-        parsed = yaml.safe_load(output_path.read_text())
-        assert len(parsed["Resources"]) == 3
+            code = handler_path.read_text()
+            assert "from secdashboards.notifications import" in code
 
     def test_dual_target_e2e_workflow(
         self, tmp_path: Path, dual_rule: DualTargetDetectionRule
     ) -> None:
-        """Build dual-target handler, package, and generate SAM template."""
+        """Build dual-target handler and package."""
         builder = DualTargetLambdaBuilder(tmp_path)
 
         # Build handler from dual rule
@@ -773,14 +723,4 @@ class TestE2EDeploymentWorkflow:
         code = handler_path.read_text()
         assert "CLOUDWATCH_QUERY" in code
         assert "ATHENA_QUERY" in code
-
-        # Generate dual-target SAM template
-        template = builder.generate_dual_target_sam_template(
-            rules=[dual_rule],
-            log_groups_map={"lambda-errors": ["/aws/lambda/my-function"]},
-            sns_topic_arn="arn:aws:sns:us-west-2:123456789012:alerts",
-        )
-
-        func = list(template["Resources"].values())[0]
-        assert func["Properties"]["FunctionName"] == "secdash-dual-lambda-errors"
-        assert "CloudWatchLogsReadOnlyAccess" in func["Properties"]["Policies"]
+        assert "from secdashboards.notifications import" in code

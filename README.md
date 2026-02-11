@@ -126,34 +126,22 @@ uv run secdash run-detections \
 
 ### Deploy to Lambda
 
-Generate SAM deployment packages:
+Build detection Lambda packages and notifications layer:
 
 ```bash
 uv run secdash deploy \
   --rules detections/ \
   --output deploy_output/ \
-  --source cloudtrail \
-  --sam
+  --source cloudtrail
 ```
 
-Deploy with SAM CLI:
+Deploy via CDK:
 
 ```bash
-cd deploy_output
-sam deploy --guided
-```
-
-Or use the provided CloudFormation template:
-
-```bash
-aws cloudformation deploy \
-  --template-file infrastructure/template.yaml \
-  --stack-name secdashboards-dev \
-  --parameter-overrides \
-    Environment=dev \
-    AthenaOutputBucket=my-athena-results \
-    AlertEmail=security@example.com \
-  --capabilities CAPABILITY_NAMED_IAM
+cd infrastructure/cdk
+npx cdk deploy secdash-alerting secdash-detections \
+  --parameters AlertEmail=security@example.com \
+  --parameters SlackWebhookUrl=https://hooks.slack.com/services/T.../B.../xxx
 ```
 
 ## Project Structure
@@ -191,11 +179,9 @@ secdashboards/
 ├── detections/
 │   └── sample_rules.yaml # Example detection rules
 ├── infrastructure/
-│   ├── template.yaml          # Lambda SAM/CloudFormation template
 │   ├── neptune.yaml           # Neptune Serverless stack
 │   ├── marimo-apprunner.yaml  # App Runner VPC deployment
-│   ├── health-dashboard.yaml  # Health dashboard Lambda + API Gateway
-│   └── cdk/                   # AWS CDK stacks (alerting, monitoring)
+│   └── cdk/                   # AWS CDK stacks (alerting, detections, monitoring)
 ├── tests/                # Unit and integration tests
 ├── Dockerfile.marimo     # Container for AWS deployment
 ├── catalog.example.yaml  # Example catalog configuration
@@ -372,7 +358,7 @@ aws cloudformation deploy \
 ### Run Tests
 
 ```bash
-# Full test suite (414 tests)
+# Full test suite (435 tests)
 uv run pytest tests/ --ignore=tests/test_notebook_main.py
 
 # Integration tests (require AWS credentials)

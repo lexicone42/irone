@@ -137,9 +137,8 @@ def deploy(
         Path, typer.Option("--output", "-o", help="Output directory for packages")
     ] = Path("./deploy_output"),
     source: Annotated[str, typer.Option("--source", "-s", help="Data source name")] = "",
-    generate_sam: Annotated[bool, typer.Option("--sam", help="Generate SAM template")] = True,
 ) -> None:
-    """Build and deploy detection rules to Lambda."""
+    """Build detection rule packages for CDK deployment."""
     from secdashboards.catalog.registry import DataCatalog
     from secdashboards.deploy.lambda_builder import LambdaBuilder
     from secdashboards.detections.runner import DetectionRunner
@@ -162,12 +161,11 @@ def deploy(
         package_path = builder.build_package(rule, source)
         console.print(f"  -> {package_path}")
 
-    if generate_sam:
-        template = builder.generate_sam_template(rules, source)
-        template_path = output_dir / "template.yaml"
-        builder.write_sam_template(template, template_path)
-        console.print(f"\n[green]SAM template written to: {template_path}[/green]")
-        console.print("Deploy with: sam deploy --guided")
+    # Build notifications layer for CDK deployment
+    layer_path = builder.build_notifications_layer()
+    console.print(f"\n[green]Notifications layer built: {layer_path}[/green]")
+    console.print("\nDeploy with CDK:")
+    console.print("  cd infrastructure/cdk && cdk deploy secdash-detections")
 
 
 @app.command()
@@ -429,9 +427,6 @@ def deploy_adversary_lambda(
     generate_template: Annotated[
         bool, typer.Option("--template", help="Generate CloudFormation template")
     ] = True,
-    include_api: Annotated[
-        bool, typer.Option("--api", help="Include API Gateway in SAM template")
-    ] = False,
 ) -> None:
     """Build and prepare adversary Lambda for deployment."""
     from secdashboards.adversary.deploy import AdversaryLambdaBuilder
@@ -444,18 +439,14 @@ def deploy_adversary_lambda(
     console.print(f"[green]Package created: {package_path}[/green]")
 
     if generate_template:
-        # Generate SAM template
-        template = builder.generate_sam_template(
-            include_api_gateway=include_api,
-        )
+        template = builder.generate_cloudformation_template()
         template_path = output_dir / "adversary-template.yaml"
         builder.write_template(template, template_path)
-        console.print(f"[green]SAM template created: {template_path}[/green]")
+        console.print(f"[green]CloudFormation template created: {template_path}[/green]")
 
-        console.print("\n[bold]Deploy with:[/bold]")
-        console.print(f"  cd {output_dir}")
-        console.print("  sam build")
-        console.print("  sam deploy --guided")
+        console.print("\n[bold]Deploy with CDK or CloudFormation:[/bold]")
+        console.print(f"  aws cloudformation deploy --template-file {template_path} \\")
+        console.print("    --stack-name secdash-adversary --capabilities CAPABILITY_NAMED_IAM")
 
 
 @adversary_app.command("invoke-lambda")
