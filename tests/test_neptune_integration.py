@@ -12,22 +12,21 @@ Environment variables:
 """
 
 import os
-from datetime import datetime, UTC
+from datetime import UTC, datetime
 
 import pytest
 
 from secdashboards.graph import (
+    APIOperationNode,
     EdgeType,
     GraphEdge,
     GraphNode,
-    NodeType,
-    NeptuneConnector,
-    PrincipalNode,
     IPAddressNode,
-    APIOperationNode,
+    NeptuneConnector,
+    NodeType,
+    PrincipalNode,
     SecurityGraph,
 )
-
 
 # Skip all tests unless RUN_NEPTUNE_TESTS env var is set
 pytestmark = pytest.mark.skipif(
@@ -298,30 +297,34 @@ class TestTraversalQueries:
         node_c = f"APIOperation:path-c-{ts}"
 
         # Create a chain: A -> B -> C
-        neptune_connector.upsert_node(GraphNode(
-            id=node_a, node_type=NodeType.PRINCIPAL, label="A", event_count=1
-        ))
-        neptune_connector.upsert_node(GraphNode(
-            id=node_b, node_type=NodeType.IP_ADDRESS, label="B", event_count=1
-        ))
-        neptune_connector.upsert_node(GraphNode(
-            id=node_c, node_type=NodeType.API_OPERATION, label="C", event_count=1
-        ))
+        neptune_connector.upsert_node(
+            GraphNode(id=node_a, node_type=NodeType.PRINCIPAL, label="A", event_count=1)
+        )
+        neptune_connector.upsert_node(
+            GraphNode(id=node_b, node_type=NodeType.IP_ADDRESS, label="B", event_count=1)
+        )
+        neptune_connector.upsert_node(
+            GraphNode(id=node_c, node_type=NodeType.API_OPERATION, label="C", event_count=1)
+        )
 
-        neptune_connector.upsert_edge(GraphEdge(
-            id=GraphEdge.create_id(EdgeType.AUTHENTICATED_FROM, node_a, node_b),
-            edge_type=EdgeType.AUTHENTICATED_FROM,
-            source_id=node_a,
-            target_id=node_b,
-            event_count=1,
-        ))
-        neptune_connector.upsert_edge(GraphEdge(
-            id=GraphEdge.create_id(EdgeType.ORIGINATED_FROM, node_c, node_b),
-            edge_type=EdgeType.ORIGINATED_FROM,
-            source_id=node_c,
-            target_id=node_b,
-            event_count=1,
-        ))
+        neptune_connector.upsert_edge(
+            GraphEdge(
+                id=GraphEdge.create_id(EdgeType.AUTHENTICATED_FROM, node_a, node_b),
+                edge_type=EdgeType.AUTHENTICATED_FROM,
+                source_id=node_a,
+                target_id=node_b,
+                event_count=1,
+            )
+        )
+        neptune_connector.upsert_edge(
+            GraphEdge(
+                id=GraphEdge.create_id(EdgeType.ORIGINATED_FROM, node_c, node_b),
+                edge_type=EdgeType.ORIGINATED_FROM,
+                source_id=node_c,
+                target_id=node_b,
+                event_count=1,
+            )
+        )
 
         try:
             # Find paths from A to C

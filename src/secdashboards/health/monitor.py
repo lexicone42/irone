@@ -151,9 +151,7 @@ class HealthMonitor:
                 connector = self.catalog.get_connector(source.name)
                 health = connector.check_health()
 
-                last_data = (
-                    health.last_data_time.isoformat() if health.last_data_time else None
-                )
+                last_data = health.last_data_time.isoformat() if health.last_data_time else None
                 summary["sources"][source.name] = {
                     "healthy": health.healthy,
                     "last_data_time": last_data,

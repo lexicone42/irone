@@ -10,7 +10,6 @@ by storing detection rules in S3 with:
 """
 
 import hashlib
-import json
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -155,10 +154,10 @@ class S3RuleStore:
 
         content_upper = content.upper()
         for keyword in dangerous_keywords:
-            if keyword in content_upper:
-                # Allow SELECT/WHERE context but warn on standalone
-                if f" {keyword} " in content_upper or content_upper.startswith(keyword):
-                    warnings.append(f"Potentially dangerous SQL keyword: {keyword}")
+            if keyword in content_upper and (
+                f" {keyword} " in content_upper or content_upper.startswith(keyword)
+            ):
+                warnings.append(f"Potentially dangerous SQL keyword: {keyword}")
 
         # Check for shell injection patterns
         shell_patterns = ["$(", "`", "&&", "||", "|", ";", ">>", ">"]

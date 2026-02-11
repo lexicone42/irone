@@ -136,12 +136,14 @@ class DetectionScheduler:
 
         for page in paginator.paginate(NamePrefix=prefix):
             for rule in page["Rules"]:
-                schedules.append({
-                    "rule_name": rule["Name"],
-                    "rule_arn": rule["Arn"],
-                    "schedule": rule.get("ScheduleExpression"),
-                    "state": rule["State"],
-                    "description": rule.get("Description"),
-                })
+                schedules.append(
+                    {
+                        "rule_name": rule["Name"],
+                        "rule_arn": rule["Arn"],
+                        "schedule": rule.get("ScheduleExpression"),
+                        "state": rule["State"],
+                        "description": rule.get("Description"),
+                    }
+                )
 
         return schedules

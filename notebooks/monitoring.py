@@ -33,7 +33,7 @@ def _():
 
 @app.cell
 def _():
-    from datetime import datetime, UTC
+    from datetime import UTC, datetime
 
     import polars as pl
 
@@ -218,9 +218,7 @@ def _(HealthMonitor, catalog, mo, run_health_btn):
             for source_name, result in report.source_results.items():
                 status_icon = "✅" if result.healthy else "❌"
                 freshness = (
-                    f"{result.data_age_minutes:.0f} min"
-                    if result.data_age_minutes
-                    else "N/A"
+                    f"{result.data_age_minutes:.0f} min" if result.data_age_minutes else "N/A"
                 )
                 status_items.append(
                     {
@@ -309,7 +307,9 @@ def _(URLAnalyzer, analyze_url_btn, mo, url_input):
             health_icon = "✅" if endpoint_health["healthy"] else "❌"
             result_items = [
                 mo.md(f"**URL:** {url_input.value}"),
-                mo.md(f"**Status:** {health_icon} {'Healthy' if endpoint_health['healthy'] else 'Unhealthy'}"),
+                mo.md(
+                    f"**Status:** {health_icon} {'Healthy' if endpoint_health['healthy'] else 'Unhealthy'}"
+                ),
                 mo.md(f"**Response Time:** {endpoint_health.get('response_time_ms', 0):.0f}ms"),
                 mo.md(f"**Status Code:** {endpoint_health.get('status_code', 'N/A')}"),
             ]
@@ -328,9 +328,7 @@ def _(URLAnalyzer, analyze_url_btn, mo, url_input):
                     result_items.append(mo.md("**Data Freshness:**"))
                     result_items.append(mo.md(f"- Records: {freshness.get('record_count', 'N/A')}"))
                     if freshness.get("latest_time"):
-                        result_items.append(
-                            mo.md(f"- Latest: {freshness.get('latest_time')}")
-                        )
+                        result_items.append(mo.md(f"- Latest: {freshness.get('latest_time')}"))
             except Exception:
                 pass  # Freshness analysis is optional
 

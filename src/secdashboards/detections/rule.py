@@ -107,6 +107,13 @@ class DetectionRule(ABC):
         return self.metadata.model_dump(mode="json")
 
 
+class QueryTarget(StrEnum):
+    """Target query engine for detection rules."""
+
+    ATHENA = "athena"  # Security Lake / Athena SQL
+    CLOUDWATCH = "cloudwatch"  # CloudWatch Logs Insights
+
+
 class SQLDetectionRule(DetectionRule):
     """A detection rule defined primarily by a SQL query."""
 
@@ -142,6 +149,185 @@ class SQLDetectionRule(DetectionRule):
 
     def evaluate(self, df: pl.DataFrame) -> DetectionResult:
         """Evaluate if detection threshold is met."""
+        start_time = datetime.now(UTC)
+
+        match_count = len(df)
+        triggered = match_count >= self.threshold
+
+        # Convert matches to list of dicts
+        matches = df.head(100).to_dicts() if triggered else []
+
+        # Generate message
+        if triggered:
+            message = (
+                f"Detection '{self.name}' triggered with "
+                f"{match_count} matches (threshold: {self.threshold})"
+            )
+        else:
+            message = (
+                f"Detection '{self.name}' did not trigger "
+                f"({match_count} matches, threshold: {self.threshold})"
+            )
+
+        execution_time = (datetime.now(UTC) - start_time).total_seconds() * 1000
+
+        return DetectionResult(
+            rule_id=self.id,
+            rule_name=self.name,
+            triggered=triggered,
+            severity=self.metadata.severity,
+            match_count=match_count,
+            matches=matches,
+            message=message,
+            execution_time_ms=execution_time,
+        )
+
+
+class DualTargetDetectionRule(DetectionRule):
+    """A detection rule that supports both CloudWatch Logs Insights and Athena SQL.
+
+    This enables the same detection logic to run against:
+    - CloudWatch Logs (hot tier, 0-7 days)
+    - Security Lake via Athena (cold tier, 7+ days)
+
+    Example YAML:
+        - id: detect-lambda-errors
+          name: Lambda Function Errors
+          queries:
+            cloudwatch: |
+              fields @timestamp, @message, @logStream
+              | filter @message like /ERROR|Exception/
+              | stats count(*) as error_count by @logStream
+            athena: |
+              SELECT time_dt, message, app.name as function_name
+              FROM "{database}"."{table}"
+              WHERE class_uid = 6002
+                AND severity_id >= 4
+                AND time_dt >= TIMESTAMP '{start_time}'
+                AND time_dt < TIMESTAMP '{end_time}'
+    """
+
+    def __init__(
+        self,
+        metadata: DetectionMetadata,
+        queries: dict[str, str],
+        threshold: int = 1,
+        group_by_fields: list[str] | None = None,
+        default_target: QueryTarget = QueryTarget.CLOUDWATCH,
+    ) -> None:
+        """Initialize dual-target detection rule.
+
+        Args:
+            metadata: Rule metadata
+            queries: Dict mapping target name to query string
+                     Keys: 'cloudwatch', 'athena', or 'sql' (alias for athena)
+            threshold: Minimum matches to trigger alert
+            group_by_fields: Fields to group results by
+            default_target: Default query target when not specified
+        """
+        super().__init__(metadata)
+        self._queries = self._normalize_queries(queries)
+        self.threshold = threshold
+        self.group_by_fields = group_by_fields or []
+        self.default_target = default_target
+
+    def _normalize_queries(self, queries: dict[str, str]) -> dict[QueryTarget, str]:
+        """Normalize query dict to use QueryTarget enum keys."""
+        normalized: dict[QueryTarget, str] = {}
+
+        # Map various key names to targets
+        key_mapping = {
+            "cloudwatch": QueryTarget.CLOUDWATCH,
+            "cw": QueryTarget.CLOUDWATCH,
+            "cloudwatch_logs": QueryTarget.CLOUDWATCH,
+            "logs_insights": QueryTarget.CLOUDWATCH,
+            "athena": QueryTarget.ATHENA,
+            "sql": QueryTarget.ATHENA,
+            "security_lake": QueryTarget.ATHENA,
+        }
+
+        for key, query in queries.items():
+            target = key_mapping.get(key.lower())
+            if target:
+                normalized[target] = query
+            elif key.lower() == "query":
+                # Legacy single-query format, assume Athena
+                normalized[QueryTarget.ATHENA] = query
+
+        return normalized
+
+    @property
+    def supported_targets(self) -> list[QueryTarget]:
+        """List of targets this rule supports."""
+        return list(self._queries.keys())
+
+    def has_target(self, target: QueryTarget) -> bool:
+        """Check if rule supports a specific target."""
+        return target in self._queries
+
+    @staticmethod
+    def _format_timestamp(dt: datetime) -> str:
+        """Format datetime for Athena TIMESTAMP literal."""
+        dt_naive = dt.replace(tzinfo=None) if dt.tzinfo else dt
+        return dt_naive.strftime("%Y-%m-%d %H:%M:%S.%f")
+
+    def get_query(self, start: datetime, end: datetime) -> str:
+        """Get query for default target with time substitution."""
+        return self.get_query_for_target(self.default_target, start, end)
+
+    def get_query_for_target(
+        self,
+        target: QueryTarget,
+        start: datetime,
+        end: datetime,
+    ) -> str:
+        """Get query for a specific target with time substitution.
+
+        Args:
+            target: Query target (CLOUDWATCH or ATHENA)
+            start: Query start time
+            end: Query end time
+
+        Returns:
+            Query string with time parameters substituted
+
+        Raises:
+            ValueError: If target is not supported by this rule
+        """
+        if target not in self._queries:
+            available = [t.value for t in self._queries]
+            raise ValueError(
+                f"Rule '{self.id}' does not support target '{target.value}'. "
+                f"Available targets: {available}"
+            )
+
+        query = self._queries[target]
+
+        # Substitute time parameters based on target
+        if target == QueryTarget.ATHENA:
+            # Athena uses SQL TIMESTAMP format
+            return query.format(
+                start_time=self._format_timestamp(start),
+                end_time=self._format_timestamp(end),
+            )
+        else:
+            # CloudWatch Logs Insights doesn't need time in query
+            # (passed to API separately), but allow template vars
+            return query.format(
+                start_time=start.isoformat(),
+                end_time=end.isoformat(),
+            )
+
+    def get_cloudwatch_query(self, start: datetime, end: datetime) -> str:
+        """Convenience method to get CloudWatch query."""
+        return self.get_query_for_target(QueryTarget.CLOUDWATCH, start, end)
+
+    def get_athena_query(self, start: datetime, end: datetime) -> str:
+        """Convenience method to get Athena query."""
+        return self.get_query_for_target(QueryTarget.ATHENA, start, end)
+
+    def evaluate(self, df: pl.DataFrame) -> DetectionResult:
+        """Evaluate query results and determine if detection triggered."""
         start_time = datetime.now(UTC)
 
         match_count = len(df)

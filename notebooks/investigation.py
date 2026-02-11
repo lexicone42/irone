@@ -34,18 +34,14 @@ def _():
 
 @app.cell
 def _():
-    from datetime import datetime, timedelta, UTC
-
-    import polars as pl
-
     from secdashboards.catalog.models import DataSource, DataSourceType
     from secdashboards.catalog.registry import DataCatalog
     from secdashboards.graph import (
         GraphBuilder,
         GraphVisualizer,
         NeptuneConnector,
-        SecurityGraph,
     )
+
     return (
         DataCatalog,
         DataSource,
@@ -150,9 +146,7 @@ def _(NeptuneConnector, mo, neptune_endpoint, neptune_iam_auth, neptune_port, re
             )
             health = neptune_connector.check_health()
             if health["status"] == "healthy":
-                neptune_status = mo.md(
-                    f"**Neptune:** Connected to `{neptune_endpoint.value}`"
-                )
+                neptune_status = mo.md(f"**Neptune:** Connected to `{neptune_endpoint.value}`")
             else:
                 neptune_status = mo.md(
                     f"**Neptune:** Connection failed - {health.get('error', 'Unknown error')}"
@@ -284,7 +278,7 @@ def _(
                                 f"{summary['total_edges']} edges"
                             ),
                             mo.md(
-                                f"**Node Types:** "
+                                "**Node Types:** "
                                 + ", ".join(
                                     f"{k}: {v}" for k, v in summary["nodes_by_type"].items()
                                 )
@@ -337,9 +331,7 @@ def _(graph, mo):
 
     try:
         if "graph" in dir() and graph.node_count() > 0:
-            timeline = extract_timeline_from_graph(
-                graph, include_nodes=True, include_edges=False
-            )
+            timeline = extract_timeline_from_graph(graph, include_nodes=True, include_edges=False)
             if timeline.events:
                 visualizer = TimelineVisualizer(height="400px")
                 timeline_html = visualizer.to_html(timeline)
@@ -363,7 +355,13 @@ def _(graph, mo):
         pass
 
     timeline_output
-    return EventTag, InvestigationTimeline, TimelineVisualizer, extract_timeline_from_graph, timeline
+    return (
+        EventTag,
+        InvestigationTimeline,
+        TimelineVisualizer,
+        extract_timeline_from_graph,
+        timeline,
+    )
 
 
 @app.cell
@@ -714,9 +712,7 @@ def _(
                 export_output = mo.vstack(
                     [
                         mo.md("**Graph JSON (copy for export):**"),
-                        mo.ui.code_editor(
-                            value=json_str, language="json", min_height=200
-                        ),
+                        mo.ui.code_editor(value=json_str, language="json", min_height=200),
                     ]
                 )
             elif export_format.value == "LaTeX (Local)":
@@ -747,13 +743,8 @@ def _(
                 export_output = mo.vstack(
                     [
                         mo.md("**LaTeX Report (copy and compile with pdflatex):**"),
-                        mo.ui.code_editor(
-                            value=latex_content, language="latex", min_height=400
-                        ),
-                        mo.md(
-                            "_Tip: Save as .tex file and compile with "
-                            "`pdflatex report.tex`_"
-                        ),
+                        mo.ui.code_editor(value=latex_content, language="latex", min_height=400),
+                        mo.md("_Tip: Save as .tex file and compile with `pdflatex report.tex`_"),
                     ]
                 )
             else:
@@ -788,20 +779,12 @@ def _(
                         ]
 
                         if result["pdf_url"]:
-                            output_items.append(
-                                mo.md("**PDF Report (expires in 3 hours):**")
-                            )
-                            output_items.append(
-                                mo.md(f"[Download PDF]({result['pdf_url']})")
-                            )
+                            output_items.append(mo.md("**PDF Report (expires in 3 hours):**"))
+                            output_items.append(mo.md(f"[Download PDF]({result['pdf_url']})"))
                             output_items.append(mo.md(""))
 
-                        output_items.append(
-                            mo.md("**LaTeX Source (expires in 3 hours):**")
-                        )
-                        output_items.append(
-                            mo.md(f"[Download LaTeX]({result['latex_url']})")
-                        )
+                        output_items.append(mo.md("**LaTeX Source (expires in 3 hours):**"))
+                        output_items.append(mo.md(f"[Download LaTeX]({result['latex_url']})"))
 
                         if not result["pdf_url"]:
                             output_items.append(mo.md(""))
@@ -814,7 +797,9 @@ def _(
 
                         output_items.append(mo.md("---"))
                         output_items.append(
-                            mo.md(f"**S3 Location:** `s3://{s3_bucket_inv.value}/{result['latex_key']}`")
+                            mo.md(
+                                f"**S3 Location:** `s3://{s3_bucket_inv.value}/{result['latex_key']}`"
+                            )
                         )
 
                         export_output = mo.vstack(output_items)
@@ -861,9 +846,7 @@ def _(graph, mo, neptune_connector, save_graph_btn):
     if save_graph_btn.value:
         try:
             if neptune_connector is None:
-                save_output = mo.md(
-                    "**Error:** Neptune not configured. Enter endpoint above."
-                )
+                save_output = mo.md("**Error:** Neptune not configured. Enter endpoint above.")
             elif "graph" not in dir() or graph.node_count() == 0:
                 save_output = mo.md("**Error:** No graph to save. Build a graph first.")
             else:
@@ -876,9 +859,7 @@ def _(graph, mo, neptune_connector, save_graph_btn):
                         mo.md(f"- Nodes: {summary['total_nodes']}"),
                         mo.md(f"- Edges: {summary['total_edges']}"),
                         mo.md("---"),
-                        mo.md(
-                            "_Tip: Use the node IDs below to load this graph later:_"
-                        ),
+                        mo.md("_Tip: Use the node IDs below to load this graph later:_"),
                         mo.md(
                             f"```\n{', '.join(list(graph.nodes.keys())[:5])}"
                             + ("..." if len(graph.nodes) > 5 else "")
@@ -947,9 +928,7 @@ def _(
     if load_graph_btn.value:
         try:
             if neptune_connector is None:
-                load_output = mo.md(
-                    "**Error:** Neptune not configured. Enter endpoint above."
-                )
+                load_output = mo.md("**Error:** Neptune not configured. Enter endpoint above.")
             elif not load_node_id.value:
                 load_output = mo.md("**Error:** Enter a node ID to load")
             else:
@@ -971,10 +950,9 @@ def _(
                                 f"{summary['total_edges']} edges"
                             ),
                             mo.md(
-                                f"**Node Types:** "
+                                "**Node Types:** "
                                 + ", ".join(
-                                    f"{k}: {v}"
-                                    for k, v in summary["nodes_by_type"].items()
+                                    f"{k}: {v}" for k, v in summary["nodes_by_type"].items()
                                 )
                             ),
                             mo.Html(html),
@@ -982,9 +960,7 @@ def _(
                         ]
                     )
                 else:
-                    load_output = mo.md(
-                        f"_No graph found for node ID: {load_node_id.value}_"
-                    )
+                    load_output = mo.md(f"_No graph found for node ID: {load_node_id.value}_")
 
         except Exception as e:
             load_output = mo.md(f"**Load Error:** {e}")
@@ -1044,9 +1020,7 @@ def _(NodeType, mo, neptune_connector, search_btn, search_limit, search_node_typ
     if search_btn.value:
         try:
             if neptune_connector is None:
-                search_output = mo.md(
-                    "**Error:** Neptune not configured. Enter endpoint above."
-                )
+                search_output = mo.md("**Error:** Neptune not configured. Enter endpoint above.")
             else:
                 node_type = None
                 if search_node_type.value:
@@ -1067,8 +1041,7 @@ def _(NodeType, mo, neptune_connector, search_btn, search_limit, search_node_typ
 
                     table = (
                         "| Node ID | Type | Label | Events |\n"
-                        "|---------|------|-------|--------|\n"
-                        + "\n".join(rows)
+                        "|---------|------|-------|--------|\n" + "\n".join(rows)
                     )
 
                     search_output = mo.vstack(

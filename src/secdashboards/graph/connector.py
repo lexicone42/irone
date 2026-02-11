@@ -4,6 +4,7 @@ This module provides the NeptuneConnector class for interacting with
 AWS Neptune graph database for persisting and querying security graphs.
 """
 
+import contextlib
 from datetime import datetime
 from typing import Any
 
@@ -482,7 +483,7 @@ class NeptuneConnector:
         """
         try:
             # Execute a simple query to check connectivity
-            result = self.execute_gremlin("g.V().limit(1).count()")
+            self.execute_gremlin("g.V().limit(1).count()")
 
             return {
                 "status": "healthy",
@@ -594,10 +595,8 @@ class NeptuneConnector:
     def close(self) -> None:
         """Close connections."""
         if self._gremlin_client:
-            try:
+            with contextlib.suppress(Exception):
                 self._gremlin_client.close()
-            except Exception:
-                pass
             self._gremlin_client = None
 
     def __enter__(self) -> "NeptuneConnector":

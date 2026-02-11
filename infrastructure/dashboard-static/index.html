@@ -1,0 +1,1887 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; connect-src 'self' https://nigjdfcc0b.execute-api.us-west-2.amazonaws.com https://cognito-idp.us-west-2.amazonaws.com https://cognito-identity.us-west-2.amazonaws.com https://*.amazoncognito.com;">
+    <title>health</title>
+    <!-- Prevent /login and /dashboard from being indexed -->
+    <script>if(['/login','/dashboard','/callback'].includes(location.pathname)){document.head.insertAdjacentHTML('beforeend','<meta name="robots" content="noindex,nofollow">')}</script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Share+Tech+Mono&display=swap');
+
+        :root {
+            --bg-primary: #0a0a0f;
+            --bg-secondary: #0f0f18;
+            --bg-tertiary: #1a1a28;
+            --terminal-green: #39ff14;
+            --terminal-green-dim: #32cd32;
+            --terminal-green-dark: #003300;
+            --terminal-amber: #ff6b35;
+            --terminal-red: #ff1493;
+            --terminal-cyan: #00ffff;
+            --terminal-purple: #bf00ff;
+            --terminal-pink: #ff69b4;
+            --text-dim: #a78bfa;
+            --border-color: #bf00ff33;
+            --glow: 0 0 10px #bf00ff55, 0 0 20px #39ff1422;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'JetBrains Mono', 'Share Tech Mono', 'Courier New', monospace;
+            background: var(--bg-primary);
+            color: var(--terminal-green);
+            line-height: 1.6;
+            min-height: 100vh;
+            position: relative;
+        }
+
+        /* Removed CRT scanline effect for better readability */
+
+        /* Removed distracting flicker effect for better usability */
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 2rem;
+        }
+
+        /* ASCII art header */
+        .ascii-header {
+            font-family: 'Share Tech Mono', monospace;
+            font-size: 0.6rem;
+            color: var(--terminal-green-dim);
+            text-align: center;
+            margin-bottom: 1rem;
+            line-height: 1.2;
+            white-space: pre;
+            text-shadow: var(--glow);
+        }
+
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 2rem;
+            padding-bottom: 1rem;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        h1 {
+            font-size: 1.2rem;
+            font-weight: 500;
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            text-shadow: var(--glow);
+        }
+
+        h1::before {
+            content: '>';
+            color: var(--terminal-green);
+            animation: blink 1s step-end infinite;
+        }
+
+        @keyframes blink {
+            50% { opacity: 0; }
+        }
+
+        .status-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.25rem;
+            padding: 0.25rem 0.75rem;
+            border: 1px solid currentColor;
+            font-size: 0.7rem;
+            font-weight: 500;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+        }
+
+        .status-healthy {
+            color: var(--terminal-green);
+            border-color: var(--terminal-green);
+            box-shadow: var(--glow);
+        }
+
+        .status-warning {
+            color: var(--terminal-amber);
+            border-color: var(--terminal-amber);
+            box-shadow: 0 0 10px #ffb00055;
+        }
+
+        .status-error {
+            color: var(--terminal-red);
+            border-color: var(--terminal-red);
+            box-shadow: 0 0 10px #ff003355;
+            animation: pulse-red 1s infinite;
+        }
+
+        @keyframes pulse-red {
+            50% { box-shadow: 0 0 20px #ff003388; }
+        }
+
+        .user-info {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+        }
+
+        .user-email {
+            color: var(--text-dim);
+            font-size: 0.75rem;
+        }
+
+        .user-email::before {
+            content: 'user@';
+            color: var(--terminal-green-dim);
+        }
+
+        .btn {
+            padding: 0.5rem 1rem;
+            border: 1px solid var(--terminal-green);
+            background: transparent;
+            color: var(--terminal-green);
+            cursor: pointer;
+            font-size: 0.75rem;
+            font-family: inherit;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            transition: all 0.2s;
+        }
+
+        .btn:hover {
+            background: var(--terminal-green);
+            color: var(--bg-primary);
+            box-shadow: var(--glow);
+        }
+
+        .btn-primary {
+            background: var(--terminal-green);
+            color: var(--bg-primary);
+        }
+
+        .btn-primary:hover {
+            background: var(--terminal-green-dim);
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 1rem;
+        }
+
+        @media (max-width: 768px) {
+            .grid {
+                grid-template-columns: 1fr;
+            }
+            .container {
+                padding: 1rem;
+            }
+            header {
+                flex-direction: column;
+                gap: 1rem;
+                align-items: flex-start;
+            }
+        }
+
+        .card {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            position: relative;
+        }
+
+        .card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 2px;
+            background: linear-gradient(90deg, transparent, var(--terminal-green), transparent);
+        }
+
+        .card-header {
+            padding: 1rem 1.25rem;
+            border-bottom: 1px solid var(--border-color);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background: var(--bg-tertiary);
+        }
+
+        .card-title {
+            font-size: 0.8rem;
+            font-weight: 500;
+            color: var(--terminal-purple);
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+        }
+
+        .card-title::before {
+            content: '[ ';
+        }
+
+        .card-title::after {
+            content: ' ]';
+        }
+
+        .card-body {
+            padding: 1.25rem;
+        }
+
+        .source-list {
+            list-style: none;
+        }
+
+        .source-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0.75rem 0;
+            border-bottom: 1px dashed var(--border-color);
+        }
+
+        .source-item:last-child {
+            border-bottom: none;
+        }
+
+        .source-name {
+            font-weight: 500;
+        }
+
+        .source-name::before {
+            content: '+ ';
+            color: var(--terminal-green-dim);
+        }
+
+        .source-meta {
+            font-size: 0.65rem;
+            color: var(--text-dim);
+            padding-left: 1rem;
+        }
+
+        .source-stats {
+            text-align: right;
+            font-family: 'Share Tech Mono', monospace;
+        }
+
+        .source-count {
+            font-size: 1.1rem;
+            font-weight: 700;
+        }
+
+        .source-count.healthy {
+            color: var(--terminal-green);
+            text-shadow: var(--glow);
+        }
+
+        .source-count.unhealthy {
+            color: var(--terminal-red);
+            animation: pulse-red 1s infinite;
+        }
+
+        .source-freshness {
+            font-size: 0.65rem;
+            color: var(--text-dim);
+        }
+
+        .cost-item {
+            display: flex;
+            justify-content: space-between;
+            padding: 0.4rem 0;
+            font-size: 0.85rem;
+        }
+
+        .cost-service {
+            color: var(--text-dim);
+        }
+
+        .cost-amount {
+            font-weight: 500;
+            color: var(--terminal-amber);
+            font-family: 'Share Tech Mono', monospace;
+        }
+
+        .cost-total {
+            margin-top: 1rem;
+            padding-top: 1rem;
+            border-top: 1px solid var(--border-color);
+            font-size: 1rem;
+        }
+
+        .cost-total .cost-amount {
+            color: var(--terminal-green);
+            text-shadow: var(--glow);
+        }
+
+        .detection-stats {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 1rem;
+            text-align: center;
+        }
+
+        .stat-box {
+            padding: 1rem;
+            border: 1px solid var(--border-color);
+            background: var(--bg-tertiary);
+        }
+
+        .stat-value {
+            font-size: 2rem;
+            font-weight: 700;
+            font-family: 'Share Tech Mono', monospace;
+            text-shadow: var(--glow);
+        }
+
+        .stat-label {
+            font-size: 0.65rem;
+            color: var(--text-dim);
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            margin-top: 0.25rem;
+        }
+
+        .login-container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 80vh;
+            text-align: center;
+        }
+
+        .login-ascii {
+            font-size: 0.5rem;
+            color: var(--terminal-green-dim);
+            margin-bottom: 2rem;
+            line-height: 1.1;
+            white-space: pre;
+            text-shadow: var(--glow);
+        }
+
+        .login-container h1 {
+            margin-bottom: 1rem;
+            font-size: 1rem;
+        }
+
+        .login-container p {
+            color: var(--text-dim);
+            margin-bottom: 2rem;
+            font-size: 0.85rem;
+        }
+
+        .loading {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 2rem;
+            color: var(--text-dim);
+            font-size: 0.85rem;
+        }
+
+        .spinner {
+            display: inline-block;
+            margin-right: 0.5rem;
+        }
+
+        .spinner::after {
+            content: '';
+            animation: loading 0.5s linear infinite;
+        }
+
+        @keyframes loading {
+            0% { content: '[    ]'; }
+            25% { content: '[=   ]'; }
+            50% { content: '[==  ]'; }
+            75% { content: '[=== ]'; }
+            100% { content: '[====]'; }
+        }
+
+        .error-message {
+            background: rgba(255, 0, 51, 0.1);
+            border: 1px solid var(--terminal-red);
+            color: var(--terminal-red);
+            padding: 1rem;
+            margin-bottom: 1rem;
+            font-size: 0.85rem;
+        }
+
+        .error-message::before {
+            content: '[ERROR] ';
+            font-weight: bold;
+        }
+
+        .refresh-time {
+            color: var(--text-dim);
+            font-size: 0.7rem;
+        }
+
+        .refresh-time::before {
+            content: '// ';
+        }
+
+        .hidden {
+            display: none !important;
+        }
+
+        /* Public landing page - minimal */
+        .landing-container {
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .landing-text {
+            font-family: 'Share Tech Mono', monospace;
+            font-size: 2rem;
+            font-weight: 400;
+            letter-spacing: 0.3em;
+            color: var(--terminal-green);
+            text-shadow: 0 0 10px var(--terminal-green), 0 0 20px var(--terminal-green), 0 0 40px var(--terminal-green-dim);
+            text-transform: lowercase;
+        }
+
+        /* Modal styles */
+        .modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.85);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+            backdrop-filter: blur(4px);
+        }
+
+        .modal-content {
+            background: var(--bg-secondary);
+            border: 1px solid var(--terminal-green);
+            padding: 2rem;
+            width: 90%;
+            max-width: 320px;
+            position: relative;
+            box-shadow: 0 0 30px rgba(0, 255, 65, 0.2);
+        }
+
+        .modal-content::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 2px;
+            background: linear-gradient(90deg, transparent, var(--terminal-green), transparent);
+        }
+
+        .modal-close {
+            position: absolute;
+            top: 0.75rem;
+            right: 0.75rem;
+            background: none;
+            border: none;
+            color: var(--text-dim);
+            font-size: 1.5rem;
+            cursor: pointer;
+            padding: 0;
+            line-height: 1;
+        }
+
+        .modal-close:hover {
+            color: var(--terminal-green);
+        }
+
+        /* Terminal typing effect for status messages */
+        .typing::after {
+            content: '_';
+            animation: blink 0.7s step-end infinite;
+        }
+
+        /* Settings Page Styles */
+        .settings-container {
+            max-width: 600px;
+            margin: 0 auto;
+        }
+
+        .settings-header {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+            margin-bottom: 2rem;
+            padding-bottom: 1rem;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .settings-header h1 {
+            flex: 1;
+        }
+
+        .account-info {
+            margin-bottom: 2rem;
+        }
+
+        .account-info-item {
+            display: flex;
+            justify-content: space-between;
+            padding: 0.75rem 0;
+            border-bottom: 1px dashed var(--border-color);
+            font-size: 0.85rem;
+        }
+
+        .account-info-label {
+            color: var(--text-dim);
+        }
+
+        .account-info-value {
+            color: var(--terminal-green);
+            font-family: 'Share Tech Mono', monospace;
+        }
+
+        .passkey-list {
+            list-style: none;
+        }
+
+        .passkey-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 1rem;
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border-color);
+            margin-bottom: 0.5rem;
+        }
+
+        .passkey-info {
+            flex: 1;
+        }
+
+        .passkey-name {
+            font-weight: 500;
+            color: var(--terminal-cyan);
+            margin-bottom: 0.25rem;
+        }
+
+        .passkey-meta {
+            font-size: 0.7rem;
+            color: var(--text-dim);
+        }
+
+        .btn-danger {
+            border-color: var(--terminal-red);
+            color: var(--terminal-red);
+        }
+
+        .btn-danger:hover {
+            background: var(--terminal-red);
+            color: var(--bg-primary);
+        }
+
+        .btn-small {
+            padding: 0.35rem 0.75rem;
+            font-size: 0.7rem;
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 2rem;
+            color: var(--text-dim);
+            font-size: 0.85rem;
+        }
+
+        .empty-state::before {
+            content: '// ';
+        }
+
+        .passkey-actions {
+            display: flex;
+            gap: 0.5rem;
+            align-items: center;
+        }
+
+        .btn-preferred {
+            border-color: var(--terminal-amber);
+            color: var(--terminal-amber);
+        }
+
+        .btn-preferred:hover {
+            background: var(--terminal-amber);
+            color: var(--bg-primary);
+        }
+
+        .btn-preferred.active {
+            background: var(--terminal-amber);
+            color: var(--bg-primary);
+        }
+
+        .preferred-badge {
+            display: inline-block;
+            font-size: 0.65rem;
+            color: var(--terminal-amber);
+            margin-left: 0.5rem;
+            padding: 0.1rem 0.4rem;
+            border: 1px solid var(--terminal-amber);
+        }
+    </style>
+</head>
+<body>
+    <!-- Public Landing (/) - Minimal, mysterious -->
+    <div id="landing-view" class="landing-container hidden">
+        <span class="landing-text">health</span>
+    </div>
+
+    <!-- Login Modal (accessible via /login) -->
+    <div id="login-modal" class="modal-overlay hidden">
+        <div class="modal-content">
+            <button id="modal-close-btn" class="modal-close">&times;</button>
+            <h3 style="color: var(--terminal-green); margin-bottom: 1.5rem; font-size: 1rem;">authenticate</h3>
+
+            <!-- Step 1: Email -->
+            <div id="modal-step-email">
+                <input type="email" id="login-email" class="login-input" placeholder="email" autocomplete="email"
+                       style="width: 100%; background: var(--bg-tertiary); border: 1px solid var(--border-color); color: var(--terminal-green); padding: 0.75rem; font-family: inherit; font-size: 0.9rem; text-align: center; margin-bottom: 1rem;">
+                <button id="login-continue-btn" class="btn btn-primary" style="width: 100%;">[ CONTINUE ]</button>
+            </div>
+
+            <!-- Step 2: Auth Method -->
+            <div id="modal-step-auth" class="hidden">
+                <p id="login-user-display" style="color: var(--terminal-cyan); font-size: 0.8rem; margin-bottom: 1rem;"></p>
+                <div style="display: flex; flex-direction: column; gap: 0.75rem;">
+                    <button id="passkey-login-btn" class="btn btn-primary" style="width: 100%; background: var(--terminal-purple); border-color: var(--terminal-purple);">[ *KEY ]</button>
+                    <button id="login-btn" class="btn" style="width: 100%;">[ PASSWORD ]</button>
+                </div>
+                <button id="login-back-btn" class="btn" style="width: 100%; font-size: 0.7rem; margin-top: 1rem; border: none;">← back</button>
+            </div>
+
+            <p id="modal-status" style="color: var(--text-dim); font-size: 0.7rem; margin-top: 1rem; min-height: 1rem;"></p>
+        </div>
+    </div>
+
+    <!-- Protected Dashboard (/dashboard) -->
+    <div id="dashboard-view" class="container hidden">
+        <header>
+            <div>
+                <h1>
+                    HEALTH
+                    <span id="overall-status" class="status-badge status-healthy">NOMINAL</span>
+                </h1>
+                <span id="refresh-time" class="refresh-time"></span>
+            </div>
+            <div class="user-info">
+                <span id="user-email" class="user-email"></span>
+                <button id="notebooks-btn" class="btn" title="Open Marimo notebooks" style="border-color: var(--terminal-purple); color: var(--terminal-purple);">[ NOTEBOOKS ]</button>
+                <button id="settings-btn" class="btn" title="Account settings">[ SETTINGS ]</button>
+                <button id="refresh-btn" class="btn">[ REFRESH ]</button>
+                <button id="logout-btn" class="btn">[ LOGOUT ]</button>
+            </div>
+        </header>
+
+        <div id="error-container" class="error-message hidden"></div>
+
+        <div class="grid">
+            <!-- Security Lake Sources -->
+            <div class="card">
+                <div class="card-header">
+                    <span class="card-title">SOURCES</span>
+                    <span id="sources-status" class="status-badge status-healthy">ONLINE</span>
+                </div>
+                <div class="card-body">
+                    <ul id="sources-list" class="source-list">
+                        <li class="loading"><span class="spinner"></span> loading...</li>
+                    </ul>
+                </div>
+            </div>
+
+            <!-- Cost Metrics -->
+            <div class="card">
+                <div class="card-header">
+                    <span class="card-title">COSTS // 30D</span>
+                </div>
+                <div class="card-body">
+                    <div id="costs-list">
+                        <div class="loading"><span class="spinner"></span> loading...</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Detection Status -->
+            <div class="card">
+                <div class="card-header">
+                    <span class="card-title">DETECTIONS // 24H</span>
+                </div>
+                <div class="card-body">
+                    <div id="detection-stats" class="detection-stats">
+                        <div class="loading"><span class="spinner"></span> loading...</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Settings View (/settings) -->
+    <div id="settings-view" class="container settings-container hidden">
+        <div class="settings-header">
+            <button id="settings-back-btn" class="btn">[ BACK ]</button>
+            <h1>> SETTINGS</h1>
+        </div>
+
+        <!-- Account Information -->
+        <div class="card">
+            <div class="card-header">
+                <span class="card-title">ACCOUNT</span>
+            </div>
+            <div class="card-body account-info">
+                <div class="account-info-item">
+                    <span class="account-info-label">EMAIL</span>
+                    <span id="settings-email" class="account-info-value">-</span>
+                </div>
+                <div class="account-info-item">
+                    <span class="account-info-label">TOKEN_EXPIRES</span>
+                    <span id="settings-token-exp" class="account-info-value">-</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Passkey Management -->
+        <div class="card" style="margin-top: 1rem;">
+            <div class="card-header">
+                <span class="card-title">PASSKEYS</span>
+                <button id="add-passkey-btn" class="btn btn-small">[ + ADD ]</button>
+            </div>
+            <div class="card-body">
+                <ul id="passkeys-list" class="passkey-list">
+                    <li class="loading"><span class="spinner"></span> loading...</li>
+                </ul>
+            </div>
+        </div>
+
+        <!-- Session Actions -->
+        <div class="card" style="margin-top: 1rem;">
+            <div class="card-header">
+                <span class="card-title">SESSION</span>
+            </div>
+            <div class="card-body">
+                <button id="settings-logout-btn" class="btn btn-danger" style="width: 100%;">[ LOGOUT ]</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Configuration from CDK deployment
+        const CONFIG = {
+            cognitoDomain: 'secdash-health-651804262336.auth.us-west-2.amazoncognito.com',
+            clientId: '5ct1ro75av28l1rv8hd4cv5ork',
+            apiEndpoint: 'https://nigjdfcc0b.execute-api.us-west-2.amazonaws.com/prod',
+            redirectUri: 'https://health.lexicone.com/callback'
+        };
+
+        // Token storage
+        const TOKEN_KEY = 'secdash_tokens';
+        const LAST_LOCATION_KEY = 'secdash_last_location';
+        const PREFERRED_PASSKEY_KEY = 'secdash_preferred_passkey';
+
+        // Get tokens from storage
+        function getTokens() {
+            const stored = sessionStorage.getItem(TOKEN_KEY);
+            if (!stored) return null;
+            try {
+                return JSON.parse(stored);
+            } catch {
+                return null;
+            }
+        }
+
+        // Save tokens
+        function saveTokens(tokens) {
+            sessionStorage.setItem(TOKEN_KEY, JSON.stringify(tokens));
+        }
+
+        // Clear tokens
+        function clearTokens() {
+            sessionStorage.removeItem(TOKEN_KEY);
+        }
+
+        // Parse JWT to get claims
+        function parseJwt(token) {
+            try {
+                const base64Url = token.split('.')[1];
+                const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+                return JSON.parse(window.atob(base64));
+            } catch {
+                return null;
+            }
+        }
+
+        // Check if token is expired
+        function isTokenExpired(token) {
+            const claims = parseJwt(token);
+            if (!claims || !claims.exp) return true;
+            return Date.now() >= claims.exp * 1000;
+        }
+
+        // Redirect to Cognito login
+        function login() {
+            const params = new URLSearchParams({
+                response_type: 'code',
+                client_id: CONFIG.clientId,
+                redirect_uri: CONFIG.redirectUri,
+                scope: 'openid email profile aws.cognito.signin.user.admin'
+            });
+            window.location.href = 'https://' + CONFIG.cognitoDomain + '/login?' + params;
+        }
+
+        // Exchange code for tokens
+        async function exchangeCodeForTokens(code) {
+            const params = new URLSearchParams({
+                grant_type: 'authorization_code',
+                client_id: CONFIG.clientId,
+                code: code,
+                redirect_uri: CONFIG.redirectUri
+            });
+
+            console.log('[AUTH] Exchanging code for tokens...');
+            console.log('[AUTH] Redirect URI:', CONFIG.redirectUri);
+
+            const response = await fetch('https://' + CONFIG.cognitoDomain + '/oauth2/token', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded'
+                },
+                body: params
+            });
+
+            if (!response.ok) {
+                const errorText = await response.text();
+                console.error('[AUTH] Token exchange failed:', response.status, errorText);
+                throw new Error('Token exchange failed: ' + response.status + ' - ' + errorText);
+            }
+
+            const tokens = await response.json();
+            console.log('[AUTH] Token exchange successful');
+            return tokens;
+        }
+
+        // Logout
+        function logout() {
+            clearTokens();
+            const params = new URLSearchParams({
+                client_id: CONFIG.clientId,
+                logout_uri: window.location.origin
+            });
+            window.location.href = 'https://' + CONFIG.cognitoDomain + '/logout?' + params;
+        }
+
+        // Fetch with auth
+        async function fetchWithAuth(url) {
+            const tokens = getTokens();
+            if (!tokens || isTokenExpired(tokens.id_token)) {
+                showLogin();
+                throw new Error('Session expired');
+            }
+
+            const response = await fetch(url, {
+                headers: {
+                    'Authorization': 'Bearer ' + tokens.id_token,
+                    'Content-Type': 'application/json'
+                },
+                credentials: 'include'
+            });
+
+            if (response.status === 401) {
+                clearTokens();
+                showLogin();
+                throw new Error('Unauthorized');
+            }
+
+            if (!response.ok) {
+                throw new Error('HTTP ' + response.status);
+            }
+
+            return response.json();
+        }
+
+        // Format number with commas
+        function formatNumber(num) {
+            return new Intl.NumberFormat().format(num);
+        }
+
+        // Format currency
+        function formatCurrency(amount) {
+            return '$' + amount.toFixed(2);
+        }
+
+        // Format relative time
+        function formatRelativeTime(minutes) {
+            if (minutes === null || minutes === undefined) return 'UNKNOWN';
+            if (minutes < 60) return minutes + 'm';
+            if (minutes < 1440) return Math.floor(minutes / 60) + 'h';
+            return Math.floor(minutes / 1440) + 'd';
+        }
+
+        // Router: Show views based on path and auth state
+        function hideAllViews() {
+            document.getElementById('landing-view').classList.add('hidden');
+            document.getElementById('dashboard-view').classList.add('hidden');
+            document.getElementById('settings-view').classList.add('hidden');
+        }
+
+        function showLanding() {
+            hideAllViews();
+            document.getElementById('landing-view').classList.remove('hidden');
+        }
+
+        function showDashboard() {
+            hideAllViews();
+            document.getElementById('dashboard-view').classList.remove('hidden');
+
+            const tokens = getTokens();
+            if (tokens && tokens.id_token) {
+                const claims = parseJwt(tokens.id_token);
+                document.getElementById('user-email').textContent = claims?.email || 'anonymous';
+            }
+        }
+
+        function showSettings() {
+            hideAllViews();
+            document.getElementById('settings-view').classList.remove('hidden');
+
+            const tokens = getTokens();
+            if (tokens && tokens.id_token) {
+                const claims = parseJwt(tokens.id_token);
+                document.getElementById('settings-email').textContent = claims?.email || '-';
+
+                // Show token expiration
+                if (claims?.exp) {
+                    const expDate = new Date(claims.exp * 1000);
+                    document.getElementById('settings-token-exp').textContent = expDate.toISOString().replace('T', ' ').split('.')[0] + ' UTC';
+                }
+            }
+
+            loadPasskeys();
+        }
+
+        // Load and display passkeys from Cognito
+        async function loadPasskeys() {
+            const tokens = getTokens();
+            if (!tokens || !tokens.access_token) {
+                renderPasskeyList([]);
+                return;
+            }
+
+            const listEl = document.getElementById('passkeys-list');
+            listEl.innerHTML = '<li class="loading"><span class="spinner"></span> loading...</li>';
+
+            try {
+                const response = await fetch('https://cognito-idp.us-west-2.amazonaws.com/', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/x-amz-json-1.1',
+                        'X-Amz-Target': 'AWSCognitoIdentityProviderService.ListWebAuthnCredentials'
+                    },
+                    body: JSON.stringify({
+                        AccessToken: tokens.access_token
+                    })
+                });
+
+                if (!response.ok) {
+                    const err = await response.text();
+                    console.error('[PASSKEYS] List failed:', err);
+                    renderPasskeyList([]);
+                    return;
+                }
+
+                const data = await response.json();
+                console.log('[PASSKEYS] List response:', data);
+                renderPasskeyList(data.Credentials || []);
+            } catch (error) {
+                console.error('[PASSKEYS] Error loading:', error);
+                renderPasskeyList([]);
+            }
+        }
+
+        // Get/set preferred passkey
+        function getPreferredPasskey() {
+            return localStorage.getItem(PREFERRED_PASSKEY_KEY);
+        }
+
+        function setPreferredPasskey(credentialId) {
+            if (credentialId) {
+                localStorage.setItem(PREFERRED_PASSKEY_KEY, credentialId);
+            } else {
+                localStorage.removeItem(PREFERRED_PASSKEY_KEY);
+            }
+        }
+
+        // Render passkey list using safe DOM methods
+        function renderPasskeyList(credentials) {
+            const listEl = document.getElementById('passkeys-list');
+            const preferredId = getPreferredPasskey();
+
+            while (listEl.firstChild) {
+                listEl.removeChild(listEl.firstChild);
+            }
+
+            if (credentials.length === 0) {
+                const li = document.createElement('li');
+                li.className = 'empty-state';
+                li.textContent = 'NO PASSKEYS REGISTERED';
+                listEl.appendChild(li);
+                return;
+            }
+
+            // Sort credentials: preferred first
+            const sortedCreds = [...credentials].sort((a, b) => {
+                if (a.CredentialId === preferredId) return -1;
+                if (b.CredentialId === preferredId) return 1;
+                return 0;
+            });
+
+            sortedCreds.forEach(cred => {
+                const li = document.createElement('li');
+                li.className = 'passkey-item';
+                const isPreferred = cred.CredentialId === preferredId;
+
+                const infoDiv = document.createElement('div');
+                infoDiv.className = 'passkey-info';
+
+                const nameDiv = document.createElement('div');
+                nameDiv.className = 'passkey-name';
+                nameDiv.textContent = cred.FriendlyCredentialName || 'Passkey';
+
+                // Add preferred badge if this is the preferred passkey
+                if (isPreferred) {
+                    const badge = document.createElement('span');
+                    badge.className = 'preferred-badge';
+                    badge.textContent = '★ DEFAULT';
+                    nameDiv.appendChild(badge);
+                }
+
+                const metaDiv = document.createElement('div');
+                metaDiv.className = 'passkey-meta';
+                const createdAt = cred.CreatedAt ? new Date(cred.CreatedAt * 1000).toLocaleDateString() : 'Unknown';
+                metaDiv.textContent = 'Created: ' + createdAt;
+
+                infoDiv.appendChild(nameDiv);
+                infoDiv.appendChild(metaDiv);
+
+                // Action buttons container
+                const actionsDiv = document.createElement('div');
+                actionsDiv.className = 'passkey-actions';
+
+                // Set as default button (only show if not already preferred)
+                if (!isPreferred) {
+                    const preferBtn = document.createElement('button');
+                    preferBtn.className = 'btn btn-preferred btn-small';
+                    preferBtn.textContent = '[ ★ ]';
+                    preferBtn.title = 'Set as default passkey';
+                    preferBtn.addEventListener('click', function() {
+                        setPreferredPasskey(cred.CredentialId);
+                        loadPasskeys(); // Refresh to show updated state
+                    });
+                    actionsDiv.appendChild(preferBtn);
+                }
+
+                const deleteBtn = document.createElement('button');
+                deleteBtn.className = 'btn btn-danger btn-small';
+                deleteBtn.textContent = '[ DELETE ]';
+                deleteBtn.addEventListener('click', function() {
+                    deletePasskey(cred.CredentialId);
+                });
+                actionsDiv.appendChild(deleteBtn);
+
+                li.appendChild(infoDiv);
+                li.appendChild(actionsDiv);
+                listEl.appendChild(li);
+            });
+        }
+
+        // Delete a passkey
+        async function deletePasskey(credentialId) {
+            if (!confirm('Delete this passkey? This cannot be undone.')) {
+                return;
+            }
+
+            const tokens = getTokens();
+            if (!tokens || !tokens.access_token) {
+                alert('Session expired. Please log in again.');
+                return;
+            }
+
+            try {
+                const response = await fetch('https://cognito-idp.us-west-2.amazonaws.com/', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/x-amz-json-1.1',
+                        'X-Amz-Target': 'AWSCognitoIdentityProviderService.DeleteWebAuthnCredential'
+                    },
+                    body: JSON.stringify({
+                        AccessToken: tokens.access_token,
+                        CredentialId: credentialId
+                    })
+                });
+
+                if (!response.ok) {
+                    const err = await response.text();
+                    console.error('[PASSKEYS] Delete failed:', err);
+                    alert('Failed to delete passkey');
+                    return;
+                }
+
+                // Clear preferred status if this was the preferred passkey
+                if (getPreferredPasskey() === credentialId) {
+                    setPreferredPasskey(null);
+                }
+
+                console.log('[PASSKEYS] Deleted:', credentialId);
+                loadPasskeys(); // Refresh list
+            } catch (error) {
+                console.error('[PASSKEYS] Delete error:', error);
+                alert('Failed to delete passkey: ' + error.message);
+            }
+        }
+
+        function navigateTo(path) {
+            window.history.pushState({}, '', path);
+            handleRoute();
+        }
+
+        function handleRoute() {
+            const path = window.location.pathname;
+            const tokens = getTokens();
+            const isAuthenticated = tokens && tokens.id_token && !isTokenExpired(tokens.id_token);
+
+            if (path === '/dashboard' || path.startsWith('/dashboard')) {
+                if (isAuthenticated) {
+                    localStorage.setItem(LAST_LOCATION_KEY, path);
+                    showDashboard();
+                    refreshData();
+                } else {
+                    localStorage.setItem(LAST_LOCATION_KEY, path);
+                    navigateTo('/login');
+                }
+            } else if (path === '/settings') {
+                if (isAuthenticated) {
+                    showSettings();
+                } else {
+                    localStorage.setItem(LAST_LOCATION_KEY, '/dashboard');
+                    navigateTo('/login');
+                }
+            } else if (path === '/login') {
+                showLanding();
+                openModal();
+            } else {
+                // Default route (/) - auto-redirect if authenticated
+                if (isAuthenticated) {
+                    navigateTo('/dashboard');
+                } else {
+                    showLanding();
+                }
+            }
+        }
+
+        // Get redirect destination after login
+        function getPostLoginRedirect() {
+            const lastLocation = localStorage.getItem(LAST_LOCATION_KEY);
+            // Only redirect to protected routes, default to /dashboard
+            if (lastLocation && lastLocation.startsWith('/dashboard')) {
+                return lastLocation;
+            }
+            return '/dashboard';
+        }
+
+        // Show error
+        function showError(message) {
+            const container = document.getElementById('error-container');
+            container.textContent = message;
+            container.classList.remove('hidden');
+        }
+
+        // Hide error
+        function hideError() {
+            document.getElementById('error-container').classList.add('hidden');
+        }
+
+        // Render sources using safe DOM methods
+        function renderSources(data) {
+            const list = document.getElementById('sources-list');
+            const statusBadge = document.getElementById('sources-status');
+
+            // Clear existing content
+            while (list.firstChild) {
+                list.removeChild(list.firstChild);
+            }
+
+            if (!data || !data.sources) {
+                const li = document.createElement('li');
+                li.className = 'source-item';
+                li.textContent = '// NO DATA AVAILABLE';
+                list.appendChild(li);
+                return;
+            }
+
+            const unhealthyCount = data.sources.filter(s => !s.healthy).length;
+
+            if (unhealthyCount === 0) {
+                statusBadge.className = 'status-badge status-healthy';
+                statusBadge.textContent = 'ONLINE';
+            } else {
+                statusBadge.className = 'status-badge status-warning';
+                statusBadge.textContent = unhealthyCount + ' OFFLINE';
+            }
+
+            data.sources.forEach(source => {
+                const li = document.createElement('li');
+                li.className = 'source-item';
+
+                const leftDiv = document.createElement('div');
+                const nameDiv = document.createElement('div');
+                nameDiv.className = 'source-name';
+                nameDiv.textContent = source.source.toUpperCase();
+                const metaDiv = document.createElement('div');
+                metaDiv.className = 'source-meta';
+                metaDiv.textContent = source.table || '';
+                leftDiv.appendChild(nameDiv);
+                leftDiv.appendChild(metaDiv);
+
+                const rightDiv = document.createElement('div');
+                rightDiv.className = 'source-stats';
+                const countDiv = document.createElement('div');
+                countDiv.className = 'source-count ' + (source.healthy ? 'healthy' : 'unhealthy');
+                countDiv.textContent = formatNumber(source.event_count_24h || 0);
+                const freshnessDiv = document.createElement('div');
+                freshnessDiv.className = 'source-freshness';
+                freshnessDiv.textContent = source.error ? 'ERR: ' + source.error : 'LAST: ' + formatRelativeTime(source.minutes_since_last);
+                rightDiv.appendChild(countDiv);
+                rightDiv.appendChild(freshnessDiv);
+
+                li.appendChild(leftDiv);
+                li.appendChild(rightDiv);
+                list.appendChild(li);
+            });
+        }
+
+        // Render costs using safe DOM methods
+        function renderCosts(data) {
+            const container = document.getElementById('costs-list');
+
+            // Clear existing content
+            while (container.firstChild) {
+                container.removeChild(container.firstChild);
+            }
+
+            if (!data || data.error) {
+                const errorDiv = document.createElement('div');
+                errorDiv.className = 'error-message';
+                errorDiv.textContent = data?.error || 'FAILED TO RETRIEVE COST DATA';
+                container.appendChild(errorDiv);
+                return;
+            }
+
+            const services = data.services || [];
+            const total = data.total || 0;
+
+            services.forEach(s => {
+                const item = document.createElement('div');
+                item.className = 'cost-item';
+
+                const serviceSpan = document.createElement('span');
+                serviceSpan.className = 'cost-service';
+                serviceSpan.textContent = s.service;
+
+                const amountSpan = document.createElement('span');
+                amountSpan.className = 'cost-amount';
+                amountSpan.textContent = formatCurrency(s.amount);
+
+                item.appendChild(serviceSpan);
+                item.appendChild(amountSpan);
+                container.appendChild(item);
+            });
+
+            // Total row
+            const totalItem = document.createElement('div');
+            totalItem.className = 'cost-item cost-total';
+
+            const totalLabel = document.createElement('span');
+            totalLabel.className = 'cost-service';
+            totalLabel.textContent = 'TOTAL_EXPENDITURE';
+
+            const totalAmount = document.createElement('span');
+            totalAmount.className = 'cost-amount';
+            totalAmount.textContent = formatCurrency(total);
+
+            totalItem.appendChild(totalLabel);
+            totalItem.appendChild(totalAmount);
+            container.appendChild(totalItem);
+
+            // Period info
+            const periodDiv = document.createElement('div');
+            periodDiv.className = 'source-meta';
+            periodDiv.style.marginTop = '0.5rem';
+            periodDiv.textContent = '// ' + (data.period || '');
+            container.appendChild(periodDiv);
+        }
+
+        // Render detection stats using safe DOM methods
+        function renderDetections(data) {
+            const container = document.getElementById('detection-stats');
+
+            // Clear existing content
+            while (container.firstChild) {
+                container.removeChild(container.firstChild);
+            }
+
+            if (!data) {
+                const div = document.createElement('div');
+                div.textContent = '// NO DATA';
+                container.appendChild(div);
+                return;
+            }
+
+            if (data.message) {
+                const div = document.createElement('div');
+                div.style.gridColumn = 'span 3';
+                div.style.color = 'var(--text-dim)';
+                div.textContent = '// ' + data.message.toUpperCase();
+                container.appendChild(div);
+                return;
+            }
+
+            const successColor = data.success_rate >= 99 ? 'var(--terminal-green)' :
+                                 data.success_rate >= 95 ? 'var(--terminal-amber)' : 'var(--terminal-red)';
+
+            // Invocations stat
+            const invocationsBox = document.createElement('div');
+            invocationsBox.className = 'stat-box';
+            const invocationsValue = document.createElement('div');
+            invocationsValue.className = 'stat-value';
+            invocationsValue.textContent = formatNumber(data.total_invocations);
+            const invocationsLabel = document.createElement('div');
+            invocationsLabel.className = 'stat-label';
+            invocationsLabel.textContent = 'EXECUTIONS';
+            invocationsBox.appendChild(invocationsValue);
+            invocationsBox.appendChild(invocationsLabel);
+
+            // Errors stat
+            const errorsBox = document.createElement('div');
+            errorsBox.className = 'stat-box';
+            const errorsValue = document.createElement('div');
+            errorsValue.className = 'stat-value';
+            errorsValue.style.color = 'var(--terminal-red)';
+            errorsValue.textContent = formatNumber(data.total_errors);
+            const errorsLabel = document.createElement('div');
+            errorsLabel.className = 'stat-label';
+            errorsLabel.textContent = 'ERRORS';
+            errorsBox.appendChild(errorsValue);
+            errorsBox.appendChild(errorsLabel);
+
+            // Success rate stat
+            const successBox = document.createElement('div');
+            successBox.className = 'stat-box';
+            const successValue = document.createElement('div');
+            successValue.className = 'stat-value';
+            successValue.style.color = successColor;
+            successValue.textContent = data.success_rate + '%';
+            const successLabel = document.createElement('div');
+            successLabel.className = 'stat-label';
+            successLabel.textContent = 'SUCCESS';
+            successBox.appendChild(successValue);
+            successBox.appendChild(successLabel);
+
+            container.appendChild(invocationsBox);
+            container.appendChild(errorsBox);
+            container.appendChild(successBox);
+        }
+
+        // Update overall status
+        function updateOverallStatus(data) {
+            const badge = document.getElementById('overall-status');
+
+            let hasWarning = false;
+            let hasError = false;
+
+            // Check sources
+            if (data.security_lake?.sources) {
+                const unhealthy = data.security_lake.sources.filter(s => !s.healthy).length;
+                if (unhealthy > 0) hasWarning = true;
+                if (unhealthy === data.security_lake.sources.length) hasError = true;
+            }
+
+            // Check detections
+            if (data.detections?.success_rate < 95) hasWarning = true;
+            if (data.detections?.success_rate < 90) hasError = true;
+
+            if (hasError) {
+                badge.className = 'status-badge status-error';
+                badge.textContent = 'CRITICAL';
+            } else if (hasWarning) {
+                badge.className = 'status-badge status-warning';
+                badge.textContent = 'DEGRADED';
+            } else {
+                badge.className = 'status-badge status-healthy';
+                badge.textContent = 'NOMINAL';
+            }
+        }
+
+        // Refresh data
+        async function refreshData() {
+            hideError();
+            document.getElementById('refresh-time').textContent = 'QUERYING SYSTEMS...';
+
+            try {
+                const data = await fetchWithAuth(CONFIG.apiEndpoint + '/health');
+
+                renderSources(data.security_lake);
+                renderCosts(data.costs);
+                renderDetections(data.detections);
+                updateOverallStatus(data);
+
+                const now = new Date();
+                const timestamp = now.toISOString().replace('T', ' ').split('.')[0] + ' UTC';
+                document.getElementById('refresh-time').textContent = 'LAST_SYNC: ' + timestamp;
+            } catch (error) {
+                if (error.message !== 'Session expired' && error.message !== 'Unauthorized') {
+                    showError('SYSTEM_ERROR: ' + error.message);
+                }
+            }
+        }
+
+        // Handle OAuth callback
+        async function handleCallback() {
+            const params = new URLSearchParams(window.location.search);
+            const code = params.get('code');
+            const error = params.get('error');
+
+            // Only process if on /callback route
+            if (window.location.pathname !== '/callback') return;
+
+            // Clean up URL if on /callback with no valid params
+            if (!code && !error) {
+                window.history.replaceState({}, document.title, '/');
+                return;
+            }
+
+            if (error) {
+                showError('AUTH_FAILURE: ' + error);
+                window.history.replaceState({}, document.title, '/login');
+                return;
+            }
+
+            if (code) {
+                try {
+                    const tokens = await exchangeCodeForTokens(code);
+                    saveTokens(tokens);
+
+                    // Redirect to protected dashboard
+                    window.history.replaceState({}, document.title, getPostLoginRedirect());
+                } catch (error) {
+                    showError('TOKEN_EXCHANGE_FAILED: ' + error.message);
+                    window.history.replaceState({}, document.title, '/login');
+                }
+            }
+        }
+
+        // Passkey enrollment using Cognito WebAuthn APIs
+        async function enrollPasskey() {
+            const tokens = getTokens();
+            if (!tokens || !tokens.access_token) {
+                alert('Please log in first to register a passkey.');
+                return;
+            }
+
+            try {
+                // Check WebAuthn support
+                if (!navigator.credentials || !navigator.credentials.create) {
+                    alert('Your browser does not support passkeys.');
+                    return;
+                }
+
+                console.log('[PASSKEY] Starting registration...');
+
+                // Step 1: Call Cognito to get credential creation options
+                const startResponse = await fetch('https://cognito-idp.us-west-2.amazonaws.com/', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/x-amz-json-1.1',
+                        'X-Amz-Target': 'AWSCognitoIdentityProviderService.StartWebAuthnRegistration'
+                    },
+                    body: JSON.stringify({
+                        AccessToken: tokens.access_token
+                    })
+                });
+
+                if (!startResponse.ok) {
+                    const err = await startResponse.text();
+                    console.error('[PASSKEY] Start failed:', err);
+                    throw new Error('Failed to start passkey registration: ' + err);
+                }
+
+                const options = await startResponse.json();
+                console.log('[PASSKEY] Got options:', options);
+
+                // Step 2: Convert options for WebAuthn API
+                const credentialOptions = options.CredentialCreationOptions;
+                const publicKey = {
+                    challenge: base64UrlToArrayBuffer(credentialOptions.challenge),
+                    rp: credentialOptions.rp,
+                    user: {
+                        id: base64UrlToArrayBuffer(credentialOptions.user.id),
+                        name: credentialOptions.user.name,
+                        displayName: credentialOptions.user.displayName
+                    },
+                    pubKeyCredParams: credentialOptions.pubKeyCredParams,
+                    timeout: credentialOptions.timeout,
+                    authenticatorSelection: credentialOptions.authenticatorSelection,
+                    attestation: credentialOptions.attestation || 'none'
+                };
+
+                if (credentialOptions.excludeCredentials) {
+                    publicKey.excludeCredentials = credentialOptions.excludeCredentials.map(cred => ({
+                        id: base64UrlToArrayBuffer(cred.id),
+                        type: cred.type,
+                        transports: cred.transports
+                    }));
+                }
+
+                // Step 3: Create credential with browser WebAuthn API
+                console.log('[PASSKEY] Creating credential...');
+                const credential = await navigator.credentials.create({ publicKey });
+                console.log('[PASSKEY] Credential created:', credential);
+
+                // Step 4: Complete registration with Cognito
+                // Build RegistrationResponseJSON per WebAuthn spec
+                const attestationResponse = credential.response;
+                const registrationResponse = {
+                    id: credential.id,
+                    rawId: arrayBufferToBase64Url(credential.rawId),
+                    response: {
+                        clientDataJSON: arrayBufferToBase64Url(attestationResponse.clientDataJSON),
+                        attestationObject: arrayBufferToBase64Url(attestationResponse.attestationObject)
+                    },
+                    type: credential.type,
+                    clientExtensionResults: credential.getClientExtensionResults() || {}
+                };
+
+                // Add optional fields if available
+                if (credential.authenticatorAttachment) {
+                    registrationResponse.authenticatorAttachment = credential.authenticatorAttachment;
+                }
+                if (attestationResponse.getTransports) {
+                    registrationResponse.response.transports = attestationResponse.getTransports();
+                }
+                if (attestationResponse.getPublicKey) {
+                    registrationResponse.response.publicKey = arrayBufferToBase64Url(attestationResponse.getPublicKey());
+                }
+                if (attestationResponse.getPublicKeyAlgorithm) {
+                    registrationResponse.response.publicKeyAlgorithm = attestationResponse.getPublicKeyAlgorithm();
+                }
+                if (attestationResponse.getAuthenticatorData) {
+                    registrationResponse.response.authenticatorData = arrayBufferToBase64Url(attestationResponse.getAuthenticatorData());
+                }
+
+                console.log('[PASSKEY] Sending credential:', JSON.stringify(registrationResponse, null, 2));
+
+                const completeResponse = await fetch('https://cognito-idp.us-west-2.amazonaws.com/', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/x-amz-json-1.1',
+                        'X-Amz-Target': 'AWSCognitoIdentityProviderService.CompleteWebAuthnRegistration'
+                    },
+                    body: JSON.stringify({
+                        AccessToken: tokens.access_token,
+                        Credential: registrationResponse
+                    })
+                });
+
+                if (!completeResponse.ok) {
+                    const err = await completeResponse.text();
+                    console.error('[PASSKEY] Complete failed:', err);
+                    throw new Error('Failed to complete passkey registration: ' + err);
+                }
+
+                alert('Passkey registered successfully! You can now sign in with your passkey.');
+                console.log('[PASSKEY] Registration complete!');
+
+            } catch (error) {
+                console.error('[PASSKEY] Error:', error);
+                if (error.name === 'NotAllowedError') {
+                    alert('Passkey registration was cancelled.');
+                } else {
+                    alert('Failed to register passkey: ' + error.message);
+                }
+            }
+        }
+
+        // Helper: Base64URL to ArrayBuffer
+        function base64UrlToArrayBuffer(base64url) {
+            const padding = '='.repeat((4 - base64url.length % 4) % 4);
+            const base64 = base64url.replace(/-/g, '+').replace(/_/g, '/') + padding;
+            const binary = atob(base64);
+            const bytes = new Uint8Array(binary.length);
+            for (let i = 0; i < binary.length; i++) {
+                bytes[i] = binary.charCodeAt(i);
+            }
+            return bytes.buffer;
+        }
+
+        // Helper: ArrayBuffer to Base64URL
+        function arrayBufferToBase64Url(buffer) {
+            const bytes = new Uint8Array(buffer);
+            let binary = '';
+            for (let i = 0; i < bytes.length; i++) {
+                binary += String.fromCharCode(bytes[i]);
+            }
+            return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+        }
+
+        // Login flow state
+        let loginEmail = '';
+
+        // Modal functions
+        function openModal() {
+            document.getElementById('login-modal').classList.remove('hidden');
+            document.getElementById('login-email').focus();
+        }
+
+        function closeModal() {
+            document.getElementById('login-modal').classList.add('hidden');
+            showModalStep('email');
+            document.getElementById('modal-status').textContent = '';
+            document.getElementById('login-email').value = '';
+        }
+
+        function showModalStep(step) {
+            document.getElementById('modal-step-email').classList.toggle('hidden', step !== 'email');
+            document.getElementById('modal-step-auth').classList.toggle('hidden', step !== 'auth');
+        }
+
+        function setModalStatus(text) {
+            document.getElementById('modal-status').textContent = text;
+        }
+
+        function handleLoginContinue() {
+            const email = document.getElementById('login-email').value.trim();
+            if (!email || !email.includes('@')) {
+                setModalStatus('// enter valid email');
+                return;
+            }
+            loginEmail = email;
+            document.getElementById('login-user-display').textContent = '// ' + email;
+            setModalStatus('');
+            showModalStep('auth');
+        }
+
+        function handleLoginBack() {
+            showModalStep('email');
+            setModalStatus('');
+        }
+
+        // Passkey login using Cognito USER_AUTH
+        async function loginWithPasskey() {
+            if (!loginEmail) {
+                setModalStatus('// enter email first');
+                return;
+            }
+
+            setModalStatus('// authenticating...');
+
+            try {
+                // Step 1: Initiate auth with USER_AUTH and PREFERRED_CHALLENGE=WEB_AUTHN
+                const initResponse = await fetch('https://cognito-idp.us-west-2.amazonaws.com/', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/x-amz-json-1.1',
+                        'X-Amz-Target': 'AWSCognitoIdentityProviderService.InitiateAuth'
+                    },
+                    body: JSON.stringify({
+                        AuthFlow: 'USER_AUTH',
+                        ClientId: CONFIG.clientId,
+                        AuthParameters: {
+                            USERNAME: loginEmail,
+                            PREFERRED_CHALLENGE: 'WEB_AUTHN'
+                        }
+                    })
+                });
+
+                const initData = await initResponse.json();
+                console.log('[PASSKEY LOGIN] Init response:', initData);
+
+                if (initData.__type) {
+                    throw new Error(initData.message || 'Authentication failed');
+                }
+
+                if (initData.ChallengeName !== 'WEB_AUTHN') {
+                    throw new Error('Passkey not available for this account. Use password login.');
+                }
+
+                // Step 2: Parse WebAuthn challenge
+                const challengeParams = initData.ChallengeParameters;
+                const credentialOptions = JSON.parse(challengeParams.CREDENTIAL_REQUEST_OPTIONS);
+
+                const publicKey = {
+                    challenge: base64UrlToArrayBuffer(credentialOptions.challenge),
+                    timeout: credentialOptions.timeout,
+                    rpId: credentialOptions.rpId,
+                    allowCredentials: credentialOptions.allowCredentials.map(cred => ({
+                        id: base64UrlToArrayBuffer(cred.id),
+                        type: cred.type,
+                        transports: cred.transports
+                    })),
+                    userVerification: credentialOptions.userVerification
+                };
+
+                // Step 3: Get passkey assertion from browser
+                setModalStatus('// waiting for passkey...');
+                const credential = await navigator.credentials.get({ publicKey });
+                console.log('[PASSKEY LOGIN] Got credential:', credential);
+
+                // Step 4: Complete challenge with Cognito
+                const assertionResponse = {
+                    id: credential.id,
+                    rawId: arrayBufferToBase64Url(credential.rawId),
+                    response: {
+                        clientDataJSON: arrayBufferToBase64Url(credential.response.clientDataJSON),
+                        authenticatorData: arrayBufferToBase64Url(credential.response.authenticatorData),
+                        signature: arrayBufferToBase64Url(credential.response.signature)
+                    },
+                    type: credential.type,
+                    clientExtensionResults: credential.getClientExtensionResults() || {}
+                };
+
+                if (credential.response.userHandle) {
+                    assertionResponse.response.userHandle = arrayBufferToBase64Url(credential.response.userHandle);
+                }
+                if (credential.authenticatorAttachment) {
+                    assertionResponse.authenticatorAttachment = credential.authenticatorAttachment;
+                }
+
+                const respondResponse = await fetch('https://cognito-idp.us-west-2.amazonaws.com/', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/x-amz-json-1.1',
+                        'X-Amz-Target': 'AWSCognitoIdentityProviderService.RespondToAuthChallenge'
+                    },
+                    body: JSON.stringify({
+                        ChallengeName: 'WEB_AUTHN',
+                        ClientId: CONFIG.clientId,
+                        Session: initData.Session,
+                        ChallengeResponses: {
+                            USERNAME: loginEmail,
+                            CREDENTIAL: JSON.stringify(assertionResponse)
+                        }
+                    })
+                });
+
+                const authResult = await respondResponse.json();
+                console.log('[PASSKEY LOGIN] Auth result:', authResult);
+
+                if (authResult.__type) {
+                    throw new Error(authResult.message || 'Authentication failed');
+                }
+
+                if (authResult.AuthenticationResult) {
+                    // Success! Store tokens
+                    saveTokens({
+                        id_token: authResult.AuthenticationResult.IdToken,
+                        access_token: authResult.AuthenticationResult.AccessToken,
+                        refresh_token: authResult.AuthenticationResult.RefreshToken
+                    });
+                    closeModal();
+                    navigateTo(getPostLoginRedirect());
+                } else {
+                    throw new Error('Unexpected auth response');
+                }
+
+            } catch (error) {
+                console.error('[PASSKEY LOGIN] Error:', error);
+                if (error.name === 'NotAllowedError') {
+                    setModalStatus('// cancelled');
+                } else {
+                    setModalStatus('// ' + (error.message || 'failed'));
+                }
+            }
+        }
+
+        // Initialize
+        document.addEventListener('DOMContentLoaded', function() {
+            // Login modal controls
+            document.getElementById('modal-close-btn').addEventListener('click', function() {
+                closeModal();
+                navigateTo('/');
+            });
+            document.getElementById('login-continue-btn').addEventListener('click', handleLoginContinue);
+            document.getElementById('passkey-login-btn').addEventListener('click', loginWithPasskey);
+            document.getElementById('login-btn').addEventListener('click', function() {
+                closeModal();
+                login();  // Redirect to Cognito hosted UI
+            });
+            document.getElementById('login-back-btn').addEventListener('click', handleLoginBack);
+
+            // Dashboard controls
+            document.getElementById('logout-btn').addEventListener('click', function() {
+                logout();
+                navigateTo('/');
+            });
+            document.getElementById('refresh-btn').addEventListener('click', refreshData);
+            document.getElementById('settings-btn').addEventListener('click', function() {
+                navigateTo('/settings');
+            });
+            document.getElementById('notebooks-btn').addEventListener('click', function() {
+                window.location.href = '/notebooks';
+            });
+
+            // Settings controls
+            document.getElementById('settings-back-btn').addEventListener('click', function() {
+                navigateTo('/dashboard');
+            });
+            document.getElementById('add-passkey-btn').addEventListener('click', enrollPasskey);
+            document.getElementById('settings-logout-btn').addEventListener('click', function() {
+                logout();
+                navigateTo('/');
+            });
+
+            // Close modal on overlay click
+            document.getElementById('login-modal').addEventListener('click', function(e) {
+                if (e.target === this) {
+                    closeModal();
+                    navigateTo('/');
+                }
+            });
+
+            // Close modal on Escape key
+            document.addEventListener('keydown', function(e) {
+                if (e.key === 'Escape' && !document.getElementById('login-modal').classList.contains('hidden')) {
+                    closeModal();
+                    navigateTo('/');
+                }
+            });
+
+            // Enter key on email input
+            document.getElementById('login-email').addEventListener('keypress', function(e) {
+                if (e.key === 'Enter') handleLoginContinue();
+            });
+
+            // Handle browser back/forward
+            window.addEventListener('popstate', handleRoute);
+
+            // Handle OAuth callback first
+            handleCallback();
+
+            // Then route to appropriate view
+            handleRoute();
+        });
+    </script>
+</body>
+</html>
+<!-- deployed Sat Jan 17 08:45:06 PM PST 2026 -->

@@ -155,7 +155,9 @@ class URLAnalyzer:
                 # Handle timezone-naive comparison
                 if isinstance(latest_time, datetime):
                     latest_naive = latest_time.replace(tzinfo=None)
-                    age_minutes = (datetime.now(UTC).replace(tzinfo=None) - latest_naive).total_seconds() / 60
+                    age_minutes = (
+                        datetime.now(UTC).replace(tzinfo=None) - latest_naive
+                    ).total_seconds() / 60
                 else:
                     # Fallback for non-datetime types
                     age_minutes = 0.0

@@ -1,0 +1,487 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Security Dashboards - Health Dashboard with Cognito Passkey Auth
+Parameters:
+  CognitoUserPoolId:
+    Type: String
+    Description: Existing Cognito User Pool ID
+    Default: ''
+  CognitoUserPoolArn:
+    Type: String
+    Description: Existing Cognito User Pool ARN (if reusing)
+    Default: ''
+  AllowedEmail:
+    Type: String
+    Description: Email address allowed to access (for new pool)
+    Default: bryan.egan@gmail.com
+  SecurityLakeDatabase:
+    Type: String
+    Default: amazon_security_lake_glue_db_us_west_2
+  AthenaOutputLocation:
+    Type: String
+    Default: s3://aws-athena-query-results-651804262336-us-west-2/
+  DomainName:
+    Type: String
+    Description: Custom domain for the dashboard (e.g., health.lexicone.com)
+    Default: health.lexicone.com
+  HostedZoneId:
+    Type: String
+    Description: Route53 Hosted Zone ID for lexicone.com
+    Default: ''
+  AcmCertificateArn:
+    Type: String
+    Description: ACM Certificate ARN for the domain (must be in us-east-1 for CloudFront)
+    Default: ''
+Conditions:
+  CreateNewUserPool:
+    Fn::Equals:
+    - Ref: CognitoUserPoolId
+    - ''
+  HasCustomDomain:
+    Fn::Not:
+    - Fn::Equals:
+      - Ref: DomainName
+      - ''
+  HasHostedZone:
+    Fn::Not:
+    - Fn::Equals:
+      - Ref: HostedZoneId
+      - ''
+  HasCertificate:
+    Fn::Not:
+    - Fn::Equals:
+      - Ref: AcmCertificateArn
+      - ''
+  UseCustomDomain:
+    Fn::And:
+    - Condition: HasCustomDomain
+    - Condition: HasCertificate
+Resources:
+  UserPool:
+    Type: AWS::Cognito::UserPool
+    Condition: CreateNewUserPool
+    Properties:
+      UserPoolName: secdash-health-pool
+      AutoVerifiedAttributes:
+      - email
+      UsernameAttributes:
+      - email
+      MfaConfiguration: OPTIONAL
+      EnabledMfas:
+      - SOFTWARE_TOKEN_MFA
+      UserAttributeUpdateSettings:
+        AttributesRequireVerificationBeforeUpdate:
+        - email
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 12
+          RequireUppercase: true
+          RequireLowercase: true
+          RequireNumbers: true
+          RequireSymbols: true
+      Schema:
+      - Name: email
+        AttributeDataType: String
+        Required: true
+        Mutable: true
+      WebAuthnConfiguration:
+        UserVerification: preferred
+      SignInPolicy:
+        AllowedFirstAuthFactors:
+        - PASSWORD
+        - EMAIL_OTP
+        - WEB_AUTHN
+  UserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      ClientName: secdash-health-client
+      UserPoolId:
+        Fn::If:
+        - CreateNewUserPool
+        - Ref: UserPool
+        - Ref: CognitoUserPoolId
+      GenerateSecret: false
+      ExplicitAuthFlows:
+      - ALLOW_USER_SRP_AUTH
+      - ALLOW_REFRESH_TOKEN_AUTH
+      - ALLOW_USER_AUTH
+      PreventUserExistenceErrors: ENABLED
+      SupportedIdentityProviders:
+      - COGNITO
+      CallbackURLs:
+      - Fn::If:
+        - UseCustomDomain
+        - Fn::Sub: https://${DomainName}/callback
+        - Fn::Sub: https://${HealthDashboardDistribution.DomainName}/callback
+      - http://localhost:3000/callback
+      LogoutURLs:
+      - Fn::If:
+        - UseCustomDomain
+        - Fn::Sub: https://${DomainName}
+        - Fn::Sub: https://${HealthDashboardDistribution.DomainName}
+      - http://localhost:3000
+      AllowedOAuthFlows:
+      - code
+      AllowedOAuthScopes:
+      - openid
+      - email
+      - profile
+      AllowedOAuthFlowsUserPoolClient: true
+  UserPoolDomain:
+    Type: AWS::Cognito::UserPoolDomain
+    Properties:
+      Domain:
+        Fn::Sub: secdash-health-${AWS::AccountId}
+      UserPoolId:
+        Fn::If:
+        - CreateNewUserPool
+        - Ref: UserPool
+        - Ref: CognitoUserPoolId
+  HealthApiFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: secdash-health-api
+      Runtime: python3.12
+      Handler: dashboard_handler.handler
+      CodeUri: s3://aws-sam-cli-managed-default-samclisourcebucket-0ubhfj2ldi8s/b09b010362cfc3687f0cd4d004cde7f0
+      MemorySize: 256
+      Timeout: 120
+      Environment:
+        Variables:
+          SECURITY_LAKE_DB:
+            Ref: SecurityLakeDatabase
+          ATHENA_OUTPUT:
+            Ref: AthenaOutputLocation
+      Policies:
+      - Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Action:
+          - athena:StartQueryExecution
+          - athena:GetQueryExecution
+          - athena:GetQueryResults
+          - athena:StopQueryExecution
+          Resource: '*'
+        - Effect: Allow
+          Action:
+          - glue:GetTable
+          - glue:GetTables
+          - glue:GetDatabase
+          - glue:GetDatabases
+          Resource: '*'
+        - Effect: Allow
+          Action:
+          - s3:GetBucketLocation
+          - s3:GetObject
+          - s3:ListBucket
+          - s3:PutObject
+          Resource:
+          - Fn::Sub: arn:aws:s3:::${AthenaOutputLocation}*
+          - arn:aws:s3:::amazon-security-lake-*
+        - Effect: Allow
+          Action:
+          - cloudwatch:GetMetricData
+          - cloudwatch:ListMetrics
+          Resource: '*'
+        - Effect: Allow
+          Action:
+          - ce:GetCostAndUsage
+          Resource: '*'
+        - Effect: Allow
+          Action:
+          - lambda:ListFunctions
+          Resource: '*'
+  HealthApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      StageName: prod
+      CorsConfiguration:
+        AllowOrigins:
+        - '*'
+        AllowMethods:
+        - GET
+        - OPTIONS
+        AllowHeaders:
+        - Authorization
+        - Content-Type
+      Auth:
+        DefaultAuthorizer: CognitoAuthorizer
+        Authorizers:
+          CognitoAuthorizer:
+            AuthorizationScopes:
+            - openid
+            - email
+            IdentitySource: $request.header.Authorization
+            JwtConfiguration:
+              issuer:
+                Fn::If:
+                - CreateNewUserPool
+                - Fn::Sub: https://cognito-idp.${AWS::Region}.amazonaws.com/${UserPool}
+                - Fn::Sub: https://cognito-idp.${AWS::Region}.amazonaws.com/${CognitoUserPoolId}
+              audience:
+              - Ref: UserPoolClient
+  HealthApiRoute:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: secdash-health-api-handler
+      Runtime: python3.12
+      Handler: dashboard_handler.handler
+      CodeUri: s3://aws-sam-cli-managed-default-samclisourcebucket-0ubhfj2ldi8s/b09b010362cfc3687f0cd4d004cde7f0
+      MemorySize: 256
+      Timeout: 120
+      Environment:
+        Variables:
+          SECURITY_LAKE_DB:
+            Ref: SecurityLakeDatabase
+          ATHENA_OUTPUT:
+            Ref: AthenaOutputLocation
+      Policies:
+      - AmazonAthenaFullAccess
+      - CloudWatchReadOnlyAccess
+      - AWSCostExplorerReadOnlyAccess
+      Events:
+        ApiHealth:
+          Type: HttpApi
+          Properties:
+            ApiId:
+              Ref: HealthApi
+            Path: /health
+            Method: GET
+        ApiSources:
+          Type: HttpApi
+          Properties:
+            ApiId:
+              Ref: HealthApi
+            Path: /health/sources
+            Method: GET
+        ApiCosts:
+          Type: HttpApi
+          Properties:
+            ApiId:
+              Ref: HealthApi
+            Path: /health/costs
+            Method: GET
+        ApiDetections:
+          Type: HttpApi
+          Properties:
+            ApiId:
+              Ref: HealthApi
+            Path: /health/detections
+            Method: GET
+  DashboardBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName:
+        Fn::Sub: secdash-health-${AWS::AccountId}-${AWS::Region}
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+  DashboardBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket:
+        Ref: DashboardBucket
+      PolicyDocument:
+        Statement:
+        - Sid: AllowCloudFrontAccess
+          Effect: Allow
+          Principal:
+            Service: cloudfront.amazonaws.com
+          Action: s3:GetObject
+          Resource:
+            Fn::Sub: ${DashboardBucket.Arn}/*
+          Condition:
+            StringEquals:
+              AWS:SourceArn:
+                Fn::Sub: arn:aws:cloudfront::${AWS::AccountId}:distribution/${HealthDashboardDistribution}
+  CloudFrontOAC:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig:
+        Name: secdash-health-oac
+        OriginAccessControlOriginType: s3
+        SigningBehavior: always
+        SigningProtocol: sigv4
+  SecurityHeadersPolicy:
+    Type: AWS::CloudFront::ResponseHeadersPolicy
+    Properties:
+      ResponseHeadersPolicyConfig:
+        Name: secdash-security-headers
+        SecurityHeadersConfig:
+          ContentSecurityPolicy:
+            ContentSecurityPolicy:
+              Fn::Sub: 'default-src ''self'';
+
+                script-src ''self'' ''unsafe-inline'' https://cognito-idp.${AWS::Region}.amazonaws.com;
+
+                style-src ''self'' ''unsafe-inline'';
+
+                img-src ''self'' data: https:;
+
+                font-src ''self'' data:;
+
+                connect-src ''self'' https://${HealthApi}.execute-api.${AWS::Region}.amazonaws.com
+                https://cognito-idp.${AWS::Region}.amazonaws.com https://cognito-identity.${AWS::Region}.amazonaws.com;
+
+                frame-ancestors ''none'';
+
+                form-action ''self'' https://*.amazoncognito.com;
+
+                '
+            Override: true
+          ContentTypeOptions:
+            Override: true
+          FrameOptions:
+            FrameOption: DENY
+            Override: true
+          ReferrerPolicy:
+            ReferrerPolicy: strict-origin-when-cross-origin
+            Override: true
+          StrictTransportSecurity:
+            AccessControlMaxAgeSec: 31536000
+            IncludeSubdomains: true
+            Preload: true
+            Override: true
+          XSSProtection:
+            ModeBlock: true
+            Protection: true
+            Override: true
+        CorsConfig:
+          AccessControlAllowCredentials: true
+          AccessControlAllowHeaders:
+            Items:
+            - Authorization
+            - Content-Type
+            - X-Requested-With
+          AccessControlAllowMethods:
+            Items:
+            - GET
+            - OPTIONS
+          AccessControlAllowOrigins:
+            Items:
+            - Fn::If:
+              - UseCustomDomain
+              - Fn::Sub: https://${DomainName}
+              - Fn::Sub: https://${HealthDashboardDistribution.DomainName}
+            - http://localhost:3000
+          AccessControlMaxAgeSec: 86400
+          OriginOverride: true
+  HealthDashboardDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        DefaultRootObject: index.html
+        PriceClass: PriceClass_100
+        Aliases:
+          Fn::If:
+          - UseCustomDomain
+          - - Ref: DomainName
+          - Ref: AWS::NoValue
+        ViewerCertificate:
+          Fn::If:
+          - UseCustomDomain
+          - AcmCertificateArn:
+              Ref: AcmCertificateArn
+            SslSupportMethod: sni-only
+            MinimumProtocolVersion: TLSv1.2_2021
+          - CloudFrontDefaultCertificate: true
+        Origins:
+        - Id: S3Origin
+          DomainName:
+            Fn::GetAtt:
+            - DashboardBucket
+            - RegionalDomainName
+          OriginAccessControlId:
+            Ref: CloudFrontOAC
+          S3OriginConfig:
+            OriginAccessIdentity: ''
+        DefaultCacheBehavior:
+          TargetOriginId: S3Origin
+          ViewerProtocolPolicy: redirect-to-https
+          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6
+          ResponseHeadersPolicyId:
+            Ref: SecurityHeadersPolicy
+          AllowedMethods:
+          - GET
+          - HEAD
+          CachedMethods:
+          - GET
+          - HEAD
+        CustomErrorResponses:
+        - ErrorCode: 403
+          ResponseCode: 200
+          ResponsePagePath: /index.html
+        - ErrorCode: 404
+          ResponseCode: 200
+          ResponsePagePath: /index.html
+  DashboardDnsRecord:
+    Type: AWS::Route53::RecordSet
+    Condition: HasHostedZone
+    Properties:
+      HostedZoneId:
+        Ref: HostedZoneId
+      Name:
+        Ref: DomainName
+      Type: A
+      AliasTarget:
+        DNSName:
+          Fn::GetAtt:
+          - HealthDashboardDistribution
+          - DomainName
+        HostedZoneId: Z2FDTNDATAQYW2
+Outputs:
+  ApiEndpoint:
+    Description: Health API endpoint
+    Value:
+      Fn::Sub: https://${HealthApi}.execute-api.${AWS::Region}.amazonaws.com/prod
+  DashboardUrl:
+    Description: Health Dashboard URL
+    Value:
+      Fn::If:
+      - UseCustomDomain
+      - Fn::Sub: https://${DomainName}
+      - Fn::Sub: https://${HealthDashboardDistribution.DomainName}
+  CloudFrontDomain:
+    Description: CloudFront distribution domain
+    Value:
+      Fn::GetAtt:
+      - HealthDashboardDistribution
+      - DomainName
+  CognitoLoginUrl:
+    Description: Cognito Hosted UI Login URL
+    Value:
+      Fn::If:
+      - UseCustomDomain
+      - Fn::Sub: https://${UserPoolDomain}.auth.${AWS::Region}.amazoncognito.com/login?client_id=${UserPoolClient}&response_type=code&scope=openid+email+profile&redirect_uri=https://${DomainName}/callback
+      - Fn::Sub: https://${UserPoolDomain}.auth.${AWS::Region}.amazoncognito.com/login?client_id=${UserPoolClient}&response_type=code&scope=openid+email+profile&redirect_uri=https://${HealthDashboardDistribution.DomainName}/callback
+  UserPoolId:
+    Description: Cognito User Pool ID
+    Value:
+      Fn::If:
+      - CreateNewUserPool
+      - Ref: UserPool
+      - Ref: CognitoUserPoolId
+  UserPoolClientId:
+    Description: Cognito User Pool Client ID
+    Value:
+      Ref: UserPoolClient
+  DashboardBucket:
+    Description: S3 bucket for static files
+    Value:
+      Ref: DashboardBucket
+  DeploymentNotes:
+    Description: After deployment, upload static files and register your passkey
+    Value:
+      Fn::Sub: '1. Upload dashboard: aws s3 sync ./static/ s3://${DashboardBucket}/
+
+        2. Create user: aws cognito-idp admin-create-user --user-pool-id ${UserPool}
+        --username ${AllowedEmail}
+
+        3. Register passkey via Cognito Hosted UI
+
+        4. Access dashboard at: https://${DomainName}
+
+        '

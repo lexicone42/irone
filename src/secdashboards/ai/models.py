@@ -1,6 +1,6 @@
 """Bedrock model configurations and pricing.
 
-This module defines available Claude models on AWS Bedrock with their
+This module defines available Claude 4.5 models on AWS Bedrock with their
 pricing information for cost estimation.
 
 Pricing is based on Anthropic's published rates. AWS Bedrock pricing
@@ -14,25 +14,17 @@ from typing import Any
 
 
 class BedrockModel(StrEnum):
-    """Available Claude models on AWS Bedrock."""
+    """Available Claude 4.5 models on AWS Bedrock."""
 
-    # Claude 3.5 family (recommended for most tasks)
-    CLAUDE_3_5_SONNET = "anthropic.claude-3-5-sonnet-20241022-v2:0"
-    CLAUDE_3_5_HAIKU = "anthropic.claude-3-5-haiku-20241022-v1:0"
+    # Claude 4.5 family - the only models we use
+    CLAUDE_SONNET_4_5 = "anthropic.claude-sonnet-4-5-20250929-v1:0"
+    CLAUDE_OPUS_4_5 = "anthropic.claude-opus-4-5-20251101-v1:0"
+    CLAUDE_HAIKU_4_5 = "anthropic.claude-haiku-4-5-20251001-v1:0"
 
-    # Claude 3 family
-    CLAUDE_3_OPUS = "anthropic.claude-3-opus-20240229-v1:0"
-    CLAUDE_3_SONNET = "anthropic.claude-3-sonnet-20240229-v1:0"
-    CLAUDE_3_HAIKU = "anthropic.claude-3-haiku-20240307-v1:0"
-
-    # Claude 4 family (latest)
-    CLAUDE_SONNET_4 = "anthropic.claude-sonnet-4-20250514-v1:0"
-    CLAUDE_OPUS_4 = "anthropic.claude-opus-4-20250514-v1:0"
-
-    # Aliases for convenience
-    SONNET = CLAUDE_3_5_SONNET
-    HAIKU = CLAUDE_3_5_HAIKU
-    OPUS = CLAUDE_3_OPUS
+    # Convenience aliases
+    SONNET = CLAUDE_SONNET_4_5
+    HAIKU = CLAUDE_HAIKU_4_5
+    OPUS = CLAUDE_OPUS_4_5
 
 
 @dataclass(frozen=True)
@@ -88,72 +80,35 @@ class ModelPricing:
         return input_cost + output_cost
 
 
-# Model pricing database
-# Source: https://platform.claude.com/docs/en/about-claude/pricing
-# Note: AWS Bedrock pricing may vary slightly
+# Model pricing database - Claude 4.5 only
+# Source: https://aws.amazon.com/bedrock/pricing/
 MODEL_PRICING: dict[BedrockModel, ModelPricing] = {
-    BedrockModel.CLAUDE_3_5_SONNET: ModelPricing(
+    BedrockModel.CLAUDE_SONNET_4_5: ModelPricing(
         input_price_per_mtok=3.0,
         output_price_per_mtok=15.0,
         batch_input_price_per_mtok=1.5,
         batch_output_price_per_mtok=7.5,
-        description="Best balance of speed, cost, and capability",
+        description="Best balance of speed, cost, and capability - default for all tasks",
         context_window=200000,
-        recommended_for=["detection_generation", "alert_analysis", "general"],
+        recommended_for=["detection_generation", "alert_analysis", "general", "investigation"],
     ),
-    BedrockModel.CLAUDE_3_5_HAIKU: ModelPricing(
-        input_price_per_mtok=0.80,
-        output_price_per_mtok=4.0,
-        batch_input_price_per_mtok=0.40,
-        batch_output_price_per_mtok=2.0,
-        description="Fast and cost-effective for simpler tasks",
+    BedrockModel.CLAUDE_HAIKU_4_5: ModelPricing(
+        input_price_per_mtok=1.0,
+        output_price_per_mtok=5.0,
+        batch_input_price_per_mtok=0.5,
+        batch_output_price_per_mtok=2.5,
+        description="Fast and cost-effective for high-volume tasks",
         context_window=200000,
-        recommended_for=["quick_triage", "simple_queries", "high_volume"],
+        recommended_for=["quick_triage", "simple_queries", "high_volume", "bulk_processing"],
     ),
-    BedrockModel.CLAUDE_3_OPUS: ModelPricing(
+    BedrockModel.CLAUDE_OPUS_4_5: ModelPricing(
         input_price_per_mtok=15.0,
         output_price_per_mtok=75.0,
         batch_input_price_per_mtok=7.5,
         batch_output_price_per_mtok=37.5,
-        description="Most capable for complex analysis (deprecated)",
+        description="Most capable for complex analysis and deep investigation",
         context_window=200000,
-        recommended_for=["complex_investigation", "detailed_reports"],
-    ),
-    BedrockModel.CLAUDE_3_SONNET: ModelPricing(
-        input_price_per_mtok=3.0,
-        output_price_per_mtok=15.0,
-        batch_input_price_per_mtok=1.5,
-        batch_output_price_per_mtok=7.5,
-        description="Previous generation Sonnet",
-        context_window=200000,
-        recommended_for=["general"],
-    ),
-    BedrockModel.CLAUDE_3_HAIKU: ModelPricing(
-        input_price_per_mtok=0.25,
-        output_price_per_mtok=1.25,
-        batch_input_price_per_mtok=0.125,
-        batch_output_price_per_mtok=0.625,
-        description="Most cost-effective for simple tasks",
-        context_window=200000,
-        recommended_for=["simple_classification", "bulk_processing"],
-    ),
-    BedrockModel.CLAUDE_SONNET_4: ModelPricing(
-        input_price_per_mtok=3.0,
-        output_price_per_mtok=15.0,
-        batch_input_price_per_mtok=1.5,
-        batch_output_price_per_mtok=7.5,
-        description="Latest Sonnet with improved reasoning",
-        context_window=200000,
-        recommended_for=["detection_generation", "alert_analysis", "general"],
-    ),
-    BedrockModel.CLAUDE_OPUS_4: ModelPricing(
-        input_price_per_mtok=15.0,
-        output_price_per_mtok=75.0,
-        batch_input_price_per_mtok=7.5,
-        batch_output_price_per_mtok=37.5,
-        description="Latest Opus for complex analysis",
-        context_window=200000,
-        recommended_for=["complex_investigation", "detailed_reports"],
+        recommended_for=["complex_investigation", "detailed_reports", "attack_chain_analysis"],
     ),
 }
 
@@ -207,27 +162,28 @@ def estimate_request_cost(
     }
 
 
-# Task-specific model recommendations
+# Task-specific model recommendations - all Claude 4.5
 TASK_MODEL_RECOMMENDATIONS: dict[str, BedrockModel] = {
     # Detection engineering
-    "detection_generation": BedrockModel.CLAUDE_3_5_SONNET,
-    "rule_explanation": BedrockModel.CLAUDE_3_5_HAIKU,
-    "rule_optimization": BedrockModel.CLAUDE_3_5_SONNET,
+    "detection_generation": BedrockModel.CLAUDE_SONNET_4_5,
+    "rule_explanation": BedrockModel.CLAUDE_HAIKU_4_5,
+    "rule_optimization": BedrockModel.CLAUDE_SONNET_4_5,
     # Alert analysis
-    "alert_triage": BedrockModel.CLAUDE_3_5_HAIKU,
-    "alert_analysis": BedrockModel.CLAUDE_3_5_SONNET,
-    "severity_assessment": BedrockModel.CLAUDE_3_5_HAIKU,
+    "alert_triage": BedrockModel.CLAUDE_HAIKU_4_5,
+    "alert_analysis": BedrockModel.CLAUDE_SONNET_4_5,
+    "severity_assessment": BedrockModel.CLAUDE_HAIKU_4_5,
     # Investigation
-    "graph_analysis": BedrockModel.CLAUDE_3_5_SONNET,
-    "attack_chain_analysis": BedrockModel.CLAUDE_OPUS_4,
-    "incident_report": BedrockModel.CLAUDE_3_5_SONNET,
+    "graph_analysis": BedrockModel.CLAUDE_SONNET_4_5,
+    "attack_chain_analysis": BedrockModel.CLAUDE_OPUS_4_5,
+    "incident_report": BedrockModel.CLAUDE_SONNET_4_5,
+    "timeline_summary": BedrockModel.CLAUDE_SONNET_4_5,
     # Query generation
-    "natural_language_to_sql": BedrockModel.CLAUDE_3_5_SONNET,
-    "query_explanation": BedrockModel.CLAUDE_3_5_HAIKU,
+    "natural_language_to_sql": BedrockModel.CLAUDE_SONNET_4_5,
+    "query_explanation": BedrockModel.CLAUDE_HAIKU_4_5,
     # General
-    "general": BedrockModel.CLAUDE_3_5_SONNET,
-    "quick": BedrockModel.CLAUDE_3_5_HAIKU,
-    "complex": BedrockModel.CLAUDE_OPUS_4,
+    "general": BedrockModel.CLAUDE_SONNET_4_5,
+    "quick": BedrockModel.CLAUDE_HAIKU_4_5,
+    "complex": BedrockModel.CLAUDE_OPUS_4_5,
 }
 
 
@@ -238,6 +194,6 @@ def get_recommended_model(task: str) -> BedrockModel:
         task: Task identifier (e.g., 'detection_generation', 'alert_triage')
 
     Returns:
-        Recommended BedrockModel for the task
+        Recommended BedrockModel for the task (defaults to Sonnet 4.5)
     """
-    return TASK_MODEL_RECOMMENDATIONS.get(task, BedrockModel.CLAUDE_3_5_SONNET)
+    return TASK_MODEL_RECOMMENDATIONS.get(task, BedrockModel.CLAUDE_SONNET_4_5)

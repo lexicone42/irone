@@ -146,15 +146,11 @@ class GraphBuilder:
 
         # Enrich by users
         for user in list(identifiers["users"])[:10]:  # Limit users
-            self._enrich_by_user(
-                user, start_time, end_time, max_related_events, include_events
-            )
+            self._enrich_by_user(user, start_time, end_time, max_related_events, include_events)
 
         # Enrich by IPs
         for ip in list(identifiers["ips"])[:10]:  # Limit IPs
-            self._enrich_by_ip(
-                ip, start_time, end_time, max_related_events, include_events
-            )
+            self._enrich_by_ip(ip, start_time, end_time, max_related_events, include_events)
 
         logger.info(
             "graph_build_complete",
@@ -273,7 +269,10 @@ class GraphBuilder:
             if request_data and "arn:" in str(request_data):
                 # Simple ARN extraction
                 import re
-                arns = re.findall(r'arn:aws:[a-z0-9-]+:[a-z0-9-]*:\d*:[a-zA-Z0-9/_-]+', str(request_data))
+
+                arns = re.findall(
+                    r"arn:aws:[a-z0-9-]+:[a-z0-9-]*:\d*:[a-zA-Z0-9/_-]+", str(request_data)
+                )
                 identifiers["resources"].update(arns)
 
         return identifiers
@@ -326,9 +325,7 @@ class GraphBuilder:
 
                 # Link to finding
                 edge = GraphEdge(
-                    id=GraphEdge.create_id(
-                        EdgeType.RELATED_TO, principal.id, finding_node.id
-                    ),
+                    id=GraphEdge.create_id(EdgeType.RELATED_TO, principal.id, finding_node.id),
                     edge_type=EdgeType.RELATED_TO,
                     source_id=principal.id,
                     target_id=finding_node.id,
@@ -367,9 +364,7 @@ class GraphBuilder:
                 # Link principal to API
                 if principal:
                     edge = GraphEdge(
-                        id=GraphEdge.create_id(
-                            EdgeType.CALLED_API, principal.id, api_node.id
-                        ),
+                        id=GraphEdge.create_id(EdgeType.CALLED_API, principal.id, api_node.id),
                         edge_type=EdgeType.CALLED_API,
                         source_id=principal.id,
                         target_id=api_node.id,
@@ -507,9 +502,7 @@ class GraphBuilder:
                 # Link source to destination
                 if src_ip:
                     edge = GraphEdge(
-                        id=GraphEdge.create_id(
-                            EdgeType.RELATED_TO, src_ip.id, dst_ip.id
-                        ),
+                        id=GraphEdge.create_id(EdgeType.RELATED_TO, src_ip.id, dst_ip.id),
                         edge_type=EdgeType.RELATED_TO,
                         source_id=src_ip.id,
                         target_id=dst_ip.id,
@@ -528,9 +521,7 @@ class GraphBuilder:
                 # Link principal to API
                 if principal:
                     edge = GraphEdge(
-                        id=GraphEdge.create_id(
-                            EdgeType.CALLED_API, principal.id, api_node.id
-                        ),
+                        id=GraphEdge.create_id(EdgeType.CALLED_API, principal.id, api_node.id),
                         edge_type=EdgeType.CALLED_API,
                         source_id=principal.id,
                         target_id=api_node.id,

@@ -6,7 +6,7 @@ and AI-generated summaries for incident investigation workflows.
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime
 from enum import Enum
 from typing import TYPE_CHECKING, Any
 
@@ -195,9 +195,7 @@ def extract_timeline_from_graph(
     """
     from secdashboards.graph.models import NodeType
 
-    timeline = InvestigationTimeline(
-        investigation_id=graph.metadata.get("investigation_id", "")
-    )
+    timeline = InvestigationTimeline(investigation_id=graph.metadata.get("investigation_id", ""))
 
     # Map node types to entity descriptions
     type_descriptions = {
@@ -477,11 +475,11 @@ class TimelineVisualizer:
                 f'<span style="display: inline-block; margin-right: 12px;">'
                 f'<span style="display: inline-block; width: 12px; height: 12px; '
                 f'background-color: {color}; border-radius: 50%; margin-right: 4px;"></span>'
-                f'{label}</span>'
+                f"{label}</span>"
             )
 
         return f"""
-        <div style="padding: 10px; background-color: #f5f5f5; border-radius: 4px; margin-top: 10px;">
+        <div style="padding:10px; background:#f5f5f5; border-radius:4px; margin-top:10px;">
             <strong>Event Tags:</strong><br>
             <div style="margin-top: 5px; line-height: 2;">
                 {"".join(legend_items)}
@@ -515,15 +513,24 @@ def generate_timeline_summary_prompt(timeline: InvestigationTimeline) -> str:
     tag_counts = summary.get("tag_counts", {})
     suspicious_count = sum(
         tag_counts.get(tag, 0)
-        for tag in ["suspicious", "attack_phase", "initial_access", "persistence",
-                    "privilege_escalation", "lateral_movement", "data_exfiltration", "impact"]
+        for tag in [
+            "suspicious",
+            "attack_phase",
+            "initial_access",
+            "persistence",
+            "privilege_escalation",
+            "lateral_movement",
+            "data_exfiltration",
+            "impact",
+        ]
     )
 
-    return f"""Analyze this security investigation timeline and provide a concise summary for an incident response report.
+    return f"""Analyze this security investigation timeline and provide a concise \
+summary for an incident response report.
 
 **Timeline Statistics:**
-- Total events: {summary['total_events']}
-- Time range: {summary['time_range']['start']} to {summary['time_range']['end']}
+- Total events: {summary["total_events"]}
+- Time range: {summary["time_range"]["start"]} to {summary["time_range"]["end"]}
 - Suspicious/attack events: {suspicious_count}
 - Tagged events breakdown: {tag_counts}
 
@@ -537,4 +544,4 @@ def generate_timeline_summary_prompt(timeline: InvestigationTimeline) -> str:
 4. Note any gaps or missing information that would help the investigation
 5. Provide recommendations for immediate response actions
 
-Format your response as a professional incident summary that an analyst can use as a starting point for their report."""
+Format as a professional incident summary for an analyst's report."""

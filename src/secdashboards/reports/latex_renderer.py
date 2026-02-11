@@ -34,9 +34,7 @@ LATEX_SPECIAL_CHARS = {
 }
 
 # Regex pattern for all special characters
-LATEX_ESCAPE_PATTERN = re.compile(
-    "|".join(re.escape(char) for char in LATEX_SPECIAL_CHARS.keys())
-)
+LATEX_ESCAPE_PATTERN = re.compile("|".join(re.escape(char) for char in LATEX_SPECIAL_CHARS))
 
 
 def escape_latex(text: str | None) -> str:
@@ -52,9 +50,7 @@ def escape_latex(text: str | None) -> str:
         return ""
     if not isinstance(text, str):
         text = str(text)
-    return LATEX_ESCAPE_PATTERN.sub(
-        lambda match: LATEX_SPECIAL_CHARS[match.group()], text
-    )
+    return LATEX_ESCAPE_PATTERN.sub(lambda match: LATEX_SPECIAL_CHARS[match.group()], text)
 
 
 def escape_latex_url(url: str) -> str:
@@ -179,9 +175,7 @@ def format_table(
     return "\n".join(lines)
 
 
-def _calculate_column_widths(
-    headers: list[str], rows: list[list[str]], num_cols: int
-) -> list[str]:
+def _calculate_column_widths(headers: list[str], rows: list[list[str]], num_cols: int) -> list[str]:
     """Calculate proportional column widths based on content.
 
     Uses p{} columns which allow text wrapping.
@@ -208,14 +202,11 @@ def _calculate_column_widths(
     col_specs = []
     total_weight = sum(max_lengths)
 
-    for i, (header, max_len) in enumerate(zip(headers, max_lengths)):
+    for _i, (header, max_len) in enumerate(zip(headers, max_lengths, strict=False)):
         header_lower = header.lower()
 
         # Fixed-width columns for specific types
-        if any(
-            kw in header_lower
-            for kw in ["count", "matches", "total", "success", "failed"]
-        ):
+        if any(kw in header_lower for kw in ["count", "matches", "total", "success", "failed"]):
             col_specs.append("r")  # Right-align numbers, auto-width
         elif max_len <= 15:
             col_specs.append("l")  # Short columns, auto-width

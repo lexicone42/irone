@@ -23,6 +23,7 @@ logger = logging.getLogger(__name__)
 
 class TestOutcome(StrEnum):
     """Outcome of a detection test."""
+
     PASS = "pass"  # Detection triggered as expected
     FAIL = "fail"  # Detection did not trigger when it should
     SKIP = "skip"  # Test was skipped
@@ -32,6 +33,7 @@ class TestOutcome(StrEnum):
 @dataclass
 class TestResult:
     """Result of testing a single detection rule."""
+
     rule_id: str
     rule_name: str
     outcome: TestOutcome
@@ -61,6 +63,7 @@ class TestResult:
 
 class TestSuite(BaseModel):
     """A collection of test results for a test run."""
+
     suite_id: str = Field(default_factory=lambda: datetime.now(UTC).strftime("%Y%m%d_%H%M%S"))
     start_time: datetime = Field(default_factory=lambda: datetime.now(UTC))
     end_time: datetime | None = None
@@ -225,7 +228,12 @@ class AdversaryTestRunner:
 
             # Determine outcome
             actual_triggered = detection_result.triggered
-            if expect_triggered and actual_triggered or not expect_triggered and not actual_triggered:
+            if (
+                expect_triggered
+                and actual_triggered
+                or not expect_triggered
+                and not actual_triggered
+            ):
                 outcome = TestOutcome.PASS
             else:
                 outcome = TestOutcome.FAIL
@@ -272,16 +280,20 @@ class AdversaryTestRunner:
             try:
                 result = self.test_rule_against_events(rule, events_df)
                 if result.triggered:
-                    detections_triggered.append({
-                        "rule_id": rule.id,
-                        "rule_name": rule.name,
-                        "match_count": result.match_count,
-                    })
+                    detections_triggered.append(
+                        {
+                            "rule_id": rule.id,
+                            "rule_name": rule.name,
+                            "match_count": result.match_count,
+                        }
+                    )
                 else:
-                    detections_not_triggered.append({
-                        "rule_id": rule.id,
-                        "rule_name": rule.name,
-                    })
+                    detections_not_triggered.append(
+                        {
+                            "rule_id": rule.id,
+                            "rule_name": rule.name,
+                        }
+                    )
             except Exception as e:
                 logger.warning(f"Error testing rule {rule.id}: {e}")
 
@@ -301,7 +313,9 @@ class AdversaryTestRunner:
             "detections_not_triggered": detections_not_triggered,
             "coverage_hits": list(coverage_hits),
             "coverage_misses": list(coverage_misses),
-            "coverage_rate": len(coverage_hits) / len(expected_detections) * 100 if expected_detections else 100.0,
+            "coverage_rate": len(coverage_hits) / len(expected_detections) * 100
+            if expected_detections
+            else 100.0,
         }
 
     def run_test_suite(
@@ -328,9 +342,7 @@ class AdversaryTestRunner:
             logger.info(f"Running scenario: {scenario.name}")
 
             # Find rules expected to trigger for this scenario
-            expected_rules = {
-                r for r in rules if r.id in scenario.expected_detections
-            }
+            expected_rules = {r for r in rules if r.id in scenario.expected_detections}
 
             for rule in expected_rules:
                 result = self.test_rule_against_scenario(
@@ -374,9 +386,7 @@ class AdversaryTestRunner:
 
                 if coverage["coverage_rate"] > 0:
                     technique_coverage[technique_id]["covered"] = True
-                    technique_coverage[technique_id]["detections"].update(
-                        coverage["coverage_hits"]
-                    )
+                    technique_coverage[technique_id]["detections"].update(coverage["coverage_hits"])
 
         # Convert sets to lists for JSON serialization
         for tech_id in technique_coverage:
@@ -384,9 +394,7 @@ class AdversaryTestRunner:
                 technique_coverage[tech_id]["detections"]
             )
 
-        covered_techniques = sum(
-            1 for t in technique_coverage.values() if t["covered"]
-        )
+        covered_techniques = sum(1 for t in technique_coverage.values() if t["covered"])
         total_techniques = len(technique_coverage)
 
         return {
@@ -394,7 +402,9 @@ class AdversaryTestRunner:
             "total_scenarios": len(scenarios),
             "total_techniques": total_techniques,
             "covered_techniques": covered_techniques,
-            "technique_coverage_rate": covered_techniques / total_techniques * 100 if total_techniques else 0,
+            "technique_coverage_rate": covered_techniques / total_techniques * 100
+            if total_techniques
+            else 0,
             "technique_details": technique_coverage,
         }
 
@@ -440,14 +450,13 @@ class LocalDetectionTester:
         }
 
         if event_type not in generators:
-            raise ValueError(f"Unknown event type: {event_type}. Available: {list(generators.keys())}")
+            raise ValueError(
+                f"Unknown event type: {event_type}. Available: {list(generators.keys())}"
+            )
 
         # Generate events
         result = generators[event_type](**kwargs)
-        if isinstance(result, list):
-            events = result
-        else:
-            events = [result]
+        events = result if isinstance(result, list) else [result]
 
         # Convert to DataFrame
         df = self.event_generator.events_to_dataframe(events)  # type: ignore[arg-type]

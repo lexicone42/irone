@@ -31,7 +31,7 @@ SECURITY_LAKE_QUERY_TOOL = {
                     },
                     "database": {
                         "type": "string",
-                        "description": "The Glue database name (e.g., amazon_security_lake_glue_db_us_west_2)",
+                        "description": "The Glue database name",
                     },
                     "limit": {
                         "type": "integer",
@@ -252,9 +252,7 @@ class ToolExecutor:
             "This is a skeleton for future agent capabilities."
         )
 
-    def handle_tool_use(
-        self, tool_use_block: dict[str, Any]
-    ) -> dict[str, Any]:
+    def handle_tool_use(self, tool_use_block: dict[str, Any]) -> dict[str, Any]:
         """Handle a tool use block from Bedrock response.
 
         Args:

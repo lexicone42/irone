@@ -1,9 +1,8 @@
 """Tests for the detection rules module."""
 
-from datetime import datetime, timedelta
+from datetime import datetime
 
 import polars as pl
-import pytest
 
 from secdashboards.detections.rule import (
     DetectionMetadata,

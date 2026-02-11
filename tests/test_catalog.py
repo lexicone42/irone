@@ -51,12 +51,8 @@ class TestDataCatalog:
 
     def test_list_sources(self) -> None:
         catalog = DataCatalog()
-        catalog.add_source(
-            DataSource(name="source1", type=DataSourceType.ATHENA, tags=["tag1"])
-        )
-        catalog.add_source(
-            DataSource(name="source2", type=DataSourceType.S3, tags=["tag2"])
-        )
+        catalog.add_source(DataSource(name="source1", type=DataSourceType.ATHENA, tags=["tag1"]))
+        catalog.add_source(DataSource(name="source2", type=DataSourceType.S3, tags=["tag2"]))
 
         all_sources = catalog.list_sources()
         assert len(all_sources) == 2

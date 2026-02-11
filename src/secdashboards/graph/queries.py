@@ -45,7 +45,7 @@ class GremlinQueries:
             return "null"
         if isinstance(value, bool):
             return "true" if value else "false"
-        if isinstance(value, (int, float)):
+        if isinstance(value, int | float):
             return str(value)
         if isinstance(value, datetime):
             return f"'{value.isoformat()}'"
@@ -83,7 +83,9 @@ class GremlinQueries:
         # Add custom properties
         for key, value in node.properties.items():
             if key not in ("id", "label", "event_count", "first_seen", "last_seen"):
-                props.append(f".property('{self._escape_string(key)}', {self._format_value(value)})")
+                props.append(
+                    f".property('{self._escape_string(key)}', {self._format_value(value)})"
+                )
 
         prop_string = "".join(props)
 
@@ -503,7 +505,9 @@ class OpenCypherQueries:
             openCypher query string
         """
         return f"""
-        MATCH path = (ip1:IPAddress {{ip_address: '{self._escape_string(start_ip)}'}})<-[:AUTHENTICATED_FROM]-(p:Principal)-[:AUTHENTICATED_FROM]->(ip2:IPAddress)
+        MATCH path = (ip1:IPAddress {{ip_address: '{self._escape_string(start_ip)}'}})
+            <-[:AUTHENTICATED_FROM]-(p:Principal)
+            -[:AUTHENTICATED_FROM]->(ip2:IPAddress)
         WHERE ip1 <> ip2
         RETURN path
         LIMIT 50

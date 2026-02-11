@@ -1,6 +1,5 @@
 """Tests for S3-based rule storage."""
 
-import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -13,7 +12,6 @@ from secdashboards.detections.rule_store import (
     RuleVersion,
     S3RuleStore,
 )
-
 
 # Sample valid rule YAML content
 VALID_RULE_YAML = """
@@ -158,9 +156,7 @@ class TestS3RuleStoreValidation:
         with pytest.raises(ValueError, match="must be a YAML dictionary"):
             rule_store._validate_rule_content("- item1\n- item2")
 
-    def test_validate_rule_content_missing_required(
-        self, rule_store: S3RuleStore
-    ) -> None:
+    def test_validate_rule_content_missing_required(self, rule_store: S3RuleStore) -> None:
         """Test validating rule missing required fields."""
         with pytest.raises(ValueError, match="Schema validation failed"):
             rule_store._validate_rule_content("id: test\nname: Test")  # missing query
@@ -187,9 +183,7 @@ query: SELECT * FROM events WHERE time_dt BETWEEN TIMESTAMP '2024-01-01' AND TIM
         warnings = rule_store._check_for_dangerous_patterns(safe_content)
         assert len(warnings) == 0
 
-    def test_check_dangerous_patterns_sql_keywords(
-        self, rule_store: S3RuleStore
-    ) -> None:
+    def test_check_dangerous_patterns_sql_keywords(self, rule_store: S3RuleStore) -> None:
         """Test detection of dangerous SQL keywords."""
         dangerous_content = """
 id: bad-rule
@@ -199,9 +193,7 @@ query: SELECT * FROM events; DROP TABLE users;
         warnings = rule_store._check_for_dangerous_patterns(dangerous_content)
         assert any("DROP" in w for w in warnings)
 
-    def test_check_dangerous_patterns_shell_injection(
-        self, rule_store: S3RuleStore
-    ) -> None:
+    def test_check_dangerous_patterns_shell_injection(self, rule_store: S3RuleStore) -> None:
         """Test detection of shell injection patterns."""
         dangerous_content = """
 id: shell-rule
@@ -289,9 +281,7 @@ class TestS3RuleStoreSaveLoad:
         assert rule.metadata.severity.value == "high"
         assert version.version_id == "v1"
 
-    def test_load_rule_specific_version(
-        self, rule_store: S3RuleStore, mock_s3
-    ) -> None:
+    def test_load_rule_specific_version(self, rule_store: S3RuleStore, mock_s3) -> None:
         """Test loading a specific version of a rule."""
         mock_s3.get_object.return_value = {
             "Body": MagicMock(read=lambda: VALID_RULE_YAML.encode("utf-8")),
@@ -369,9 +359,7 @@ class TestS3RuleStoreList:
 
         assert rules == []
 
-    def test_list_rules_filters_non_yaml(
-        self, rule_store: S3RuleStore, mock_s3
-    ) -> None:
+    def test_list_rules_filters_non_yaml(self, rule_store: S3RuleStore, mock_s3) -> None:
         """Test that non-YAML files are filtered out."""
         mock_paginator = MagicMock()
         mock_paginator.paginate.return_value = [
@@ -470,9 +458,7 @@ severity: low
         """Create mock S3 client."""
         return MagicMock()
 
-    def test_local_fallback_when_s3_fails(
-        self, mock_s3, temp_rules_dir: Path
-    ) -> None:
+    def test_local_fallback_when_s3_fails(self, mock_s3, temp_rules_dir: Path) -> None:
         """Test loading from local when S3 fails."""
         from botocore.exceptions import ClientError
 
@@ -529,9 +515,7 @@ severity: low
 
         # S3 returns one rule
         mock_paginator = MagicMock()
-        mock_paginator.paginate.return_value = [
-            {"Contents": [{"Key": "rules/s3-rule.yaml"}]}
-        ]
+        mock_paginator.paginate.return_value = [{"Contents": [{"Key": "rules/s3-rule.yaml"}]}]
         mock_s3.get_paginator.return_value = mock_paginator
 
         rules = store.list_rules()

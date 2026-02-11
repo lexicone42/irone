@@ -34,7 +34,7 @@ def _():
 
 @app.cell
 def _():
-    from datetime import datetime, timedelta, UTC
+    from datetime import UTC, datetime, timedelta
     from pathlib import Path
 
     import polars as pl
@@ -179,9 +179,7 @@ def _(NeptuneConnector, mo, neptune_endpoint, neptune_iam_auth, neptune_port, re
             )
             health = neptune_connector.check_health()
             if health["status"] == "healthy":
-                neptune_status = mo.md(
-                    f"**Neptune:** Connected to `{neptune_endpoint.value}`"
-                )
+                neptune_status = mo.md(f"**Neptune:** Connected to `{neptune_endpoint.value}`")
             else:
                 neptune_status = mo.md(
                     f"**Neptune:** Connection failed - {health.get('error', 'Unknown error')}"
@@ -218,7 +216,7 @@ def _(catalog, mo, region_underscore):
         label="Data Source",
     )
 
-    default_query = f'''SELECT
+    default_query = f"""SELECT
     time_dt,
     actor.user.name as user_name,
     actor.user.type as user_type,
@@ -228,7 +226,7 @@ def _(catalog, mo, region_underscore):
     status
 FROM "amazon_security_lake_glue_db_{region_underscore}"."amazon_security_lake_table_{region_underscore}_cloud_trail_mgmt_2_0"
 WHERE time_dt >= current_timestamp - interval '1' hour
-LIMIT 100'''
+LIMIT 100"""
 
     query_input = mo.ui.code_editor(
         value=default_query,
@@ -338,7 +336,7 @@ def _(mo):
 @app.cell
 def _(mo, region_underscore):
     rule_query = mo.ui.code_editor(
-        value=f'''SELECT
+        value=f"""SELECT
     time_dt,
     actor.user.name,
     src_endpoint.ip,
@@ -347,7 +345,7 @@ FROM "amazon_security_lake_glue_db_{region_underscore}"."amazon_security_lake_ta
 WHERE time_dt >= TIMESTAMP '{{start_time}}'
   AND time_dt < TIMESTAMP '{{end_time}}'
   AND actor.user.type = 'Root'
-  AND class_uid = 3002''',
+  AND class_uid = 3002""",
         language="sql",
         min_height=200,
     )
@@ -436,7 +434,9 @@ def _(mo):
 
 @app.cell
 def _(detection_rules, mo):
-    rule_options = [r.metadata.id for r in detection_rules] if detection_rules else ["(create a rule first)"]
+    rule_options = (
+        [r.metadata.id for r in detection_rules] if detection_rules else ["(create a rule first)"]
+    )
     test_rule_select = mo.ui.dropdown(
         options=rule_options,
         value=rule_options[0] if rule_options else None,
@@ -741,8 +741,7 @@ def _(
                                 value=latex_content, language="latex", min_height=400
                             ),
                             mo.md(
-                                "_Tip: Save as .tex file and compile with "
-                                "`pdflatex report.tex`_"
+                                "_Tip: Save as .tex file and compile with `pdflatex report.tex`_"
                             ),
                         ]
                     )
@@ -770,20 +769,12 @@ def _(
                             ]
 
                             if result["pdf_url"]:
-                                output_items.append(
-                                    mo.md(f"**PDF Report (expires in 3 hours):**")
-                                )
-                                output_items.append(
-                                    mo.md(f"[Download PDF]({result['pdf_url']})")
-                                )
+                                output_items.append(mo.md("**PDF Report (expires in 3 hours):**"))
+                                output_items.append(mo.md(f"[Download PDF]({result['pdf_url']})"))
                                 output_items.append(mo.md(""))
 
-                            output_items.append(
-                                mo.md(f"**LaTeX Source (expires in 3 hours):**")
-                            )
-                            output_items.append(
-                                mo.md(f"[Download LaTeX]({result['latex_url']})")
-                            )
+                            output_items.append(mo.md("**LaTeX Source (expires in 3 hours):**"))
+                            output_items.append(mo.md(f"[Download LaTeX]({result['latex_url']})"))
 
                             if not result["pdf_url"]:
                                 output_items.append(mo.md(""))
@@ -796,7 +787,9 @@ def _(
 
                             output_items.append(mo.md("---"))
                             output_items.append(
-                                mo.md(f"**S3 Location:** `s3://{s3_bucket.value}/{result['latex_key']}`")
+                                mo.md(
+                                    f"**S3 Location:** `s3://{s3_bucket.value}/{result['latex_key']}`"
+                                )
                             )
 
                             export_output = mo.vstack(output_items)
@@ -921,9 +914,7 @@ def _(
 
                     # Create finding node
                     finding_node = SecurityFindingNode(
-                        id=SecurityFindingNode.create_id(
-                            rule.metadata.id, datetime.now(UTC)
-                        ),
+                        id=SecurityFindingNode.create_id(rule.metadata.id, datetime.now(UTC)),
                         label=f"{rule.metadata.name}",
                         rule_id=rule.metadata.id,
                         rule_name=rule.metadata.name,
@@ -1114,8 +1105,7 @@ def _(
 
                     table = (
                         "| Finding ID | Rule | Severity | Status | Matches |\n"
-                        "|------------|------|----------|--------|--------|\n"
-                        + "\n".join(rows)
+                        "|------------|------|----------|--------|--------|\n" + "\n".join(rows)
                     )
 
                     search_findings_output = mo.vstack(
@@ -1208,10 +1198,9 @@ def _(
                                 f"{summary['total_edges']} edges"
                             ),
                             mo.md(
-                                f"**Node Types:** "
+                                "**Node Types:** "
                                 + ", ".join(
-                                    f"{k}: {v}"
-                                    for k, v in summary["nodes_by_type"].items()
+                                    f"{k}: {v}" for k, v in summary["nodes_by_type"].items()
                                 )
                             ),
                             mo.Html(html),

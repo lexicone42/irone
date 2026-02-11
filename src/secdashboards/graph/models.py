@@ -156,7 +156,13 @@ class IPAddressNode(GraphNode):
 
         # Determine if IP is internal (RFC1918)
         is_internal = False
-        if ip_address.startswith(("10.", "172.16.", "172.17.", "172.18.", "172.19.")) or ip_address.startswith(("172.20.", "172.21.", "172.22.", "172.23.")) or ip_address.startswith(("172.24.", "172.25.", "172.26.", "172.27.")) or ip_address.startswith(("172.28.", "172.29.", "172.30.", "172.31.")) or ip_address.startswith("192.168."):
+        if (
+            ip_address.startswith(("10.", "172.16.", "172.17.", "172.18.", "172.19."))
+            or ip_address.startswith(("172.20.", "172.21.", "172.22.", "172.23."))
+            or ip_address.startswith(("172.24.", "172.25.", "172.26.", "172.27."))
+            or ip_address.startswith(("172.28.", "172.29.", "172.30.", "172.31."))
+            or ip_address.startswith("192.168.")
+        ):
             is_internal = True
 
         return cls(
@@ -285,7 +291,8 @@ class SecurityFindingNode(GraphNode):
 
     @classmethod
     def from_detection_result(
-        cls, result: "DetectionResult"  # noqa: F821 - imported at runtime
+        cls,
+        result: "DetectionResult",  # noqa: F821 - imported at runtime
     ) -> "SecurityFindingNode":
         """Create a SecurityFindingNode from a DetectionResult."""
         return cls(
@@ -454,9 +461,7 @@ class SecurityGraph(BaseModel):
 
         return [self.nodes[nid] for nid in neighbor_ids if nid in self.nodes]
 
-    def get_edges_for_node(
-        self, node_id: str, direction: str = "both"
-    ) -> list[GraphEdge]:
+    def get_edges_for_node(self, node_id: str, direction: str = "both") -> list[GraphEdge]:
         """Get all edges connected to a node.
 
         Args:

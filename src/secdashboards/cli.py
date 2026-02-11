@@ -286,7 +286,9 @@ def run_scenario(
     # Show step results
     console.print("\n[bold]Step Details:[/bold]")
     for step in result["step_results"]:
-        console.print(f"  - {step['step_name']}: {step['events_generated']} events, {step['technique_id']}")
+        console.print(
+            f"  - {step['step_name']}: {step['events_generated']} events, {step['technique_id']}"
+        )
 
     # Save events if requested
     if output_file:
@@ -357,7 +359,9 @@ def test_detections(
         table.add_row("Total Tests", str(summary["total_tests"]))
         table.add_row("Passed", f"[green]{summary['passed']}[/green]")
         table.add_row("Failed", f"[red]{summary['failed']}[/red]" if summary["failed"] else "0")
-        table.add_row("Errors", f"[yellow]{summary['errors']}[/yellow]" if summary["errors"] else "0")
+        table.add_row(
+            "Errors", f"[yellow]{summary['errors']}[/yellow]" if summary["errors"] else "0"
+        )
         table.add_row("Pass Rate", summary["pass_rate"])
 
         console.print(table)
@@ -373,10 +377,10 @@ def test_detections(
 @adversary_app.command("network-test")
 def network_test(
     target_ip: Annotated[str, typer.Option("--target", "-t", help="Target IP")] = "127.0.0.1",
-    test_type: Annotated[
-        str, typer.Option("--type", help="Test type: scan, dns, beacon")
-    ] = "scan",
-    ports: Annotated[str, typer.Option("--ports", "-p", help="Comma-separated ports")] = "22,80,443",
+    test_type: Annotated[str, typer.Option("--type", help="Test type: scan, dns, beacon")] = "scan",
+    ports: Annotated[
+        str, typer.Option("--ports", "-p", help="Comma-separated ports")
+    ] = "22,80,443",
 ) -> None:
     """Run network-based tests locally (for VPC Flow/DNS log triggers)."""
     from secdashboards.adversary.network import NetworkEmulator
@@ -419,9 +423,9 @@ def network_test(
 
 @adversary_app.command("deploy-lambda")
 def deploy_adversary_lambda(
-    output_dir: Annotated[
-        Path, typer.Option("--output", "-o", help="Output directory")
-    ] = Path("./build"),
+    output_dir: Annotated[Path, typer.Option("--output", "-o", help="Output directory")] = Path(
+        "./build"
+    ),
     generate_template: Annotated[
         bool, typer.Option("--template", help="Generate CloudFormation template")
     ] = True,
@@ -493,7 +497,7 @@ def invoke_adversary_lambda(
 
     except Exception as e:
         console.print(f"[red]Failed to invoke Lambda: {e}[/red]")
-        raise typer.Exit(1)
+        raise typer.Exit(1) from e
 
 
 if __name__ == "__main__":

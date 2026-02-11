@@ -121,7 +121,9 @@ def _(mo):
 def _(environment, mo):
     if environment.value == "prod":
         mo.callout(
-            mo.md("**Production Environment Selected** - Deployments will affect production systems."),
+            mo.md(
+                "**Production Environment Selected** - Deployments will affect production systems."
+            ),
             kind="danger",
         )
     return

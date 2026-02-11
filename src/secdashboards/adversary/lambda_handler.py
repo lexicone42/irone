@@ -26,6 +26,7 @@ from typing import Any, TypedDict
 
 class TestConfig(TypedDict, total=False):
     """Type definition for test configuration."""
+
     type: str
     target_ip: str
     target_port: int
@@ -46,6 +47,7 @@ class TestConfig(TypedDict, total=False):
 
 class ScenarioConfig(TypedDict):
     """Type definition for scenario configuration."""
+
     name: str
     description: str
     tests: list[TestConfig]
@@ -95,7 +97,9 @@ def tcp_connect(target_ip: str, target_port: int, timeout: float = 2.0) -> dict[
     return result
 
 
-def dns_query(hostname: str, query_type: str = "A", dns_server: str = "8.8.8.8", timeout: float = 2.0) -> dict[str, Any]:
+def dns_query(
+    hostname: str, query_type: str = "A", dns_server: str = "8.8.8.8", timeout: float = 2.0
+) -> dict[str, Any]:
     """Send DNS query - triggers Route53/DNS logs."""
     result = {
         "type": "dns_query",
@@ -182,7 +186,9 @@ def port_scan(target_ip: str, ports: list[int], delay_ms: int = 100) -> list[dic
     return results
 
 
-def dns_tunnel_sim(base_domain: str, chunks: list[str], dns_server: str = "8.8.8.8") -> list[dict[str, Any]]:
+def dns_tunnel_sim(
+    base_domain: str, chunks: list[str], dns_server: str = "8.8.8.8"
+) -> list[dict[str, Any]]:
     """Simulate DNS tunneling pattern."""
     import base64
 
@@ -198,7 +204,9 @@ def dns_tunnel_sim(base_domain: str, chunks: list[str], dns_server: str = "8.8.8
     return results
 
 
-def beacon_sim(target_ip: str, port: int, count: int = 5, interval: float = 5.0, jitter: float = 0.1) -> list[dict[str, Any]]:
+def beacon_sim(
+    target_ip: str, port: int, count: int = 5, interval: float = 5.0, jitter: float = 0.1
+) -> list[dict[str, Any]]:
     """Simulate C2 beacon pattern with regular callbacks."""
     results = []
     for i in range(count):
@@ -364,12 +372,14 @@ def handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
     if action == "health_check":
         return {
             "statusCode": 200,
-            "body": json.dumps({
-                "status": "healthy",
-                "timestamp": get_timestamp(),
-                "default_target": default_target,
-                "dns_server": dns_server,
-            }),
+            "body": json.dumps(
+                {
+                    "status": "healthy",
+                    "timestamp": get_timestamp(),
+                    "default_target": default_target,
+                    "dns_server": dns_server,
+                }
+            ),
         }
 
     if action == "list_scenarios":
@@ -433,20 +443,23 @@ def handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
 
     # Count successes
     successful = sum(
-        1 for r in results
+        1
+        for r in results
         if r.get("success") or (r.get("results") and all(x.get("success") for x in r["results"]))
     )
 
     response = {
         "statusCode": 200,
-        "body": json.dumps({
-            **scenario_info,
-            "timestamp": get_timestamp(),
-            "execution_time_seconds": round(execution_time, 2),
-            "tests_run": len(results),
-            "successful": successful,
-            "results": results,
-        }),
+        "body": json.dumps(
+            {
+                **scenario_info,
+                "timestamp": get_timestamp(),
+                "execution_time_seconds": round(execution_time, 2),
+                "tests_run": len(results),
+                "successful": successful,
+                "results": results,
+            }
+        ),
     }
 
     print(f"Test complete: {len(results)} tests, {successful} successful")

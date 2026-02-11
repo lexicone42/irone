@@ -1,10 +1,12 @@
 # Security Dashboards - Current State
 
-**Last Updated**: 2026-01-13
+**Last Updated**: 2026-01-17
 
 ## Project Overview
 
-A local Marimo notebook-based tool for connecting to AWS Security Lake, creating detection rules, deploying them to Lambda for automated security monitoring, and testing detections with adversary emulation.
+A local Marimo notebook-based tool for connecting to AWS Security Lake, creating detection rules, deploying them to Lambda for automated security monitoring, and testing detections with adversary emulation. Includes investigation graph visualization with Neptune, AI-assisted analysis via Bedrock, and professional PDF report generation.
+
+**NEW**: Now supports hybrid hot/cold tier architecture with CloudWatch Logs Insights for real-time queries (0-7 days) and Security Lake for long-term storage (7+ days), with unified dual-target detection rules that work across both tiers.
 
 ## Project Structure
 
@@ -20,14 +22,21 @@ secdashboards/
 │   │   └── security_lake.py  # SecurityLakeConnector with OCSF support
 │   ├── detections/        # Detection rules framework
 │   │   ├── rule.py        # DetectionRule, SQLDetectionRule, DetectionResult
-│   │   └── runner.py      # DetectionRunner for executing rules
+│   │   ├── runner.py      # DetectionRunner for executing rules
+│   │   └── rule_store.py  # S3RuleStore for secure YAML-only rule storage
 │   ├── graph/             # Investigation graph module
 │   │   ├── models.py      # Node/edge entity models (Pydantic)
 │   │   ├── builder.py     # Graph construction from detections
 │   │   ├── connector.py   # Neptune database connector
 │   │   ├── enrichment.py  # Security Lake enrichment queries
 │   │   ├── visualization.py  # pyvis graph visualization
+│   │   ├── timeline.py    # Timeline visualization with Plotly
 │   │   └── queries.py     # Gremlin/openCypher query templates
+│   ├── reports/           # Report generation
+│   │   ├── latex_renderer.py  # LaTeX/PDF report generation
+│   │   ├── exporters.py   # S3 export and PDF compilation
+│   │   ├── converters.py  # Graph to report data conversion
+│   │   └── templates/     # Jinja2 LaTeX templates
 │   ├── health/            # Health monitoring
 │   │   ├── monitor.py     # HealthMonitor for checking data sources
 │   │   └── url_analyzer.py # URLAnalyzer for external URL health
@@ -41,26 +50,103 @@ secdashboards/
 │   │   ├── runner.py      # Adversary test runner
 │   │   ├── lambda_handler.py # Lambda for network-based testing
 │   │   └── deploy.py      # Lambda deployment utilities
+│   ├── ai/                # AI/Bedrock integration
+│   │   ├── assistant.py   # BedrockAssistant for AI analysis
+│   │   ├── models.py      # Model configs and pricing
+│   │   ├── prompts.py     # Security-focused prompts
+│   │   └── tools.py       # Agent tools skeleton
+│   ├── security/          # Security infrastructure
+│   │   └── auth.py        # OIDCAuthenticator for ALB/Cognito auth
 │   └── cli.py             # Command-line interface
 ├── notebooks/
-│   └── main.py            # Main Marimo notebook (includes Investigation Graph)
+│   ├── main.py            # Main Marimo notebook (navigation hub)
+│   └── investigation.py   # Investigation notebook with graph + timeline
+├── scripts/
+│   └── example_investigation.py  # Demo investigation workflow
 ├── detections/
 │   └── sample_rules.yaml  # 6 sample detection rules
 ├── infrastructure/
 │   ├── template.yaml      # Lambda SAM/CloudFormation template
 │   ├── neptune.yaml       # Neptune Serverless CloudFormation stack
 │   └── marimo-apprunner.yaml  # App Runner VPC deployment
-├── tests/
-│   ├── test_catalog.py    # Unit tests for catalog (8 tests)
-│   ├── test_detections.py # Unit tests for detections (9 tests)
-│   ├── test_adversary.py  # Unit tests for adversary module (37 tests)
-│   ├── test_graph.py      # Unit tests for graph module (50 tests)
-│   └── test_security_lake_integration.py  # Integration tests (10 tests)
+├── tests/                 # 284 tests total
+│   ├── test_catalog.py    # Catalog tests (8)
+│   ├── test_detections.py # Detection tests (9)
+│   ├── test_adversary.py  # Adversary tests (37)
+│   ├── test_graph.py      # Graph tests (50)
+│   ├── test_ai.py         # AI/Bedrock tests (26)
+│   ├── test_reports.py    # Report generation tests (58)
+│   ├── test_rule_store.py # S3RuleStore tests (32)
+│   ├── test_sql_utils.py  # SQL injection protection tests (32)
+│   ├── test_timeline.py   # Timeline tests (24)
+│   └── test_security_lake_integration.py  # Integration tests (10)
+├── output/investigations/ # Demo output directory
 ├── Dockerfile.marimo      # Container for AWS App Runner deployment
 ├── catalog.example.yaml   # Example catalog configuration
 ├── pyproject.toml         # Project configuration (uv, ruff, ty)
 └── README.md              # Documentation
 ```
+
+## Recent Changes (2026-01-17)
+
+### Application Log Onboarding (NEW)
+
+**CloudWatch Logs Connector** (`cloudwatch_logs.py`):
+- Query Lambda, EKS, ALB, API Gateway, and Cloudflare logs via Logs Insights
+- Async query handling with exponential backoff
+- Log group discovery with pattern matching
+- Pre-built query methods: `query_lambda_errors()`, `query_eks_pod_errors()`, `query_alb_access_logs()`, `query_cloudflare_waf_events()`
+
+**Log ETL Pipeline** (`log_etl.py`):
+- OCSF transformers for Lambda, ALB, EKS, and Cloudflare logs
+- Cost-effective CloudWatch Export Task API (avoids Firehose costs)
+- Parquet/JSON Lines export for Security Lake ingestion
+- Hot/cold tier architecture: CloudWatch (0-7 days) → Security Lake (7+ days)
+
+**Security Lake Enhancements**:
+- `query_vpc_flow()` - VPC Flow log queries with IP/port/action filters
+- `query_dns_logs()` - Route53 resolver log queries
+- `query_suspicious_dns()` - DGA and suspicious TLD detection
+- `query_lambda_execution()` - Lambda execution logs from Security Lake
+- `get_data_source_health_summary()` - Unified health check across event classes
+
+**Dual-Target Detection Rules** (`DualTargetDetectionRule`):
+- Single rule definition works on both CloudWatch and Athena/Security Lake
+- Automatic query format adaptation per target
+- Run against hot tier (real-time) or cold tier (historical) or both
+
+**Application Detection Rules** (`application_rules.yaml`):
+- 20+ rules for Lambda, EKS, ALB, Cloudflare, API Gateway
+- MITRE ATT&CK mapping for each rule
+- Severity-based threshold evaluation
+
+**Dual-Target Lambda Builder**:
+- Generate Lambda handlers that query both CloudWatch and Athena
+- SAM template generation for dual-target rules
+- Scheduled execution via EventBridge
+
+### Previous Changes (2026-01-14)
+
+### Timeline Visualization Feature
+- **New module**: `src/secdashboards/graph/timeline.py`
+- Interactive Plotly timeline for investigation events
+- Event tagging with 11 classification options (including MITRE ATT&CK phases)
+- AI summary generation via Bedrock with editable analyst field
+- Auto-tagging of high-severity security findings
+- Integrated into investigation notebook and example script
+
+### Report Generation
+- LaTeX/PDF report generation with professional formatting
+- Table overflow protection with intelligent column sizing and truncation
+- Templates for investigation reports and detection reports
+- S3 export with presigned URLs
+- pdflatex integration for local PDF compilation
+
+### Security Infrastructure
+- S3RuleStore for secure YAML-only detection rule storage
+- SQL injection protection with parameterized queries
+- OIDCAuthenticator for ALB/Cognito authentication
+- Comprehensive input validation and sanitization
 
 ## Configuration
 
@@ -68,53 +154,111 @@ secdashboards/
 - **Linter**: ruff
 - **Type Checker**: ty (Astral)
 - **Default Region**: us-west-2
+- **Python Version**: 3.13
 
-## Security Lake Schema Fixes Applied
+## Dependencies
 
-The following issues were discovered and fixed after testing against actual Security Lake:
-
-### 1. OCSFEventClass Enum (security_lake.py:15-66)
-- **Issue**: Used `StrEnum` with string values like `"3002"`
-- **Fix**: Changed to `IntEnum` with integer values like `3002`
-- **Reason**: `class_uid` in Security Lake is stored as bigint, not string
-
-### 2. Timestamp Column (all query methods)
-- **Issue**: Queries used `time` column (epoch milliseconds bigint)
-- **Fix**: Changed to `time_dt` column (proper timestamp)
-- **Affected methods**: `query_by_event_class`, `get_event_summary`, `check_health`
-
-### 3. Timestamp Formatting for Athena
-- **Issue**: Python's `.isoformat()` returns `2026-01-11T20:26:14+00:00`
-- **Fix**: Added `_format_timestamp()` method returning `2026-01-11 20:26:14.000000`
-- **Reason**: Athena TIMESTAMP literals require specific format (no T, no timezone)
-
-### 4. Sample Detection Rules (detections/sample_rules.yaml)
-- Changed all `time` references to `time_dt`
-- Changed `class_uid = '3002'` (string) to `class_uid = 3002` (integer)
-
-### 5. Catalog Example (catalog.example.yaml)
-- Updated health_check_query to use `time_dt`
-- Updated all database/table names to use `us_west_2` region
+Key dependencies in pyproject.toml:
+- marimo>=0.10.0 - Interactive notebooks
+- boto3>=1.35.0 - AWS SDK
+- polars>=1.0.0 - Data processing
+- pydantic>=2.10.0 - Data validation
+- pyvis>=0.3.2 - Graph visualization
+- plotly>=5.24.0 - Timeline visualization
+- gremlinpython>=3.7.0 - Neptune client
+- networkx>=3.2 - Graph analysis
+- jinja2>=3.1.0 - Template rendering
 
 ## Test Status
 
-### Unit Tests (130 total - all passing)
+### Unit Tests (284 total - all passing)
 ```bash
-uv run pytest tests/ -v
+uv run pytest tests/ -v --ignore=tests/test_notebook_main.py
 ```
 
-- Catalog tests: 8
-- Detection tests: 9
-- Adversary tests: 37
-- Graph tests: 50
-- AI/Bedrock tests: 26
+Test breakdown:
+- Catalog: 8
+- Detection: 9
+- Adversary: 37
+- Graph: 50
+- AI/Bedrock: 26
+- Reports: 58
+- Rule Store: 32
+- SQL Utils: 32
+- Timeline: 24
 
 ### Integration Tests (10 total - all passing)
 ```bash
 RUN_INTEGRATION_TESTS=1 uv run pytest tests/test_security_lake_integration.py -v
 ```
 
-**Note**: Integration tests auto-detect the Athena output bucket using AWS account ID.
+### Type Checking
+```bash
+uv run ty check src/
+# All checks passed!
+```
+
+## Investigation Graph Module
+
+### Node Types
+| Type | Color | Description |
+|------|-------|-------------|
+| Principal | Red | Users, roles, AWS identities |
+| IP Address | Teal | Source/destination IPs |
+| Resource | Blue | AWS resources (S3, EC2, etc.) |
+| API Operation | Green | AWS API calls |
+| Security Finding | Bright Red | Triggered detections |
+| Event | Gray | Individual security events |
+
+### Timeline Event Tags
+| Tag | Color | Description |
+|-----|-------|-------------|
+| unreviewed | Gray | Not yet analyzed |
+| important | Gold | Significant but not malicious |
+| suspicious | Red | Potentially malicious |
+| benign | Teal | Confirmed legitimate |
+| initial_access | Orange-red | ATT&CK: Initial Access |
+| persistence | Purple | ATT&CK: Persistence |
+| privilege_escalation | Dark Red | ATT&CK: Privilege Escalation |
+| lateral_movement | Orange | ATT&CK: Lateral Movement |
+| data_exfiltration | Crimson | ATT&CK: Data Exfiltration |
+
+## Running the Project
+
+```bash
+# Install dependencies
+uv sync
+
+# Run unit tests
+uv run pytest
+
+# Run integration tests (requires AWS credentials)
+RUN_INTEGRATION_TESTS=1 uv run pytest tests/test_security_lake_integration.py -v
+
+# Launch main Marimo notebook
+uv run marimo edit notebooks/main.py
+
+# Launch investigation notebook
+uv run marimo edit notebooks/investigation.py
+
+# Run demo investigation (no AWS required)
+uv run python scripts/example_investigation.py --demo
+
+# Via CLI
+uv run secdash notebook
+```
+
+## Demo Investigation Output
+
+Running `--demo` generates:
+```
+output/investigations/
+├── investigation_graph.html      # Interactive pyvis graph
+├── investigation_timeline.html   # Interactive Plotly timeline
+├── investigation_report.tex      # LaTeX source
+├── investigation_report.pdf      # PDF report (if pdflatex installed)
+└── investigation_data.json       # Full data export with timeline
+```
 
 ## AWS Configuration
 
@@ -134,71 +278,20 @@ RUN_INTEGRATION_TESTS=1 uv run pytest tests/test_security_lake_integration.py -v
 5. amazon_security_lake_table_us_west_2_sh_findings_2_0 (Security Hub)
 6. amazon_security_lake_table_us_west_2_vpc_flow_2_0
 
-## Sample Detection Run Results (from last 24h)
-
-- **API Activity Events**: 1,217
-- **Authentication Events**: 219
-- **Failed API Calls**: 15 (mostly S3 bucket policy access)
-- **Security-Sensitive Operations**: 20+ AssumeRole calls
-- **Top Services**: KMS (352), STS (254), S3 (229), Glue (180), Athena (159)
-
-## Running the Project
-
-```bash
-# Install dependencies
-uv sync
-
-# Run unit tests
-uv run pytest
-
-# Run integration tests (requires AWS credentials)
-RUN_INTEGRATION_TESTS=1 uv run pytest tests/test_security_lake_integration.py -v
-
-# Launch Marimo notebook
-uv run marimo edit notebooks/main.py
-
-# Or via CLI
-uv run secdash notebook
-```
-
-## Known Deprecation Warnings
-
-Several files still use `datetime.utcnow()` which is deprecated. These work but generate warnings:
-- src/secdashboards/detections/rule.py
-- src/secdashboards/detections/runner.py
-- src/secdashboards/connectors/athena.py
-- src/secdashboards/connectors/base.py
-- src/secdashboards/health/url_analyzer.py
-- src/secdashboards/health/monitor.py
-- src/secdashboards/deploy/lambda_builder.py
-
-**Fix**: Replace `datetime.utcnow()` with `datetime.now(UTC)` and import `UTC` from datetime.
-
 ## Adversary Emulation Module
 
-The adversary module provides red team and detection testing capabilities:
+### Available Attack Scenarios
 
-### Components
-
-1. **events.py** - OCSF-compliant synthetic event generators
-   - `OCSFEventGenerator` - Main class for generating test events
-   - Supports: root logins, IAM changes, security group modifications, brute force, API abuse, port scans, DNS queries
-
-2. **network.py** - Network packet generation
-   - `NetworkEmulator` - TCP/UDP/DNS packet generation
-   - Simulates: port scans, DNS exfiltration, C2 beacons
-
-3. **scenarios.py** - Pre-built MITRE ATT&CK scenarios
-   - 8 attack scenarios mapped to techniques
-   - Full attack chain simulation
-
-4. **runner.py** - Test orchestration
-   - `AdversaryTestRunner` - Tests detections against scenarios
-   - `LocalDetectionTester` - Quick local testing
-
-5. **Lambda deployment** - Network testing from AWS VPC
-   - `lambda_handler.py` - Lambda for running network tests
-   - `deploy.py` - SAM/CloudFormation template generation
+| Scenario ID | MITRE Techniques | Expected Detections |
+|-------------|------------------|---------------------|
+| root-account-compromise | T1078.004 | detect-root-login |
+| iam-privilege-escalation | T1098, T1098.001 | detect-iam-policy-changes, detect-access-key-creation |
+| credential-brute-force | T1110 | detect-failed-logins |
+| security-group-evasion | T1562.007 | detect-security-group-changes |
+| api-reconnaissance | T1106, T1595 | detect-unusual-api-calls |
+| network-discovery | T1046 | VPC Flow detections |
+| dns-c2-exfil | T1071.004, T1048.003 | Route53 detections |
+| full-attack-chain | Multiple | All detections |
 
 ### CLI Commands
 
@@ -222,112 +315,67 @@ secdash adversary deploy-lambda --output ./build --api
 secdash adversary invoke-lambda --scenario port_scan_sim
 ```
 
-### Available Attack Scenarios
-
-| Scenario ID | MITRE Techniques | Expected Detections |
-|-------------|------------------|---------------------|
-| root-account-compromise | T1078.004 | detect-root-login |
-| iam-privilege-escalation | T1098, T1098.001 | detect-iam-policy-changes, detect-access-key-creation |
-| credential-brute-force | T1110 | detect-failed-logins |
-| security-group-evasion | T1562.007 | detect-security-group-changes |
-| api-reconnaissance | T1106, T1595 | detect-unusual-api-calls |
-| network-discovery | T1046 | VPC Flow detections |
-| dns-c2-exfil | T1071.004, T1048.003 | Route53 detections |
-| full-attack-chain | Multiple | All detections |
-
-## Type Checking Status
-
-- **ty check**: All errors fixed, only deprecation warnings remain (17 warnings for `datetime.utcnow()`)
-- All type annotations added to adversary module with proper TypedDict definitions
-
 ## AI/Bedrock Module
 
-The AI module (`src/secdashboards/ai/`) provides Amazon Bedrock integration:
+### Capabilities
+- Detection rule generation from natural language
+- Alert triage and analysis
+- Investigation graph analysis
+- Natural language to SQL conversion
+- Incident report generation
+- Timeline summary generation
+- Cost tracking per session
 
-### Components
-
-1. **assistant.py** - BedrockAssistant class
-   - Detection rule generation from natural language
-   - Alert triage and analysis
-   - Investigation graph analysis
-   - Natural language to SQL conversion
-   - Incident report generation
-   - Cost tracking per session
-
-2. **models.py** - Model configurations
-   - All Claude models (3.5 Sonnet, 3.5 Haiku, 3 Opus, Sonnet 4, Opus 4)
-   - Pricing per million tokens (input/output)
-   - Task-to-model recommendations
-   - Cost estimation functions
-
-3. **prompts.py** - Security-focused prompts
-   - Detection engineering prompts
-   - Alert analysis prompts
-   - Investigation prompts
-   - Query generation prompts
-
-4. **tools.py** - Agent tools skeleton
-   - Tool specifications for future agent use
-   - ToolExecutor class (not yet implemented)
+### Supported Models
+- Claude 3.5 Sonnet (default)
+- Claude 3.5 Haiku (fast/cheap)
+- Claude 3 Opus (deep analysis)
+- Claude Sonnet 4
+- Claude Opus 4
 
 ## Notebooks
-
-Notebooks are split by role and security sensitivity:
 
 | Notebook | Purpose | Roles |
 |----------|---------|-------|
 | `main.py` | Navigation hub | All |
+| `investigation.py` | Graph + timeline visualization, AI analysis | SOC/IR |
 | `detection_engineering.py` | Create/test rules + AI generation | Detection Engineers |
-| `investigation.py` | Graph visualization + AI analysis | SOC/IR |
 | `monitoring.py` | Health checks, data freshness | SOC |
 | `deployment.py` | Infrastructure deployment | Admin only |
 
-## Investigation Graph Module
+## Git Commit History (Recent)
 
-The graph module (`src/secdashboards/graph/`) provides security investigation graph capabilities:
-
-### Components
-
-1. **models.py** - Pydantic models for graph entities
-   - Node types: Principal, IPAddress, Resource, APIOperation, SecurityFinding, Event
-   - Edge types: AUTHENTICATED_FROM, CALLED_API, ACCESSED_RESOURCE, etc.
-   - SecurityGraph container with NetworkX export
-
-2. **builder.py** - Graph construction
-   - `GraphBuilder` - Builds graphs from DetectionResult with enrichment
-   - Extracts identifiers (users, IPs, operations) from matched events
-   - Creates nodes and edges automatically
-
-3. **enrichment.py** - Security Lake queries for graph enrichment
-   - `SecurityLakeEnricher` - Query helpers with SQL injection protection
-   - Methods: enrich_by_user, enrich_by_ip, enrich_by_resource
-
-4. **visualization.py** - Interactive graph visualization
-   - `GraphVisualizer` - Creates pyvis HTML graphs
-   - Color-coded nodes by type
-   - Interactive physics and zoom
-
-5. **connector.py** - Neptune database operations
-   - `NeptuneConnector` - Gremlin/openCypher client
-   - IAM authentication support
-   - Graph persistence and traversal queries
-
-6. **queries.py** - Query templates
-   - `GremlinQueries` - Gremlin query builders
-   - `OpenCypherQueries` - openCypher query builders
-
-### AWS Infrastructure
-
-- **infrastructure/neptune.yaml** - Neptune Serverless (1-32 NCUs auto-scaling)
-- **infrastructure/marimo-apprunner.yaml** - App Runner with VPC connector
-- **Dockerfile.marimo** - Container for deployment
+```
+8a8a92e Add investigation timeline with event tagging and AI summaries
+76694b9 Fix PDF compilation in example investigation script
+682b242 Add example incident investigation script
+292e978 Fix table overflow in LaTeX PDF reports
+fcefaac Add comprehensive tests for S3RuleStore
+76085c2 Add security infrastructure and safe rule loading
+```
 
 ## Pending Improvements
 
 1. Fix remaining `datetime.utcnow()` deprecation warnings
-2. Add more detection rules for VPC Flow, Route53, Security Hub data
-3. Test Lambda deployment workflow
+2. ~~Add more detection rules for VPC Flow, Route53, Security Hub data~~ ✅ Done
+3. Test Lambda deployment workflow end-to-end
 4. Add alert notification integrations (SNS, Slack, etc.)
-5. Add VPC Flow and Route53 specific detection rules for adversary scenarios
-6. Add `py.typed` marker for PEP 561 type checking support
-7. Consider adding mkdocs or sphinx for API documentation
+5. Add `py.typed` marker for PEP 561 type checking support
+6. Consider adding mkdocs or sphinx for API documentation
+7. Add timeline export to LaTeX reports
+8. Implement Neptune persistence for timelines
+9. **NEW**: Create serverless health dashboard with Cognito passkey authentication
+   - User: bryan.egan@gmail.com in existing Cognito pool
+   - Display data source health, detection status, cost metrics
+   - API Gateway + Lambda + DynamoDB architecture
+10. **REVIEW**: Evaluate App Runner vs simpler serverless alternatives for Marimo deployment
+    - Current: `infrastructure/marimo-apprunner.yaml` - Container-based with VPC connector, auto-scaling, private ingress
+    - Pros of App Runner: Managed container orchestration, built-in auto-scaling, VPC connectivity for Neptune/Security Lake
+    - Alternatives to evaluate:
+      a) **Lambda + API Gateway**: Could work for read-only dashboards, but Marimo requires persistent WebSocket connections
+      b) **ECS Fargate**: More control than App Runner, but more configuration; similar cost model
+      c) **Lambda Web Adapter**: New option for running web frameworks in Lambda with response streaming
+      d) **Lightsail Containers**: Simpler/cheaper for low-traffic internal tools
+      e) **CloudFront + S3 + Lambda**: Static export of Marimo notebooks (loses interactivity)
+    - Key constraints: Marimo needs persistent process for notebook state, WebSocket support for real-time updates
+    - Question: Is App Runner overkill for an internal-only security tool used by 1-2 people?

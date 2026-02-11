@@ -1,8 +1,6 @@
 """Tests for timeline visualization functionality."""
 
-from datetime import datetime, timedelta, timezone
-
-import pytest
+from datetime import UTC, datetime, timedelta
 
 from secdashboards.graph import (
     EventTag,
@@ -13,13 +11,12 @@ from secdashboards.graph import (
     generate_timeline_summary_prompt,
 )
 from secdashboards.graph.models import (
+    APIOperationNode,
     EdgeType,
     GraphEdge,
-    NodeType,
-    PrincipalNode,
-    APIOperationNode,
-    SecurityFindingNode,
     IPAddressNode,
+    PrincipalNode,
+    SecurityFindingNode,
     SecurityGraph,
 )
 
@@ -31,7 +28,7 @@ class TestTimelineEvent:
         """Test creating a basic timeline event."""
         event = TimelineEvent(
             id="test-001",
-            timestamp=datetime.now(timezone.utc),
+            timestamp=datetime.now(UTC),
             title="Test Event",
             entity_type="Principal",
             entity_id="user:test",
@@ -43,7 +40,7 @@ class TestTimelineEvent:
 
     def test_event_with_all_fields(self):
         """Test event with all fields populated."""
-        timestamp = datetime(2024, 1, 15, 10, 30, 0, tzinfo=timezone.utc)
+        timestamp = datetime(2024, 1, 15, 10, 30, 0, tzinfo=UTC)
         event = TimelineEvent(
             id="test-002",
             timestamp=timestamp,
@@ -66,7 +63,7 @@ class TestTimelineEvent:
         """Test that events have correct colors based on tag."""
         event_suspicious = TimelineEvent(
             id="e1",
-            timestamp=datetime.now(timezone.utc),
+            timestamp=datetime.now(UTC),
             title="Test",
             entity_type="Test",
             entity_id="test",
@@ -76,7 +73,7 @@ class TestTimelineEvent:
 
         event_benign = TimelineEvent(
             id="e2",
-            timestamp=datetime.now(timezone.utc),
+            timestamp=datetime.now(UTC),
             title="Test",
             entity_type="Test",
             entity_id="test",
@@ -86,7 +83,7 @@ class TestTimelineEvent:
 
     def test_event_to_dict(self):
         """Test event serialization to dictionary."""
-        timestamp = datetime(2024, 1, 15, 10, 30, 0, tzinfo=timezone.utc)
+        timestamp = datetime(2024, 1, 15, 10, 30, 0, tzinfo=UTC)
         event = TimelineEvent(
             id="test-003",
             timestamp=timestamp,
@@ -119,21 +116,21 @@ class TestInvestigationTimeline:
         # Add events out of order
         event2 = TimelineEvent(
             id="e2",
-            timestamp=datetime(2024, 1, 15, 12, 0, 0, tzinfo=timezone.utc),
+            timestamp=datetime(2024, 1, 15, 12, 0, 0, tzinfo=UTC),
             title="Second",
             entity_type="Test",
             entity_id="test",
         )
         event1 = TimelineEvent(
             id="e1",
-            timestamp=datetime(2024, 1, 15, 10, 0, 0, tzinfo=timezone.utc),
+            timestamp=datetime(2024, 1, 15, 10, 0, 0, tzinfo=UTC),
             title="First",
             entity_type="Test",
             entity_id="test",
         )
         event3 = TimelineEvent(
             id="e3",
-            timestamp=datetime(2024, 1, 15, 14, 0, 0, tzinfo=timezone.utc),
+            timestamp=datetime(2024, 1, 15, 14, 0, 0, tzinfo=UTC),
             title="Third",
             entity_type="Test",
             entity_id="test",
@@ -153,7 +150,7 @@ class TestInvestigationTimeline:
         timeline = InvestigationTimeline()
         event = TimelineEvent(
             id="e1",
-            timestamp=datetime.now(timezone.utc),
+            timestamp=datetime.now(UTC),
             title="Test",
             entity_type="Test",
             entity_id="test",
@@ -177,7 +174,7 @@ class TestInvestigationTimeline:
         for i, tag in enumerate([EventTag.SUSPICIOUS, EventTag.BENIGN, EventTag.SUSPICIOUS]):
             event = TimelineEvent(
                 id=f"e{i}",
-                timestamp=datetime.now(timezone.utc) + timedelta(minutes=i),
+                timestamp=datetime.now(UTC) + timedelta(minutes=i),
                 title=f"Event {i}",
                 entity_type="Test",
                 entity_id="test",
@@ -206,7 +203,7 @@ class TestInvestigationTimeline:
         for i, tag in enumerate(tags):
             event = TimelineEvent(
                 id=f"e{i}",
-                timestamp=datetime.now(timezone.utc) + timedelta(minutes=i),
+                timestamp=datetime.now(UTC) + timedelta(minutes=i),
                 title=f"Event {i}",
                 entity_type="Test",
                 entity_id="test",
@@ -227,15 +224,17 @@ class TestInvestigationTimeline:
         assert end is None
 
         # Add events
-        t1 = datetime(2024, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
-        t2 = datetime(2024, 1, 15, 14, 0, 0, tzinfo=timezone.utc)
+        t1 = datetime(2024, 1, 15, 10, 0, 0, tzinfo=UTC)
+        t2 = datetime(2024, 1, 15, 14, 0, 0, tzinfo=UTC)
 
-        timeline.add_event(TimelineEvent(
-            id="e1", timestamp=t1, title="First", entity_type="Test", entity_id="test"
-        ))
-        timeline.add_event(TimelineEvent(
-            id="e2", timestamp=t2, title="Last", entity_type="Test", entity_id="test"
-        ))
+        timeline.add_event(
+            TimelineEvent(
+                id="e1", timestamp=t1, title="First", entity_type="Test", entity_id="test"
+            )
+        )
+        timeline.add_event(
+            TimelineEvent(id="e2", timestamp=t2, title="Last", entity_type="Test", entity_id="test")
+        )
 
         start, end = timeline.get_time_range()
         assert start == t1
@@ -246,19 +245,29 @@ class TestInvestigationTimeline:
         timeline = InvestigationTimeline(investigation_id="INC-001")
 
         # Add events with different tags
-        t1 = datetime(2024, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
-        t2 = datetime(2024, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
+        t1 = datetime(2024, 1, 15, 10, 0, 0, tzinfo=UTC)
+        t2 = datetime(2024, 1, 15, 12, 0, 0, tzinfo=UTC)
 
-        timeline.add_event(TimelineEvent(
-            id="e1", timestamp=t1, title="Event 1",
-            entity_type="Test", entity_id="test",
-            tag=EventTag.SUSPICIOUS,
-        ))
-        timeline.add_event(TimelineEvent(
-            id="e2", timestamp=t2, title="Event 2",
-            entity_type="Test", entity_id="test",
-            tag=EventTag.BENIGN,
-        ))
+        timeline.add_event(
+            TimelineEvent(
+                id="e1",
+                timestamp=t1,
+                title="Event 1",
+                entity_type="Test",
+                entity_id="test",
+                tag=EventTag.SUSPICIOUS,
+            )
+        )
+        timeline.add_event(
+            TimelineEvent(
+                id="e2",
+                timestamp=t2,
+                title="Event 2",
+                entity_type="Test",
+                entity_id="test",
+                tag=EventTag.BENIGN,
+            )
+        )
         timeline.ai_summary = "Test summary"
 
         summary = timeline.summary()
@@ -271,13 +280,15 @@ class TestInvestigationTimeline:
     def test_to_dict(self):
         """Test timeline serialization."""
         timeline = InvestigationTimeline(investigation_id="INC-001")
-        timeline.add_event(TimelineEvent(
-            id="e1",
-            timestamp=datetime(2024, 1, 15, 10, 0, 0, tzinfo=timezone.utc),
-            title="Test Event",
-            entity_type="Principal",
-            entity_id="user:test",
-        ))
+        timeline.add_event(
+            TimelineEvent(
+                id="e1",
+                timestamp=datetime(2024, 1, 15, 10, 0, 0, tzinfo=UTC),
+                title="Test Event",
+                entity_type="Principal",
+                entity_id="user:test",
+            )
+        )
         timeline.ai_summary = "AI generated summary"
         timeline.analyst_summary = "Analyst edited summary"
 
@@ -304,8 +315,8 @@ class TestExtractTimelineFromGraph:
             user_type="IAMUser",
             account_id="123456789012",
             arn="arn:aws:iam::123456789012:user/test-user",
-            first_seen=datetime(2024, 1, 15, 10, 0, 0, tzinfo=timezone.utc),
-            last_seen=datetime(2024, 1, 15, 14, 0, 0, tzinfo=timezone.utc),
+            first_seen=datetime(2024, 1, 15, 10, 0, 0, tzinfo=UTC),
+            last_seen=datetime(2024, 1, 15, 14, 0, 0, tzinfo=UTC),
             event_count=10,
         )
         graph.add_node(principal)
@@ -316,7 +327,7 @@ class TestExtractTimelineFromGraph:
             label="iam:CreateUser",
             service="iam",
             operation="CreateUser",
-            first_seen=datetime(2024, 1, 15, 10, 30, 0, tzinfo=timezone.utc),
+            first_seen=datetime(2024, 1, 15, 10, 30, 0, tzinfo=UTC),
             event_count=1,
         )
         api_op.record_status("success")
@@ -329,9 +340,9 @@ class TestExtractTimelineFromGraph:
             rule_id="test-rule",
             rule_name="IAM User Created",
             severity="high",
-            triggered_at=datetime(2024, 1, 15, 10, 30, 0, tzinfo=timezone.utc),
+            triggered_at=datetime(2024, 1, 15, 10, 30, 0, tzinfo=UTC),
             match_count=1,
-            first_seen=datetime(2024, 1, 15, 10, 30, 0, tzinfo=timezone.utc),
+            first_seen=datetime(2024, 1, 15, 10, 30, 0, tzinfo=UTC),
             event_count=1,
         )
         graph.add_node(finding)
@@ -343,7 +354,7 @@ class TestExtractTimelineFromGraph:
             ip_address="10.0.0.1",
             is_internal=True,
             geo_location="Internal",
-            first_seen=datetime(2024, 1, 15, 10, 0, 0, tzinfo=timezone.utc),
+            first_seen=datetime(2024, 1, 15, 10, 0, 0, tzinfo=UTC),
             event_count=5,
         )
         graph.add_node(ip_node)
@@ -361,9 +372,7 @@ class TestExtractTimelineFromGraph:
     def test_extract_timeline_nodes_only(self):
         """Test extracting timeline from nodes only."""
         graph = self.create_test_graph()
-        timeline = extract_timeline_from_graph(
-            graph, include_nodes=True, include_edges=False
-        )
+        timeline = extract_timeline_from_graph(graph, include_nodes=True, include_edges=False)
 
         # Should have events for each node with timestamp
         assert len(timeline.events) == 4
@@ -378,14 +387,12 @@ class TestExtractTimelineFromGraph:
             source_id="Principal:test-user",
             target_id="APIOperation:iam:CreateUser",
             edge_type=EdgeType.CALLED_API,
-            first_seen=datetime(2024, 1, 15, 10, 30, 0, tzinfo=timezone.utc),
+            first_seen=datetime(2024, 1, 15, 10, 30, 0, tzinfo=UTC),
             event_count=1,
         )
         graph.add_edge(edge)
 
-        timeline = extract_timeline_from_graph(
-            graph, include_nodes=True, include_edges=True
-        )
+        timeline = extract_timeline_from_graph(graph, include_nodes=True, include_edges=True)
 
         # Should include the edge as an event
         edge_events = [e for e in timeline.events if e.entity_type == "relationship"]
@@ -397,10 +404,7 @@ class TestExtractTimelineFromGraph:
         timeline = extract_timeline_from_graph(graph)
 
         # Find the security finding event
-        finding_events = [
-            e for e in timeline.events
-            if e.entity_type == "SecurityFinding"
-        ]
+        finding_events = [e for e in timeline.events if e.entity_type == "SecurityFinding"]
         assert len(finding_events) == 1
         assert finding_events[0].tag == EventTag.SUSPICIOUS
 
@@ -411,7 +415,7 @@ class TestExtractTimelineFromGraph:
 
         # Verify chronological order
         for i in range(1, len(timeline.events)):
-            assert timeline.events[i].timestamp >= timeline.events[i-1].timestamp
+            assert timeline.events[i].timestamp >= timeline.events[i - 1].timestamp
 
 
 class TestTimelineVisualizer:
@@ -437,14 +441,16 @@ class TestTimelineVisualizer:
         timeline = InvestigationTimeline()
 
         for i in range(5):
-            timeline.add_event(TimelineEvent(
-                id=f"e{i}",
-                timestamp=datetime.now(timezone.utc) + timedelta(hours=i),
-                title=f"Event {i}",
-                entity_type="Principal",
-                entity_id="test",
-                tag=EventTag.SUSPICIOUS if i % 2 == 0 else EventTag.BENIGN,
-            ))
+            timeline.add_event(
+                TimelineEvent(
+                    id=f"e{i}",
+                    timestamp=datetime.now(UTC) + timedelta(hours=i),
+                    title=f"Event {i}",
+                    entity_type="Principal",
+                    entity_id="test",
+                    tag=EventTag.SUSPICIOUS if i % 2 == 0 else EventTag.BENIGN,
+                )
+            )
 
         fig = vis.create_plotly_figure(timeline)
         assert fig is not None
@@ -455,13 +461,15 @@ class TestTimelineVisualizer:
         """Test HTML generation."""
         vis = TimelineVisualizer()
         timeline = InvestigationTimeline()
-        timeline.add_event(TimelineEvent(
-            id="e1",
-            timestamp=datetime.now(timezone.utc),
-            title="Test Event",
-            entity_type="Principal",
-            entity_id="test",
-        ))
+        timeline.add_event(
+            TimelineEvent(
+                id="e1",
+                timestamp=datetime.now(UTC),
+                title="Test Event",
+                entity_type="Principal",
+                entity_id="test",
+            )
+        )
 
         html = vis.to_html(timeline)
         assert "<div" in html
@@ -493,23 +501,27 @@ class TestTimelineSummaryPrompt:
         """Test prompt generation with events."""
         timeline = InvestigationTimeline(investigation_id="INC-001")
 
-        timeline.add_event(TimelineEvent(
-            id="e1",
-            timestamp=datetime(2024, 1, 15, 10, 0, 0, tzinfo=timezone.utc),
-            title="User Login",
-            description="From external IP",
-            entity_type="Principal",
-            entity_id="test",
-            tag=EventTag.SUSPICIOUS,
-        ))
-        timeline.add_event(TimelineEvent(
-            id="e2",
-            timestamp=datetime(2024, 1, 15, 10, 30, 0, tzinfo=timezone.utc),
-            title="IAM CreateUser",
-            entity_type="APIOperation",
-            entity_id="test",
-            tag=EventTag.INITIAL_ACCESS,
-        ))
+        timeline.add_event(
+            TimelineEvent(
+                id="e1",
+                timestamp=datetime(2024, 1, 15, 10, 0, 0, tzinfo=UTC),
+                title="User Login",
+                description="From external IP",
+                entity_type="Principal",
+                entity_id="test",
+                tag=EventTag.SUSPICIOUS,
+            )
+        )
+        timeline.add_event(
+            TimelineEvent(
+                id="e2",
+                timestamp=datetime(2024, 1, 15, 10, 30, 0, tzinfo=UTC),
+                title="IAM CreateUser",
+                entity_type="APIOperation",
+                entity_id="test",
+                tag=EventTag.INITIAL_ACCESS,
+            )
+        )
 
         prompt = generate_timeline_summary_prompt(timeline)
 

@@ -4,8 +4,8 @@ This module contains unit tests for entity models, graph builder,
 visualization, and query generation.
 """
 
-from datetime import datetime, timedelta, timezone
-from unittest.mock import MagicMock, patch
+from datetime import UTC, datetime, timedelta
+from unittest.mock import MagicMock
 
 import polars as pl
 import pytest
@@ -15,7 +15,6 @@ from secdashboards.graph.builder import GraphBuilder
 from secdashboards.graph.models import (
     APIOperationNode,
     EdgeType,
-    EventNode,
     GraphEdge,
     GraphNode,
     IPAddressNode,
@@ -27,7 +26,6 @@ from secdashboards.graph.models import (
 )
 from secdashboards.graph.queries import GremlinQueries
 from secdashboards.graph.visualization import GraphVisualizer
-
 
 # =============================================================================
 # Model Tests
@@ -84,7 +82,7 @@ class TestGraphNode:
             node_type=NodeType.EVENT,
             label="Test",
         )
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         earlier = now - timedelta(hours=1)
         later = now + timedelta(hours=1)
 
@@ -277,7 +275,7 @@ class TestSecurityFindingNode:
 
     def test_create_finding_node(self) -> None:
         """Test creating a security finding node."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         node = SecurityFindingNode(
             id="Finding:detect-root-login:20260113120000",
             label="Root Login Detected",
@@ -323,7 +321,7 @@ class TestGraphEdge:
             source_id="a",
             target_id="b",
         )
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         edge.update_timestamps(now)
         assert edge.first_seen == now
@@ -350,7 +348,7 @@ class TestSecurityGraph:
     def test_add_node_merges_duplicates(self) -> None:
         """Test that duplicate nodes are merged."""
         graph = SecurityGraph()
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         earlier = now - timedelta(hours=1)
 
         node1 = PrincipalNode(
@@ -384,12 +382,8 @@ class TestSecurityGraph:
         graph = SecurityGraph()
 
         # Add nodes first
-        graph.add_node(
-            PrincipalNode(id="Principal:user1", label="user1", user_name="user1")
-        )
-        graph.add_node(
-            IPAddressNode(id="IPAddress:1.1.1.1", label="1.1.1.1", ip_address="1.1.1.1")
-        )
+        graph.add_node(PrincipalNode(id="Principal:user1", label="user1", user_name="user1"))
+        graph.add_node(IPAddressNode(id="IPAddress:1.1.1.1", label="1.1.1.1", ip_address="1.1.1.1"))
 
         # Add edge
         edge = GraphEdge(
@@ -441,9 +435,7 @@ class TestSecurityGraph:
 
         graph.add_node(PrincipalNode(id="Principal:u1", label="u1", user_name="u1"))
         graph.add_node(PrincipalNode(id="Principal:u2", label="u2", user_name="u2"))
-        graph.add_node(
-            IPAddressNode(id="IPAddress:1.1.1.1", label="1.1.1.1", ip_address="1.1.1.1")
-        )
+        graph.add_node(IPAddressNode(id="IPAddress:1.1.1.1", label="1.1.1.1", ip_address="1.1.1.1"))
 
         principals = graph.get_nodes_by_type(NodeType.PRINCIPAL)
         assert len(principals) == 2
@@ -456,9 +448,7 @@ class TestSecurityGraph:
         graph = SecurityGraph()
 
         graph.add_node(PrincipalNode(id="Principal:u1", label="u1", user_name="u1"))
-        graph.add_node(
-            IPAddressNode(id="IPAddress:1.1.1.1", label="1.1.1.1", ip_address="1.1.1.1")
-        )
+        graph.add_node(IPAddressNode(id="IPAddress:1.1.1.1", label="1.1.1.1", ip_address="1.1.1.1"))
         graph.add_edge(
             GraphEdge(
                 id="e1",
@@ -479,9 +469,7 @@ class TestSecurityGraph:
         graph = SecurityGraph()
 
         graph.add_node(PrincipalNode(id="Principal:u1", label="u1", user_name="u1"))
-        graph.add_node(
-            IPAddressNode(id="IPAddress:1.1.1.1", label="1.1.1.1", ip_address="1.1.1.1")
-        )
+        graph.add_node(IPAddressNode(id="IPAddress:1.1.1.1", label="1.1.1.1", ip_address="1.1.1.1"))
         graph.add_edge(
             GraphEdge(
                 id="e1",
@@ -541,7 +529,7 @@ class TestGraphBuilder:
                     "time_dt": "2026-01-13T11:00:00Z",
                 },
             ],
-            executed_at=datetime.now(timezone.utc),
+            executed_at=datetime.now(UTC),
         )
 
     def test_extract_identifiers(
@@ -860,7 +848,7 @@ class TestGraphIntegration:
                     "time_dt": "2026-01-13T12:00:00Z",
                 }
             ],
-            executed_at=datetime.now(timezone.utc),
+            executed_at=datetime.now(UTC),
         )
 
         # Build graph

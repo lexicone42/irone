@@ -24,7 +24,10 @@ class SecurityLakeEnricher:
     """
 
     # Pattern for validating IP addresses (IPv4)
-    _IP_PATTERN = r"^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$"
+    _IP_PATTERN = (
+        r"^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}"
+        r"(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$"
+    )
 
     @staticmethod
     def _sanitize_sql_string(value: str) -> str:
@@ -67,6 +70,7 @@ class SecurityLakeEnricher:
             True if valid IPv4 address, False otherwise
         """
         import re
+
         return bool(re.match(SecurityLakeEnricher._IP_PATTERN, ip))
 
     # OCSF field mappings for extraction
@@ -530,11 +534,13 @@ class SecurityLakeEnricher:
                         limit=100,
                     )
                     if len(user_activity) > 0:
-                        result["subsequent_activity"].append({
-                            "user": user,
-                            "event_count": len(user_activity),
-                            "events": user_activity.to_dicts()[:10],  # Sample
-                        })
+                        result["subsequent_activity"].append(
+                            {
+                                "user": user,
+                                "event_count": len(user_activity),
+                                "events": user_activity.to_dicts()[:10],  # Sample
+                            }
+                        )
 
         except Exception as e:
             logger.warning(
@@ -610,7 +616,7 @@ class SecurityLakeEnricher:
         Args:
             start: Start of the time window
             end: End of the time window
-            domain_pattern: Optional domain pattern to filter (SQL LIKE pattern, use % for wildcards)
+            domain_pattern: Optional domain pattern (SQL LIKE, use % for wildcards)
             src_ip: Optional source IP filter
             limit: Maximum events to return
 

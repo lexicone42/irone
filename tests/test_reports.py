@@ -270,7 +270,9 @@ class TestTableOverflowProtection:
 
     def test_arn_column_truncated(self) -> None:
         """Test that AWS ARNs are truncated to prevent overflow."""
-        long_arn = "arn:aws:iam::123456789012:role/very-long-role-name-that-would-overflow-the-page-margin"
+        long_arn = (
+            "arn:aws:iam::123456789012:role/very-long-role-name-that-would-overflow-the-page-margin"
+        )
         table = TableData(
             headers=["User", "ARN"],
             rows=[["admin", long_arn]],

@@ -8,6 +8,7 @@ authorization. Generating network traffic to systems you don't own or
 have permission to test is illegal and unethical.
 """
 
+import contextlib
 import logging
 import random
 import socket
@@ -23,6 +24,7 @@ logger = logging.getLogger(__name__)
 
 class Protocol(IntEnum):
     """IP protocol numbers."""
+
     ICMP = 1
     TCP = 6
     UDP = 17
@@ -31,6 +33,7 @@ class Protocol(IntEnum):
 @dataclass
 class PacketResult:
     """Result of a packet send operation."""
+
     success: bool
     timestamp: datetime = field(default_factory=lambda: datetime.now(UTC))
     src_ip: str = ""
@@ -192,10 +195,8 @@ class NetworkEmulator:
             sock.settimeout(self.timeout)
 
             if src_port:
-                try:
+                with contextlib.suppress(OSError):
                     sock.bind(("", src_port))
-                except OSError:
-                    pass  # Port may be in use
 
             try:
                 sock.connect((target_ip, target_port))
@@ -359,10 +360,32 @@ class NetworkEmulator:
         """
         ports = []
         if common_ports:
-            ports.extend([
-                21, 22, 23, 25, 53, 80, 110, 111, 135, 139, 143, 443,
-                445, 993, 995, 1723, 3306, 3389, 5432, 5900, 8080, 8443,
-            ])
+            ports.extend(
+                [
+                    21,
+                    22,
+                    23,
+                    25,
+                    53,
+                    80,
+                    110,
+                    111,
+                    135,
+                    139,
+                    143,
+                    443,
+                    445,
+                    993,
+                    995,
+                    1723,
+                    3306,
+                    3389,
+                    5432,
+                    5900,
+                    8080,
+                    8443,
+                ]
+            )
         if custom_ports:
             ports.extend(custom_ports)
 

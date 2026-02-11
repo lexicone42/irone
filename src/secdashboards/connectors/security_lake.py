@@ -145,7 +145,10 @@ class SecurityLakeConnector(AthenaConnector):
 
         if additional_filters:
             # Log warning if filters look suspicious
-            if any(kw in additional_filters.upper() for kw in ["DROP", "DELETE", "INSERT", "UPDATE", "TRUNCATE"]):
+            if any(
+                kw in additional_filters.upper()
+                for kw in ["DROP", "DELETE", "INSERT", "UPDATE", "TRUNCATE"]
+            ):
                 logger.warning(
                     "suspicious_sql_filter_detected",
                     filter=additional_filters[:100],
@@ -334,14 +337,23 @@ class SecurityLakeConnector(AthenaConnector):
 
             last_time = None
             if isinstance(last_time_raw, str):
+                # Parse ISO format string, handling 'Z' suffix
                 last_time = datetime.fromisoformat(last_time_raw.replace("Z", "+00:00"))
+                # Ensure timezone awareness - assume UTC if naive
+                if last_time.tzinfo is None:
+                    last_time = last_time.replace(tzinfo=UTC)
             elif isinstance(last_time_raw, datetime):
                 last_time = last_time_raw
+                # Ensure timezone awareness - assume UTC if naive
+                if last_time.tzinfo is None:
+                    last_time = last_time.replace(tzinfo=UTC)
 
             # Determine health
             healthy = record_count > 0
             if last_time:
-                delta = datetime.now(UTC) - last_time.replace(tzinfo=None)
+                # Both datetimes are now UTC-aware, safe to subtract
+                now_utc = datetime.now(UTC)
+                delta = now_utc - last_time
                 age_minutes = delta.total_seconds() / 60
                 healthy = age_minutes <= self.source.expected_freshness_minutes
 
@@ -365,3 +377,298 @@ class SecurityLakeConnector(AthenaConnector):
     def list_available_tables(self) -> list[dict[str, Any]]:
         """List all Security Lake tables in the database."""
         return self.list_tables()
+
+    def query_vpc_flow(
+        self,
+        start: datetime | None = None,
+        end: datetime | None = None,
+        src_ip: str | None = None,
+        dst_ip: str | None = None,
+        dst_port: int | None = None,
+        action: str | None = None,
+        direction: str | None = None,
+        limit: int = 1000,
+    ) -> pl.DataFrame:
+        """Query VPC Flow Log events from Security Lake.
+
+        VPC Flow logs in OCSF format use class_uid 4001 (Network Activity).
+
+        Args:
+            start: Start time for the query window
+            end: End time for the query window
+            src_ip: Filter by source IP address
+            dst_ip: Filter by destination IP address
+            dst_port: Filter by destination port
+            action: Filter by action ('Allow' or 'Deny')
+            direction: Filter by traffic direction ('Inbound' or 'Outbound')
+            limit: Maximum number of records to return
+        """
+        filters = []
+
+        if src_ip:
+            try:
+                safe_ip = validate_ipv4(src_ip)
+                filters.append(f""""src_endpoint"."ip" = '{safe_ip}'""")
+            except SQLSanitizationError:
+                logger.warning("invalid_source_ip_format", ip=src_ip)
+                return pl.DataFrame()
+
+        if dst_ip:
+            try:
+                safe_ip = validate_ipv4(dst_ip)
+                filters.append(f""""dst_endpoint"."ip" = '{safe_ip}'""")
+            except SQLSanitizationError:
+                logger.warning("invalid_dest_ip_format", ip=dst_ip)
+                return pl.DataFrame()
+
+        if dst_port is not None:
+            safe_port = sanitize_int(dst_port)
+            if 0 <= safe_port <= 65535:
+                filters.append(f""""dst_endpoint"."port" = {safe_port}""")
+            else:
+                logger.warning("invalid_port_range", port=dst_port)
+                return pl.DataFrame()
+
+        if action:
+            safe_action = sanitize_string(action)
+            filters.append(f"activity_name = '{safe_action}'")
+
+        if direction:
+            safe_direction = sanitize_string(direction)
+            filters.append(f"direction = '{safe_direction}'")
+
+        additional = " AND ".join(filters) if filters else None
+
+        return self.query_by_event_class(
+            OCSFEventClass.NETWORK_ACTIVITY,
+            start=start,
+            end=end,
+            limit=limit,
+            additional_filters=additional,
+        )
+
+    def query_vpc_flow_summary(
+        self,
+        start: datetime | None = None,
+        end: datetime | None = None,
+        group_by: str = "src_ip",
+    ) -> pl.DataFrame:
+        """Get a summary of VPC Flow traffic.
+
+        Args:
+            start: Start time for the query window
+            end: End time for the query window
+            group_by: Field to group by ('src_ip', 'dst_ip', 'dst_port', 'action')
+        """
+        end = end or datetime.now(UTC)
+        start = start or (end - timedelta(hours=24))
+
+        table = quote_table(
+            self.source.database or "default",
+            self.source.table or "unknown",
+        )
+
+        # Map friendly names to OCSF fields
+        group_field_map = {
+            "src_ip": '"src_endpoint"."ip"',
+            "dst_ip": '"dst_endpoint"."ip"',
+            "dst_port": '"dst_endpoint"."port"',
+            "action": "activity_name",
+        }
+
+        if group_by not in group_field_map:
+            logger.warning("invalid_group_by", group_by=group_by)
+            group_by = "src_ip"
+
+        group_field = group_field_map[group_by]
+
+        sql = f"""
+        SELECT
+            {group_field} as {group_by},
+            COUNT(*) as flow_count,
+            SUM(COALESCE(traffic.bytes, 0)) as total_bytes,
+            SUM(COALESCE(traffic.packets, 0)) as total_packets,
+            COUNT(DISTINCT "dst_endpoint"."port") as unique_ports
+        FROM {table}
+        WHERE class_uid = {int(OCSFEventClass.NETWORK_ACTIVITY)}
+          AND time_dt >= TIMESTAMP '{self._format_timestamp(start)}'
+          AND time_dt < TIMESTAMP '{self._format_timestamp(end)}'
+        GROUP BY {group_field}
+        ORDER BY flow_count DESC
+        LIMIT 100
+        """
+
+        return self.query(sql)
+
+    def query_dns_logs(
+        self,
+        start: datetime | None = None,
+        end: datetime | None = None,
+        query_domain: str | None = None,
+        query_type: str | None = None,
+        response_code: str | None = None,
+        limit: int = 1000,
+    ) -> pl.DataFrame:
+        """Query Route53 DNS resolver logs from Security Lake.
+
+        DNS logs in OCSF format use class_uid 4003 (DNS Activity).
+
+        Args:
+            start: Start time for the query window
+            end: End time for the query window
+            query_domain: Filter by queried domain (partial match supported)
+            query_type: Filter by DNS query type (A, AAAA, CNAME, MX, etc.)
+            response_code: Filter by DNS response code (NOERROR, NXDOMAIN, etc.)
+            limit: Maximum number of records to return
+        """
+        filters = []
+
+        if query_domain:
+            safe_domain = sanitize_string(query_domain)
+            # Use LIKE for partial matching on domain names
+            filters.append(f""""query"."hostname" LIKE '%{safe_domain}%'""")
+
+        if query_type:
+            safe_type = sanitize_string(query_type.upper())
+            filters.append(f""""query"."type" = '{safe_type}'""")
+
+        if response_code:
+            safe_code = sanitize_string(response_code.upper())
+            filters.append(f"rcode = '{safe_code}'")
+
+        additional = " AND ".join(filters) if filters else None
+
+        return self.query_by_event_class(
+            OCSFEventClass.DNS_ACTIVITY,
+            start=start,
+            end=end,
+            limit=limit,
+            additional_filters=additional,
+        )
+
+    def query_suspicious_dns(
+        self,
+        start: datetime | None = None,
+        end: datetime | None = None,
+        limit: int = 100,
+    ) -> pl.DataFrame:
+        """Query DNS logs for potentially suspicious patterns.
+
+        Detects:
+        - High-entropy domain names (potential DGA)
+        - Unusually long domain names
+        - Requests to known suspicious TLDs
+        """
+        end = end or datetime.now(UTC)
+        start = start or (end - timedelta(hours=24))
+
+        table = quote_table(
+            self.source.database or "default",
+            self.source.table or "unknown",
+        )
+        safe_limit = sanitize_int(min(limit, 1000))
+
+        # List of suspicious TLDs commonly used in malware
+        suspicious_tlds = "('xyz', 'top', 'click', 'gdn', 'loan', 'work', 'party', 'date')"
+
+        sql = f"""
+        SELECT
+            time_dt,
+            "query"."hostname" as domain,
+            "query"."type" as query_type,
+            "src_endpoint"."ip" as src_ip,
+            rcode as response_code,
+            LENGTH("query"."hostname") as domain_length,
+            CASE
+                WHEN LENGTH("query"."hostname") > 50 THEN 'long_domain'
+                WHEN REGEXP_LIKE("query"."hostname", '[0-9]{{10,}}') THEN 'numeric_heavy'
+                WHEN ELEMENT_AT(SPLIT("query"."hostname", '.'), -1)
+                    IN {suspicious_tlds} THEN 'suspicious_tld'
+                ELSE 'other'
+            END as suspicion_type
+        FROM {table}
+        WHERE class_uid = {int(OCSFEventClass.DNS_ACTIVITY)}
+          AND time_dt >= TIMESTAMP '{self._format_timestamp(start)}'
+          AND time_dt < TIMESTAMP '{self._format_timestamp(end)}'
+          AND (
+            LENGTH("query"."hostname") > 50
+            OR REGEXP_LIKE("query"."hostname", '[0-9]{{10,}}')
+            OR ELEMENT_AT(SPLIT("query"."hostname", '.'), -1) IN {suspicious_tlds}
+          )
+        ORDER BY time_dt DESC
+        LIMIT {safe_limit}
+        """
+
+        return self.query(sql)
+
+    def query_lambda_execution(
+        self,
+        start: datetime | None = None,
+        end: datetime | None = None,
+        function_name: str | None = None,
+        status: str | None = None,
+        limit: int = 1000,
+    ) -> pl.DataFrame:
+        """Query Lambda execution logs from Security Lake.
+
+        Lambda execution logs in OCSF format use class_uid 6002 (Application Lifecycle).
+
+        Args:
+            start: Start time for the query window
+            end: End time for the query window
+            function_name: Filter by Lambda function name
+            status: Filter by execution status
+            limit: Maximum number of records to return
+        """
+        filters = []
+
+        if function_name:
+            safe_name = sanitize_string(function_name)
+            filters.append(f""""app"."name" LIKE '%{safe_name}%'""")
+
+        if status:
+            safe_status = sanitize_string(status)
+            filters.append(f"status = '{safe_status}'")
+
+        additional = " AND ".join(filters) if filters else None
+
+        return self.query_by_event_class(
+            OCSFEventClass.APPLICATION_LIFECYCLE,
+            start=start,
+            end=end,
+            limit=limit,
+            additional_filters=additional,
+        )
+
+    def get_data_source_health_summary(
+        self,
+        hours: int = 24,
+    ) -> pl.DataFrame:
+        """Get a health summary across all Security Lake data sources.
+
+        Returns event counts and freshness for each event class.
+        """
+        end = datetime.now(UTC)
+        start = end - timedelta(hours=hours)
+
+        table = quote_table(
+            self.source.database or "default",
+            self.source.table or "unknown",
+        )
+
+        sql = f"""
+        SELECT
+            class_uid,
+            class_name,
+            COUNT(*) as event_count,
+            MIN(time_dt) as earliest_event,
+            MAX(time_dt) as latest_event,
+            DATE_DIFF('minute', MAX(time_dt), CURRENT_TIMESTAMP) as minutes_since_last
+        FROM {table}
+        WHERE time_dt >= TIMESTAMP '{self._format_timestamp(start)}'
+          AND time_dt < TIMESTAMP '{self._format_timestamp(end)}'
+        GROUP BY class_uid, class_name
+        ORDER BY class_uid
+        """
+
+        return self.query(sql)

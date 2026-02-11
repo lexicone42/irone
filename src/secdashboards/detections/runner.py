@@ -16,6 +16,8 @@ from secdashboards.detections.rule import (
     DetectionMetadata,
     DetectionResult,
     DetectionRule,
+    DualTargetDetectionRule,
+    QueryTarget,
     Severity,
     SQLDetectionRule,
 )
@@ -190,33 +192,54 @@ class DetectionRunner:
         return loaded
 
     def _load_yaml_rules(self, file_path: Path) -> list[DetectionRule]:
-        """Load SQL-based detection rules from a YAML file."""
+        """Load detection rules from a YAML file.
+
+        Supports:
+        - SQLDetectionRule: Traditional SQL/Athena queries
+        - DualTargetDetectionRule: Rules with both CloudWatch and Athena queries
+
+        Format detection:
+        - If 'queries' dict is present → DualTargetDetectionRule
+        - If 'log_type: cloudwatch_logs' → DualTargetDetectionRule (CW only)
+        - Otherwise → SQLDetectionRule (Athena)
+        """
         with file_path.open() as f:
             data = yaml.safe_load(f)
 
-        rules = []
+        rules: list[DetectionRule] = []
         rule_defs = data if isinstance(data, list) else [data]
 
         for rule_def in rule_defs:
-            metadata = DetectionMetadata(
-                id=rule_def["id"],
-                name=rule_def["name"],
-                description=rule_def.get("description", ""),
-                author=rule_def.get("author", ""),
-                severity=Severity(rule_def.get("severity", "medium")),
-                tags=rule_def.get("tags", []),
-                mitre_attack=rule_def.get("mitre_attack", []),
-                data_sources=rule_def.get("data_sources", []),
-                schedule=rule_def.get("schedule", "rate(5 minutes)"),
-                enabled=rule_def.get("enabled", True),
-            )
+            # Determine rule type based on structure
+            has_queries_dict = "queries" in rule_def
+            log_type = rule_def.get("log_type", "")
+            is_cloudwatch = log_type == "cloudwatch_logs"
 
-            rule = SQLDetectionRule(
-                metadata=metadata,
-                query_template=rule_def["query"],
-                threshold=rule_def.get("threshold", 1),
-                group_by_fields=rule_def.get("group_by", []),
-            )
+            if has_queries_dict or is_cloudwatch:
+                # Use DualTargetDetectionRule for CloudWatch-based rules
+                rule = self._parse_dual_target_rule(rule_def)
+            else:
+                # Use traditional SQLDetectionRule for Athena-only rules
+                metadata = DetectionMetadata(
+                    id=rule_def["id"],
+                    name=rule_def["name"],
+                    description=rule_def.get("description", ""),
+                    author=rule_def.get("author", ""),
+                    severity=Severity(rule_def.get("severity", "medium")),
+                    tags=rule_def.get("tags", []),
+                    mitre_attack=rule_def.get("mitre_attack", []),
+                    data_sources=rule_def.get("data_sources", []),
+                    schedule=rule_def.get("schedule", "rate(5 minutes)"),
+                    enabled=rule_def.get("enabled", True),
+                )
+
+                rule = SQLDetectionRule(
+                    metadata=metadata,
+                    query_template=rule_def["query"],
+                    threshold=rule_def.get("threshold", 1),
+                    group_by_fields=rule_def.get("group_by", []),
+                )
+
             rules.append(rule)
 
         return rules
@@ -263,3 +286,184 @@ class DetectionRunner:
     def export_rules_to_dict(self) -> list[dict[str, Any]]:
         """Export all rules to a list of dictionaries."""
         return [rule.to_dict() for rule in self._rules.values()]
+
+    def run_rule_with_target(
+        self,
+        rule_id: str,
+        connector: DataConnector,
+        target: QueryTarget,
+        start: datetime | None = None,
+        end: datetime | None = None,
+        lookback_minutes: int = 15,
+    ) -> DetectionResult:
+        """Run a detection rule against a specific target.
+
+        This is useful for DualTargetDetectionRule to choose between
+        CloudWatch (hot tier) and Athena/Security Lake (cold tier).
+
+        Args:
+            rule_id: Rule identifier
+            connector: Data connector (CloudWatchLogsConnector or AthenaConnector)
+            target: Query target to use
+            start: Query start time
+            end: Query end time
+            lookback_minutes: Lookback window if start not specified
+        """
+        rule = self._rules.get(rule_id)
+        if not rule:
+            return DetectionResult(
+                rule_id=rule_id,
+                rule_name="Unknown",
+                triggered=False,
+                error=f"Rule not found: {rule_id}",
+            )
+
+        end = end or datetime.now(UTC)
+        start = start or (end - timedelta(minutes=lookback_minutes))
+
+        try:
+            # Get query for specific target
+            if isinstance(rule, DualTargetDetectionRule):
+                query = rule.get_query_for_target(target, start, end)
+            else:
+                # Fall back to default query for non-dual rules
+                query = rule.get_query(start, end)
+
+            logger.debug(
+                "Executing detection query",
+                rule_id=rule_id,
+                target=target.value,
+                query=query[:200],
+            )
+
+            # Execute query
+            if target == QueryTarget.CLOUDWATCH:
+                # CloudWatch connector uses query_insights with time params
+                from secdashboards.connectors.cloudwatch_logs import CloudWatchLogsConnector
+
+                if isinstance(connector, CloudWatchLogsConnector):
+                    df = connector.query_insights(query, start=start, end=end)
+                else:
+                    df = connector.query(query)
+            else:
+                df = connector.query(query)
+
+            # Evaluate results
+            result = rule.evaluate(df)
+            result_dict = result.model_dump() if hasattr(result, "model_dump") else {}
+            result_dict["target"] = target.value
+
+            logger.info(
+                "Detection completed",
+                rule_id=rule_id,
+                target=target.value,
+                triggered=result.triggered,
+                match_count=result.match_count,
+            )
+            return result
+
+        except Exception as e:
+            logger.exception("Detection rule failed", rule_id=rule_id, target=target.value)
+            return DetectionResult(
+                rule_id=rule_id,
+                rule_name=rule.name,
+                triggered=False,
+                error=str(e),
+            )
+
+    def run_dual_target(
+        self,
+        rule_id: str,
+        cw_connector: DataConnector | None,
+        athena_connector: DataConnector | None,
+        hot_tier_hours: int = 168,  # 7 days
+        lookback_minutes: int = 15,
+    ) -> list[DetectionResult]:
+        """Run a dual-target rule against both hot and cold tiers.
+
+        This executes the rule against:
+        1. CloudWatch Logs (hot tier) for recent data
+        2. Athena/Security Lake (cold tier) for historical data
+
+        Args:
+            rule_id: Rule identifier
+            cw_connector: CloudWatch Logs connector for hot tier
+            athena_connector: Athena/Security Lake connector for cold tier
+            hot_tier_hours: Hours of data in hot tier (default 7 days)
+            lookback_minutes: Lookback window for detection
+
+        Returns:
+            List of DetectionResults (one per target executed)
+        """
+        rule = self._rules.get(rule_id)
+        if not rule:
+            return [
+                DetectionResult(
+                    rule_id=rule_id,
+                    rule_name="Unknown",
+                    triggered=False,
+                    error=f"Rule not found: {rule_id}",
+                )
+            ]
+
+        results = []
+        end = datetime.now(UTC)
+        start = end - timedelta(minutes=lookback_minutes)
+
+        # Run against CloudWatch if available and rule supports it
+        if (
+            cw_connector
+            and isinstance(rule, DualTargetDetectionRule)
+            and rule.has_target(QueryTarget.CLOUDWATCH)
+        ):
+            result = self.run_rule_with_target(
+                rule_id, cw_connector, QueryTarget.CLOUDWATCH, start, end
+            )
+            results.append(result)
+
+        # Run against Athena/Security Lake if available
+        if athena_connector:
+            if isinstance(rule, DualTargetDetectionRule):
+                if rule.has_target(QueryTarget.ATHENA):
+                    result = self.run_rule_with_target(
+                        rule_id, athena_connector, QueryTarget.ATHENA, start, end
+                    )
+                    results.append(result)
+            else:
+                # Non-dual rules default to Athena
+                result = self.run_rule(rule_id, athena_connector, start, end)
+                results.append(result)
+
+        return results
+
+    def _parse_dual_target_rule(self, rule_def: dict[str, Any]) -> DualTargetDetectionRule:
+        """Parse a dual-target rule from YAML definition."""
+        metadata = DetectionMetadata(
+            id=rule_def["id"],
+            name=rule_def["name"],
+            description=rule_def.get("description", ""),
+            author=rule_def.get("author", ""),
+            severity=Severity(rule_def.get("severity", "medium")),
+            tags=rule_def.get("tags", []),
+            mitre_attack=rule_def.get("mitre_attack", []),
+            data_sources=rule_def.get("data_sources", []),
+            schedule=rule_def.get("schedule", "rate(5 minutes)"),
+            enabled=rule_def.get("enabled", True),
+        )
+
+        # Handle both 'queries' dict and legacy 'query' string
+        queries = rule_def.get("queries", {})
+        if not queries and "query" in rule_def:
+            # Legacy single-query format
+            log_type = rule_def.get("log_type", "athena")
+            if log_type == "cloudwatch_logs":
+                queries = {"cloudwatch": rule_def["query"]}
+            else:
+                queries = {"athena": rule_def["query"]}
+
+        return DualTargetDetectionRule(
+            metadata=metadata,
+            queries=queries,
+            threshold=rule_def.get("threshold", 1),
+            group_by_fields=rule_def.get("group_by", []),
+        )

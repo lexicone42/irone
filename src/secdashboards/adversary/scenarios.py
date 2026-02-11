@@ -26,6 +26,7 @@ logger = logging.getLogger(__name__)
 
 class AttackPhase(StrEnum):
     """MITRE ATT&CK kill chain phases."""
+
     RECONNAISSANCE = "reconnaissance"
     RESOURCE_DEVELOPMENT = "resource-development"
     INITIAL_ACCESS = "initial-access"
@@ -45,6 +46,7 @@ class AttackPhase(StrEnum):
 @dataclass
 class MITRETechnique:
     """MITRE ATT&CK technique reference."""
+
     id: str
     name: str
     phase: AttackPhase
@@ -60,6 +62,7 @@ class MITRETechnique:
 @dataclass
 class ScenarioStep:
     """A single step in an attack scenario."""
+
     name: str
     description: str
     technique: MITRETechnique
@@ -71,6 +74,7 @@ class ScenarioStep:
 @dataclass
 class AttackScenario:
     """A complete attack scenario with multiple steps."""
+
     id: str
     name: str
     description: str
@@ -139,14 +143,16 @@ class ScenarioRunner:
                 network_results = step.generate_network()
                 all_network_results.extend(network_results)
 
-            step_results.append({
-                "step_name": step.name,
-                "technique_id": step.technique.id,
-                "technique_name": step.technique.name,
-                "events_generated": len(events),
-                "network_packets": len(network_results),
-                "duration_ms": (datetime.now(UTC) - step_start).total_seconds() * 1000,
-            })
+            step_results.append(
+                {
+                    "step_name": step.name,
+                    "technique_id": step.technique.id,
+                    "technique_name": step.technique.name,
+                    "events_generated": len(events),
+                    "network_packets": len(network_results),
+                    "duration_ms": (datetime.now(UTC) - step_start).total_seconds() * 1000,
+                }
+            )
 
             if step.delay_seconds > 0:
                 time.sleep(step.delay_seconds)
@@ -256,10 +262,12 @@ def _create_root_login_scenario(generator: OCSFEventGenerator) -> AttackScenario
                 name="Root Login from Suspicious IP",
                 description="Root account login from a known malicious IP address",
                 technique=TECHNIQUES["T1078.004"],
-                generate_events=lambda: [generator.generate_root_login(
-                    source_ip="185.220.101.1",
-                    status=EventStatus.SUCCESS,
-                )],
+                generate_events=lambda: [
+                    generator.generate_root_login(
+                        source_ip="185.220.101.1",
+                        status=EventStatus.SUCCESS,
+                    )
+                ],
             ),
         ],
     )
@@ -279,21 +287,25 @@ def _create_privilege_escalation_scenario(generator: OCSFEventGenerator) -> Atta
                 name="Attach Admin Policy",
                 description="Attacker attaches AdministratorAccess policy to compromised user",
                 technique=TECHNIQUES["T1098"],
-                generate_events=lambda: [generator.generate_iam_policy_change(
-                    operation="AttachUserPolicy",
-                    user_name="compromised-user",
-                    policy_arn="arn:aws:iam::aws:policy/AdministratorAccess",
-                )],
+                generate_events=lambda: [
+                    generator.generate_iam_policy_change(
+                        operation="AttachUserPolicy",
+                        user_name="compromised-user",
+                        policy_arn="arn:aws:iam::aws:policy/AdministratorAccess",
+                    )
+                ],
                 delay_seconds=1.0,
             ),
             ScenarioStep(
                 name="Create Backdoor Access Key",
                 description="Attacker creates access key for persistence",
                 technique=TECHNIQUES["T1098.001"],
-                generate_events=lambda: [generator.generate_access_key_creation(
-                    user_name="backdoor-user",
-                    created_by="compromised-user",
-                )],
+                generate_events=lambda: [
+                    generator.generate_access_key_creation(
+                        user_name="backdoor-user",
+                        created_by="compromised-user",
+                    )
+                ],
             ),
         ],
     )
@@ -338,24 +350,28 @@ def _create_security_group_evasion_scenario(generator: OCSFEventGenerator) -> At
                 name="Open SSH to World",
                 description="Attacker opens port 22 to 0.0.0.0/0",
                 technique=TECHNIQUES["T1562.007"],
-                generate_events=lambda: [generator.generate_security_group_change(
-                    operation="AuthorizeSecurityGroupIngress",
-                    from_port=22,
-                    to_port=22,
-                    cidr="0.0.0.0/0",
-                )],
+                generate_events=lambda: [
+                    generator.generate_security_group_change(
+                        operation="AuthorizeSecurityGroupIngress",
+                        from_port=22,
+                        to_port=22,
+                        cidr="0.0.0.0/0",
+                    )
+                ],
                 delay_seconds=0.5,
             ),
             ScenarioStep(
                 name="Open RDP to World",
                 description="Attacker opens port 3389 to 0.0.0.0/0",
                 technique=TECHNIQUES["T1562.007"],
-                generate_events=lambda: [generator.generate_security_group_change(
-                    operation="AuthorizeSecurityGroupIngress",
-                    from_port=3389,
-                    to_port=3389,
-                    cidr="0.0.0.0/0",
-                )],
+                generate_events=lambda: [
+                    generator.generate_security_group_change(
+                        operation="AuthorizeSecurityGroupIngress",
+                        from_port=3389,
+                        to_port=3389,
+                        cidr="0.0.0.0/0",
+                    )
+                ],
             ),
         ],
     )
@@ -405,17 +421,19 @@ def _create_network_discovery_scenario(
 
     # Add real network traffic step if emulator available
     if network_emulator:
-        steps.append(ScenarioStep(
-            name="Live Port Scan",
-            description="Actual port scan generating real VPC flow logs",
-            technique=TECHNIQUES["T1046"],
-            generate_events=lambda: [],
-            generate_network=lambda: network_emulator.simulate_port_scan(
-                target_ip="127.0.0.1",  # Safe target for testing
-                common_ports=False,
-                custom_ports=[80, 443, 8080],
-            ),
-        ))
+        steps.append(
+            ScenarioStep(
+                name="Live Port Scan",
+                description="Actual port scan generating real VPC flow logs",
+                technique=TECHNIQUES["T1046"],
+                generate_events=lambda: [],
+                generate_network=lambda: network_emulator.simulate_port_scan(
+                    target_ip="127.0.0.1",  # Safe target for testing
+                    common_ports=False,
+                    custom_ports=[80, 443, 8080],
+                ),
+            )
+        )
 
     return AttackScenario(
         id="network-discovery",
@@ -449,16 +467,18 @@ def _create_dns_c2_scenario(
     ]
 
     if network_emulator:
-        steps.append(ScenarioStep(
-            name="Live DNS Exfiltration",
-            description="Actual DNS queries simulating data exfiltration",
-            technique=TECHNIQUES["T1048.003"],
-            generate_events=lambda: [],
-            generate_network=lambda: network_emulator.simulate_dns_exfil(
-                base_domain="exfil.example.com",
-                data_chunks=["secret", "data", "here"],
-            ),
-        ))
+        steps.append(
+            ScenarioStep(
+                name="Live DNS Exfiltration",
+                description="Actual DNS queries simulating data exfiltration",
+                technique=TECHNIQUES["T1048.003"],
+                generate_events=lambda: [],
+                generate_network=lambda: network_emulator.simulate_dns_exfil(
+                    base_domain="exfil.example.com",
+                    data_chunks=["secret", "data", "here"],
+                ),
+            )
+        )
 
     return AttackScenario(
         id="dns-c2-exfil",
@@ -508,29 +528,35 @@ def _create_full_attack_chain_scenario(generator: OCSFEventGenerator) -> AttackS
                 name="Successful Root Login",
                 description="Attacker gains access to root account",
                 technique=TECHNIQUES["T1078.004"],
-                generate_events=lambda: [generator.generate_root_login(
-                    status=EventStatus.SUCCESS,
-                )],
+                generate_events=lambda: [
+                    generator.generate_root_login(
+                        status=EventStatus.SUCCESS,
+                    )
+                ],
                 delay_seconds=0.5,
             ),
             ScenarioStep(
                 name="Privilege Escalation",
                 description="Attach admin policy to user",
                 technique=TECHNIQUES["T1098"],
-                generate_events=lambda: [generator.generate_iam_policy_change(
-                    operation="AttachUserPolicy",
-                    user_name="attacker-user",
-                )],
+                generate_events=lambda: [
+                    generator.generate_iam_policy_change(
+                        operation="AttachUserPolicy",
+                        user_name="attacker-user",
+                    )
+                ],
                 delay_seconds=0.5,
             ),
             ScenarioStep(
                 name="Create Backdoor",
                 description="Create access key for persistence",
                 technique=TECHNIQUES["T1098.001"],
-                generate_events=lambda: [generator.generate_access_key_creation(
-                    user_name="backdoor",
-                    created_by="attacker-user",
-                )],
+                generate_events=lambda: [
+                    generator.generate_access_key_creation(
+                        user_name="backdoor",
+                        created_by="attacker-user",
+                    )
+                ],
                 delay_seconds=0.5,
             ),
             ScenarioStep(

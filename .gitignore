@@ -7,27 +7,47 @@ wheels/
 *.egg-info
 
 # Virtual environments
-.venv
+.venv/
+venv/
+ENV/
 
 # IDE
 .idea/
 .vscode/
 *.swp
 *.swo
+*~
 
 # Testing
 .pytest_cache/
 .coverage
 htmlcov/
+.tox/
+.nox/
 
-# Local configuration
+# Local configuration - NEVER COMMIT
 .env
 .env.local
+.env.production
 *.local.yaml
+*.local.json
+secrets.yaml
+credentials.json
+
+# AWS credentials and config - NEVER COMMIT
+.aws/
+aws-exports.js
 
 # Lambda deployment artifacts
 .aws-sam/
 packaged.yaml
+samconfig.toml
+
+# CDK outputs - NEVER COMMIT (contains account IDs, resource names)
+cdk.out/
+infrastructure/cdk/cdk.out/
+*.cdk.staging/
+cdk.context.json
 
 # Tool-specific directories
 .playwright-mcp/
@@ -35,6 +55,34 @@ packaged.yaml
 
 # Generated output
 output/
+/reports/
+*.pdf
+*.html
 
 # Marimo session state
 notebooks/__marimo__/
+
+# Log files
+*.log
+logs/
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+*.bak
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Pre-commit cache
+.pre-commit-cache/
+
+# Node.js (for CDK)
+node_modules/
+npm-debug.log
+yarn-error.log
+
+# Claude Code conversation logs
+.claude/

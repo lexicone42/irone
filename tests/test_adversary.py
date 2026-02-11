@@ -1,47 +1,46 @@
 """Tests for the adversary emulation module."""
 
-from datetime import UTC, datetime, timedelta
+import json
 from pathlib import Path
 from unittest.mock import MagicMock, patch
-import json
 
 import polars as pl
 import pytest
 
 from secdashboards.adversary.events import (
-    OCSFEventGenerator,
-    SyntheticCloudTrailEvent,
-    SyntheticAuthenticationEvent,
-    SyntheticVPCFlowEvent,
-    SyntheticDNSEvent,
-    EventStatus,
     ActorUser,
-    SrcEndpoint,
-    DstEndpoint,
     APIInfo,
-)
-from secdashboards.adversary.scenarios import (
-    AttackScenario,
-    ScenarioRunner,
-    ScenarioStep,
-    MITRETechnique,
-    AttackPhase,
-    get_mitre_scenarios,
-    TECHNIQUES,
+    DstEndpoint,
+    EventStatus,
+    OCSFEventGenerator,
+    SrcEndpoint,
+    SyntheticAuthenticationEvent,
+    SyntheticCloudTrailEvent,
+    SyntheticDNSEvent,
+    SyntheticVPCFlowEvent,
 )
 from secdashboards.adversary.network import (
+    DNSQuery,
     NetworkEmulator,
     PacketResult,
     Protocol,
     TCPSYNPacket,
-    DNSQuery,
 )
 from secdashboards.adversary.runner import (
     AdversaryTestRunner,
+    LocalDetectionTester,
+    TestOutcome,
     TestResult,
     TestSuite,
-    TestOutcome,
-    LocalDetectionTester,
+)
+from secdashboards.adversary.scenarios import (
+    TECHNIQUES,
+    AttackPhase,
+    AttackScenario,
+    MITRETechnique,
+    ScenarioRunner,
+    ScenarioStep,
+    get_mitre_scenarios,
 )
 from secdashboards.connectors.security_lake import OCSFEventClass
 
@@ -333,7 +332,13 @@ class TestNetworkEmulator:
 
         results = [
             PacketResult(success=True, dst_ip="10.0.0.1", dst_port=80, response_time_ms=10),
-            PacketResult(success=True, dst_ip="10.0.0.1", dst_port=443, response_time_ms=20, response_received=True),
+            PacketResult(
+                success=True,
+                dst_ip="10.0.0.1",
+                dst_port=443,
+                response_time_ms=20,
+                response_received=True,
+            ),
             PacketResult(success=False, dst_ip="10.0.0.1", dst_port=22, error="Connection refused"),
         ]
 
@@ -406,18 +411,30 @@ class TestAdversaryTestRunner:
         """Test test suite metrics calculation."""
         suite = TestSuite()
 
-        suite.add_result(TestResult(
-            rule_id="rule1", rule_name="Rule 1",
-            outcome=TestOutcome.PASS, scenario_id="s1",
-        ))
-        suite.add_result(TestResult(
-            rule_id="rule2", rule_name="Rule 2",
-            outcome=TestOutcome.PASS, scenario_id="s1",
-        ))
-        suite.add_result(TestResult(
-            rule_id="rule3", rule_name="Rule 3",
-            outcome=TestOutcome.FAIL, scenario_id="s1",
-        ))
+        suite.add_result(
+            TestResult(
+                rule_id="rule1",
+                rule_name="Rule 1",
+                outcome=TestOutcome.PASS,
+                scenario_id="s1",
+            )
+        )
+        suite.add_result(
+            TestResult(
+                rule_id="rule2",
+                rule_name="Rule 2",
+                outcome=TestOutcome.PASS,
+                scenario_id="s1",
+            )
+        )
+        suite.add_result(
+            TestResult(
+                rule_id="rule3",
+                rule_name="Rule 3",
+                outcome=TestOutcome.FAIL,
+                scenario_id="s1",
+            )
+        )
 
         assert suite.total_tests == 3
         assert suite.passed == 2
@@ -430,10 +447,14 @@ class TestAdversaryTestRunner:
         suite.scenarios_run = ["scenario1", "scenario2"]
         suite.rules_tested = ["rule1", "rule2"]
 
-        suite.add_result(TestResult(
-            rule_id="rule1", rule_name="Rule 1",
-            outcome=TestOutcome.PASS, scenario_id="scenario1",
-        ))
+        suite.add_result(
+            TestResult(
+                rule_id="rule1",
+                rule_name="Rule 1",
+                outcome=TestOutcome.PASS,
+                scenario_id="scenario1",
+            )
+        )
 
         suite.complete()
         summary = suite.summary()
@@ -456,7 +477,7 @@ class TestAdversaryTestRunner:
 
     def test_local_detection_tester(self) -> None:
         """Test local detection tester quick_test."""
-        from secdashboards.detections.rule import SQLDetectionRule, DetectionMetadata, Severity
+        from secdashboards.detections.rule import DetectionMetadata, Severity, SQLDetectionRule
 
         # Create a simple detection rule
         rule = SQLDetectionRule(
@@ -495,7 +516,7 @@ class TestLambdaHandler:
 
     def test_lambda_handler_list_scenarios(self) -> None:
         """Test Lambda handler list scenarios action."""
-        from secdashboards.adversary.lambda_handler import handler, SCENARIOS
+        from secdashboards.adversary.lambda_handler import SCENARIOS, handler
 
         event = {"action": "list_scenarios"}
         result = handler(event, None)
@@ -517,11 +538,7 @@ class TestLambdaHandler:
             "timestamp": "2026-01-12T00:00:00+00:00",
         }
 
-        event = {
-            "tests": [
-                {"type": "tcp_connect", "target_ip": "10.0.0.50", "target_port": 22}
-            ]
-        }
+        event = {"tests": [{"type": "tcp_connect", "target_ip": "10.0.0.50", "target_port": 22}]}
         result = handler(event, None)
 
         assert result["statusCode"] == 200

@@ -12,13 +12,12 @@ Environment variables:
 """
 
 import os
-from datetime import datetime, timedelta, UTC
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
 from secdashboards.catalog.models import DataSource, DataSourceType
 from secdashboards.connectors.security_lake import OCSFEventClass, SecurityLakeConnector
-
 
 # Skip all tests unless RUN_INTEGRATION_TESTS env var is set
 pytestmark = pytest.mark.skipif(
@@ -45,9 +44,7 @@ def get_athena_output_location() -> str:
 @pytest.fixture
 def security_lake_source() -> DataSource:
     """Create a Security Lake data source for CloudTrail."""
-    database = os.environ.get(
-        "SECURITY_LAKE_DATABASE", "amazon_security_lake_glue_db_us_west_2"
-    )
+    database = os.environ.get("SECURITY_LAKE_DATABASE", "amazon_security_lake_glue_db_us_west_2")
     table = os.environ.get(
         "SECURITY_LAKE_TABLE", "amazon_security_lake_table_us_west_2_cloud_trail_mgmt_2_0"
     )
@@ -113,9 +110,7 @@ class TestOCSFEventClassQueries:
         for row in df.iter_rows(named=True):
             assert isinstance(row["class_uid"], int)
 
-    def test_query_by_event_class_api_activity(
-        self, connector: SecurityLakeConnector
-    ) -> None:
+    def test_query_by_event_class_api_activity(self, connector: SecurityLakeConnector) -> None:
         """Test querying API Activity events (class_uid 6003)."""
         end = datetime.now(UTC)
         start = end - timedelta(hours=1)
@@ -131,9 +126,7 @@ class TestOCSFEventClassQueries:
             for class_uid in df["class_uid"].to_list():
                 assert class_uid == 6003
 
-    def test_query_by_event_class_authentication(
-        self, connector: SecurityLakeConnector
-    ) -> None:
+    def test_query_by_event_class_authentication(self, connector: SecurityLakeConnector) -> None:
         """Test querying Authentication events (class_uid 3002)."""
         end = datetime.now(UTC)
         start = end - timedelta(hours=24)

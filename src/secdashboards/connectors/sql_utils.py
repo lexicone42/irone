@@ -8,7 +8,6 @@ so we must sanitize inputs carefully.
 import re
 from typing import Any
 
-
 # Pattern for valid SQL identifiers (table names, database names, column names)
 # Must start with letter or underscore, contain only alphanumeric and underscore
 _IDENTIFIER_PATTERN = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")

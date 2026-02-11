@@ -11,7 +11,6 @@ import polars as pl
 from secdashboards.catalog.models import DataSource
 from secdashboards.connectors.base import DataConnector, HealthCheckResult
 from secdashboards.connectors.sql_utils import (
-    quote_identifier,
     quote_table,
     sanitize_string,
 )
@@ -48,9 +47,7 @@ class AthenaConnector(DataConnector):
 
         # Get results location and read with Polars
         result_response = self._athena.get_query_execution(QueryExecutionId=query_execution_id)
-        result_location = result_response["QueryExecution"]["ResultConfiguration"][
-            "OutputLocation"
-        ]
+        result_location = result_response["QueryExecution"]["ResultConfiguration"]["OutputLocation"]
 
         return self._read_results(result_location)
 

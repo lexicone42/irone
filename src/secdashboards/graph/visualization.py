@@ -356,8 +356,8 @@ class GraphVisualizer:
                 f'<div style="display: flex; align-items: center; margin: 5px;">'
                 f'<div style="width: 20px; height: 20px; background-color: {color}; '
                 f'border-radius: {"50%" if shape == "dot" else "0"}; margin-right: 10px;"></div>'
-                f'<span>{node_type.value}</span>'
-                f'</div>'
+                f"<span>{node_type.value}</span>"
+                f"</div>"
             )
 
         return f"""

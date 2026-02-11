@@ -12,9 +12,8 @@ To generate PDF samples for visual inspection:
     uv run python scripts/generate_sample_reports.py
 """
 
-import os
 import tempfile
-from datetime import datetime, UTC
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -24,7 +23,6 @@ from secdashboards.graph import (
     EdgeType,
     GraphEdge,
     IPAddressNode,
-    NodeType,
     PrincipalNode,
     ResourceNode,
     SecurityFindingNode,
@@ -202,9 +200,7 @@ class TestInvestigationReport:
 class TestDetectionReport:
     """Test detection report generation."""
 
-    def test_detection_results_to_report_data(
-        self, sample_detection_results: list[dict]
-    ) -> None:
+    def test_detection_results_to_report_data(self, sample_detection_results: list[dict]) -> None:
         """Test converting detection results to report data."""
         report_data = detection_results_to_report_data(
             results=sample_detection_results,
@@ -217,9 +213,7 @@ class TestDetectionReport:
         assert len(report_data.mitre_coverage) == 2
         assert report_data.test_summary == "Test summary"
 
-    def test_render_detection_report_latex(
-        self, sample_detection_results: list[dict]
-    ) -> None:
+    def test_render_detection_report_latex(self, sample_detection_results: list[dict]) -> None:
         """Test rendering detection report to LaTeX."""
         report_data = detection_results_to_report_data(results=sample_detection_results)
         report_data.title = "Test Detection Report"
@@ -236,9 +230,7 @@ class TestDetectionReport:
         assert "test-rule-1" in latex
         assert "test-rule-2" in latex
 
-    def test_detection_report_severity_colors(
-        self, sample_detection_results: list[dict]
-    ) -> None:
+    def test_detection_report_severity_colors(self, sample_detection_results: list[dict]) -> None:
         """Test that severity levels have proper colors."""
         report_data = detection_results_to_report_data(results=sample_detection_results)
 
@@ -322,9 +314,7 @@ Hello World
 class TestReportContent:
     """Test report content validation."""
 
-    def test_investigation_report_has_all_sections(
-        self, sample_graph: SecurityGraph
-    ) -> None:
+    def test_investigation_report_has_all_sections(self, sample_graph: SecurityGraph) -> None:
         """Test that investigation report has all required sections."""
         report_data = graph_to_report_data(graph=sample_graph)
         renderer = LaTeXRenderer()
@@ -340,9 +330,7 @@ class TestReportContent:
         for section in required_sections:
             assert section in latex, f"Missing section: {section}"
 
-    def test_detection_report_has_all_sections(
-        self, sample_detection_results: list[dict]
-    ) -> None:
+    def test_detection_report_has_all_sections(self, sample_detection_results: list[dict]) -> None:
         """Test that detection report has all required sections."""
         report_data = detection_results_to_report_data(
             results=sample_detection_results,
@@ -362,9 +350,7 @@ class TestReportContent:
         for section in required_sections:
             # Handle LaTeX escaping of &
             escaped_section = section.replace("&", r"\&")
-            assert (
-                section in latex or escaped_section in latex
-            ), f"Missing section: {section}"
+            assert section in latex or escaped_section in latex, f"Missing section: {section}"
 
     def test_report_metadata_included(self, sample_graph: SecurityGraph) -> None:
         """Test that report metadata is included."""

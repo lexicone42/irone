@@ -28,7 +28,7 @@ from pathlib import Path
 def create_demo_graph():
     """Create a demo investigation graph without AWS connectivity."""
     from secdashboards.graph import SecurityGraph
-    from secdashboards.graph.models import EdgeType, GraphNode, GraphEdge, NodeType
+    from secdashboards.graph.models import EdgeType, GraphEdge, GraphNode, NodeType
 
     graph = SecurityGraph()
 
@@ -105,10 +105,10 @@ def create_demo_graph():
     # API Operation nodes with timestamps for timeline
     base_time = datetime.now(UTC) - timedelta(hours=2)
     api_operations = [
-        ("iam", "CreateUser", 1, 0, 5),       # minute offset
+        ("iam", "CreateUser", 1, 0, 5),  # minute offset
         ("iam", "CreateAccessKey", 2, 0, 7),
         ("iam", "AttachUserPolicy", 1, 0, 10),
-        ("sts", "GetCallerIdentity", 3, 0, 0),   # first action
+        ("sts", "GetCallerIdentity", 3, 0, 0),  # first action
         ("s3", "ListBuckets", 1, 0, 15),
         ("s3", "GetObject", 15, 2, 20),
         ("ec2", "DescribeInstances", 5, 0, 45),
@@ -308,9 +308,9 @@ def run_demo_investigation(output_dir: Path):
     # Generate timeline
     print("[3/5] Building investigation timeline...")
     from secdashboards.graph import (
-        extract_timeline_from_graph,
-        TimelineVisualizer,
         EventTag,
+        TimelineVisualizer,
+        extract_timeline_from_graph,
     )
 
     timeline = extract_timeline_from_graph(graph, include_nodes=True, include_edges=False)
@@ -326,7 +326,9 @@ def run_demo_investigation(output_dir: Path):
 
     timeline_summary = timeline.summary()
     print(f"      Events:     {timeline_summary['total_events']}")
-    print(f"      Time range: {timeline_summary['time_range']['start'][:19] if timeline_summary['time_range']['start'] else 'N/A'} to {timeline_summary['time_range']['end'][:19] if timeline_summary['time_range']['end'] else 'N/A'}")
+    print(
+        f"      Time range: {timeline_summary['time_range']['start'][:19] if timeline_summary['time_range']['start'] else 'N/A'} to {timeline_summary['time_range']['end'][:19] if timeline_summary['time_range']['end'] else 'N/A'}"
+    )
     print(f"      Tags:       {timeline_summary['tag_counts']}")
 
     # Save timeline visualization
@@ -351,7 +353,7 @@ def run_demo_investigation(output_dir: Path):
 
     # Generate report data
     print("[4/5] Generating report...")
-    from secdashboards.reports import graph_to_report_data, LaTeXRenderer
+    from secdashboards.reports import LaTeXRenderer, graph_to_report_data
 
     report_data = graph_to_report_data(
         graph=graph,
@@ -464,7 +466,7 @@ def run_live_investigation(
     from secdashboards.catalog.models import DataSource, DataSourceType
     from secdashboards.catalog.registry import DataCatalog
     from secdashboards.graph import GraphBuilder, GraphVisualizer
-    from secdashboards.reports import graph_to_report_data, LaTeXRenderer
+    from secdashboards.reports import LaTeXRenderer, graph_to_report_data
 
     print("=" * 60)
     print("LIVE MODE: Security Incident Investigation")
@@ -582,9 +584,7 @@ def run_live_investigation(
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Run an example security incident investigation"
-    )
+    parser = argparse.ArgumentParser(description="Run an example security incident investigation")
     parser.add_argument(
         "--demo",
         action="store_true",

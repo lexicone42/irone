@@ -112,7 +112,7 @@ class BedrockAssistant:
     def __init__(
         self,
         region: str = "us-west-2",
-        default_model: BedrockModel = BedrockModel.CLAUDE_3_5_SONNET,
+        default_model: BedrockModel = BedrockModel.CLAUDE_SONNET_4_5,
         task_configs: dict[str, TaskConfig] | None = None,
     ) -> None:
         """Initialize the Bedrock assistant.
@@ -310,7 +310,8 @@ class BedrockAssistant:
         """
         # Format detection result for analysis
         alert_data = detection_result.to_alert_dict()
-        message = f"Triage this security alert:\n\n```json\n{json.dumps(alert_data, indent=2, default=str)}\n```"
+        json_data = json.dumps(alert_data, indent=2, default=str)
+        message = f"Triage this security alert:\n\n```json\n{json_data}\n```"
 
         return self._invoke_model("alert_triage", message, config)
 
@@ -336,7 +337,8 @@ class BedrockAssistant:
             # Include sample events (limit to avoid token overflow)
             alert_data["matched_events_sample"] = detection_result.matches[:20]
 
-        message = f"Analyze this security alert in detail:\n\n```json\n{json.dumps(alert_data, indent=2, default=str)}\n```"
+        json_data = json.dumps(alert_data, indent=2, default=str)
+        message = f"Analyze this security alert in detail:\n\n```json\n{json_data}\n```"
 
         return self._invoke_model("alert_analysis", message, config)
 
@@ -383,7 +385,8 @@ class BedrockAssistant:
             ][:100],  # Limit edges
         }
 
-        message = f"Analyze this security investigation graph:\n\n```json\n{json.dumps(graph_data, indent=2, default=str)}\n```"
+        json_data = json.dumps(graph_data, indent=2, default=str)
+        message = f"Analyze this security investigation graph:\n\n```json\n{json_data}\n```"
         if focus_area:
             message += f"\n\nFocus on: {focus_area}"
 
@@ -406,7 +409,8 @@ class BedrockAssistant:
         # Limit events to avoid token overflow
         events = events[:50]
 
-        message = f"Analyze these events for attack chain patterns:\n\n```json\n{json.dumps(events, indent=2, default=str)}\n```"
+        json_data = json.dumps(events, indent=2, default=str)
+        message = f"Analyze these events for attack chain patterns:\n\n```json\n{json_data}\n```"
 
         return self._invoke_model("attack_chain_analysis", message, config)
 
@@ -437,7 +441,8 @@ class BedrockAssistant:
             "actions_taken": actions_taken or [],
         }
 
-        message = f"Generate an incident report from this data:\n\n```json\n{json.dumps(incident_data, indent=2, default=str)}\n```"
+        json_data = json.dumps(incident_data, indent=2, default=str)
+        message = f"Generate an incident report from this data:\n\n```json\n{json_data}\n```"
 
         return self._invoke_model("incident_report", message, config)
 
@@ -507,9 +512,7 @@ Generate only the SQL query."""
             "total_cost_usd": self._total_cost_usd,
             "request_count": self._request_count,
             "avg_cost_per_request": (
-                self._total_cost_usd / self._request_count
-                if self._request_count > 0
-                else 0
+                self._total_cost_usd / self._request_count if self._request_count > 0 else 0
             ),
         }
 

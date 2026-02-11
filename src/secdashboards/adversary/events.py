@@ -15,6 +15,7 @@ from secdashboards.connectors.security_lake import OCSFEventClass
 
 class EventStatus(StrEnum):
     """Event outcome status."""
+
     SUCCESS = "Success"
     FAILURE = "Failure"
     UNKNOWN = "Unknown"
@@ -49,6 +50,7 @@ class SyntheticEvent(BaseModel):
 
 class ActorUser(BaseModel):
     """OCSF actor.user object."""
+
     name: str = "test-user"
     uid: str = Field(default_factory=lambda: str(uuid4()))
     type: str = "IAMUser"
@@ -57,6 +59,7 @@ class ActorUser(BaseModel):
 
 class SrcEndpoint(BaseModel):
     """OCSF src_endpoint object."""
+
     ip: str = "192.168.1.100"
     port: int | None = None
     hostname: str | None = None
@@ -64,6 +67,7 @@ class SrcEndpoint(BaseModel):
 
 class DstEndpoint(BaseModel):
     """OCSF dst_endpoint object."""
+
     ip: str = "10.0.0.1"
     port: int = 443
     hostname: str | None = None
@@ -71,6 +75,7 @@ class DstEndpoint(BaseModel):
 
 class APIInfo(BaseModel):
     """OCSF api object for CloudTrail events."""
+
     operation: str = "DescribeInstances"
     service_name: str = "ec2.amazonaws.com"
     request_data: str | None = None
@@ -90,6 +95,7 @@ class APIInfo(BaseModel):
 
 class CloudInfo(BaseModel):
     """OCSF cloud object."""
+
     provider: str = "AWS"
     region: str = "us-west-2"
     account_uid: str = "123456789012"
@@ -108,12 +114,14 @@ class SyntheticCloudTrailEvent(SyntheticEvent):
 
     def to_ocsf_dict(self) -> dict[str, Any]:
         base = super().to_ocsf_dict()
-        base.update({
-            "actor": {"user": self.actor_user.model_dump()},
-            "src_endpoint": self.src_endpoint.model_dump(exclude_none=True),
-            "api": self.api.to_dict(),
-            "cloud": self.cloud.model_dump(),
-        })
+        base.update(
+            {
+                "actor": {"user": self.actor_user.model_dump()},
+                "src_endpoint": self.src_endpoint.model_dump(exclude_none=True),
+                "api": self.api.to_dict(),
+                "cloud": self.cloud.model_dump(),
+            }
+        )
         return base
 
 
@@ -129,11 +137,13 @@ class SyntheticAuthenticationEvent(SyntheticEvent):
 
     def to_ocsf_dict(self) -> dict[str, Any]:
         base = super().to_ocsf_dict()
-        base.update({
-            "actor": {"user": self.actor_user.model_dump()},
-            "src_endpoint": self.src_endpoint.model_dump(exclude_none=True),
-            "auth_protocol": self.auth_protocol,
-        })
+        base.update(
+            {
+                "actor": {"user": self.actor_user.model_dump()},
+                "src_endpoint": self.src_endpoint.model_dump(exclude_none=True),
+                "auth_protocol": self.auth_protocol,
+            }
+        )
         return base
 
 
@@ -145,26 +155,32 @@ class SyntheticVPCFlowEvent(SyntheticEvent):
 
     src_endpoint: SrcEndpoint = Field(default_factory=SrcEndpoint)
     dst_endpoint: DstEndpoint = Field(default_factory=DstEndpoint)
-    connection_info: dict[str, Any] = Field(default_factory=lambda: {
-        "protocol_num": 6,  # TCP
-        "protocol_name": "TCP",
-        "direction": "Inbound",
-    })
-    traffic: dict[str, Any] = Field(default_factory=lambda: {
-        "packets": 100,
-        "bytes": 50000,
-    })
+    connection_info: dict[str, Any] = Field(
+        default_factory=lambda: {
+            "protocol_num": 6,  # TCP
+            "protocol_name": "TCP",
+            "direction": "Inbound",
+        }
+    )
+    traffic: dict[str, Any] = Field(
+        default_factory=lambda: {
+            "packets": 100,
+            "bytes": 50000,
+        }
+    )
     action: str = "Accept"
 
     def to_ocsf_dict(self) -> dict[str, Any]:
         base = super().to_ocsf_dict()
-        base.update({
-            "src_endpoint": self.src_endpoint.model_dump(exclude_none=True),
-            "dst_endpoint": self.dst_endpoint.model_dump(exclude_none=True),
-            "connection_info": self.connection_info,
-            "traffic": self.traffic,
-            "action": self.action,
-        })
+        base.update(
+            {
+                "src_endpoint": self.src_endpoint.model_dump(exclude_none=True),
+                "dst_endpoint": self.dst_endpoint.model_dump(exclude_none=True),
+                "connection_info": self.connection_info,
+                "traffic": self.traffic,
+                "action": self.action,
+            }
+        )
         return base
 
 
@@ -175,24 +191,28 @@ class SyntheticDNSEvent(SyntheticEvent):
     class_name: str = "DNS Activity"
 
     src_endpoint: SrcEndpoint = Field(default_factory=SrcEndpoint)
-    query: dict[str, Any] = Field(default_factory=lambda: {
-        "hostname": "example.com",
-        "type": "A",
-        "class": "IN",
-    })
-    answers: list[dict[str, Any]] = Field(default_factory=lambda: [
-        {"rdata": "93.184.216.34", "type": "A"}
-    ])
+    query: dict[str, Any] = Field(
+        default_factory=lambda: {
+            "hostname": "example.com",
+            "type": "A",
+            "class": "IN",
+        }
+    )
+    answers: list[dict[str, Any]] = Field(
+        default_factory=lambda: [{"rdata": "93.184.216.34", "type": "A"}]
+    )
     rcode: str = "NOERROR"
 
     def to_ocsf_dict(self) -> dict[str, Any]:
         base = super().to_ocsf_dict()
-        base.update({
-            "src_endpoint": self.src_endpoint.model_dump(exclude_none=True),
-            "query": self.query,
-            "answers": self.answers,
-            "rcode": self.rcode,
-        })
+        base.update(
+            {
+                "src_endpoint": self.src_endpoint.model_dump(exclude_none=True),
+                "query": self.query,
+                "answers": self.answers,
+                "rcode": self.rcode,
+            }
+        )
         return base
 
 
@@ -202,22 +222,26 @@ class SyntheticSecurityFinding(SyntheticEvent):
     class_uid: int = OCSFEventClass.SECURITY_FINDING
     class_name: str = "Security Finding"
 
-    finding_info: dict[str, Any] = Field(default_factory=lambda: {
-        "uid": str(uuid4()),
-        "title": "Test Finding",
-        "desc": "This is a test security finding",
-        "types": ["Software and Configuration Checks"],
-    })
+    finding_info: dict[str, Any] = Field(
+        default_factory=lambda: {
+            "uid": str(uuid4()),
+            "title": "Test Finding",
+            "desc": "This is a test security finding",
+            "types": ["Software and Configuration Checks"],
+        }
+    )
     severity: str = "MEDIUM"
     confidence: int = 80
 
     def to_ocsf_dict(self) -> dict[str, Any]:
         base = super().to_ocsf_dict()
-        base.update({
-            "finding_info": self.finding_info,
-            "severity": self.severity,
-            "confidence": self.confidence,
-        })
+        base.update(
+            {
+                "finding_info": self.finding_info,
+                "severity": self.severity,
+                "confidence": self.confidence,
+            }
+        )
         return base
 
 
@@ -231,9 +255,9 @@ class OCSFEventGenerator:
     # Common malicious IPs for testing
     MALICIOUS_IPS = [
         "185.220.101.1",  # Known Tor exit
-        "45.33.32.156",   # Test scanner
-        "198.51.100.1",   # Documentation range (test)
-        "203.0.113.50",   # Documentation range (test)
+        "45.33.32.156",  # Test scanner
+        "198.51.100.1",  # Documentation range (test)
+        "203.0.113.50",  # Documentation range (test)
     ]
 
     # Suspicious user agents
@@ -303,10 +327,12 @@ class OCSFEventGenerator:
             api=APIInfo(
                 operation=operation,
                 service_name="iam.amazonaws.com",
-                request_data=json.dumps({
-                    "policyArn": policy_arn,
-                    "userName": user_name,
-                }),
+                request_data=json.dumps(
+                    {
+                        "policyArn": policy_arn,
+                        "userName": user_name,
+                    }
+                ),
             ),
             cloud=CloudInfo(
                 region=self.region,
@@ -337,15 +363,19 @@ class OCSFEventGenerator:
             api=APIInfo(
                 operation=operation,
                 service_name="ec2.amazonaws.com",
-                request_data=json.dumps({
-                    "groupId": "sg-12345678",
-                    "ipPermissions": [{
-                        "fromPort": from_port,
-                        "toPort": to_port,
-                        "ipProtocol": "tcp",
-                        "ipRanges": [{"cidrIp": cidr}],
-                    }],
-                }),
+                request_data=json.dumps(
+                    {
+                        "groupId": "sg-12345678",
+                        "ipPermissions": [
+                            {
+                                "fromPort": from_port,
+                                "toPort": to_port,
+                                "ipProtocol": "tcp",
+                                "ipRanges": [{"cidrIp": cidr}],
+                            }
+                        ],
+                    }
+                ),
             ),
             cloud=CloudInfo(
                 region=self.region,
@@ -393,17 +423,19 @@ class OCSFEventGenerator:
         base_time = datetime.now(UTC)
         ip = source_ip or random.choice(self.MALICIOUS_IPS)
 
-        for i in range(count):
+        for _i in range(count):
             offset = timedelta(seconds=random.randint(0, time_spread_minutes * 60))
-            events.append(SyntheticAuthenticationEvent(
-                time_dt=base_time - offset,
-                status=EventStatus.FAILURE,
-                actor_user=ActorUser(
-                    name=user_name,
-                    account_uid=self.account_id,
-                ),
-                src_endpoint=SrcEndpoint(ip=ip),
-            ))
+            events.append(
+                SyntheticAuthenticationEvent(
+                    time_dt=base_time - offset,
+                    status=EventStatus.FAILURE,
+                    actor_user=ActorUser(
+                        name=user_name,
+                        account_uid=self.account_id,
+                    ),
+                    src_endpoint=SrcEndpoint(ip=ip),
+                )
+            )
 
         return sorted(events, key=lambda e: e.time_dt)
 
@@ -426,24 +458,26 @@ class OCSFEventGenerator:
             ("DescribeVpcs", "ec2.amazonaws.com"),
         ]
 
-        for i in range(count):
+        for _i in range(count):
             offset = timedelta(seconds=random.randint(0, time_spread_minutes * 60))
             op, svc = random.choice(operations)
-            events.append(SyntheticCloudTrailEvent(
-                time_dt=base_time - offset,
-                actor_user=ActorUser(
-                    name=user_name,
-                    account_uid=self.account_id,
-                ),
-                api=APIInfo(
-                    operation=op,
-                    service_name=svc,
-                ),
-                cloud=CloudInfo(
-                    region=self.region,
-                    account_uid=self.account_id,
-                ),
-            ))
+            events.append(
+                SyntheticCloudTrailEvent(
+                    time_dt=base_time - offset,
+                    actor_user=ActorUser(
+                        name=user_name,
+                        account_uid=self.account_id,
+                    ),
+                    api=APIInfo(
+                        operation=op,
+                        service_name=svc,
+                    ),
+                    cloud=CloudInfo(
+                        region=self.region,
+                        account_uid=self.account_id,
+                    ),
+                )
+            )
 
         return sorted(events, key=lambda e: e.time_dt)
 
@@ -503,19 +537,21 @@ class OCSFEventGenerator:
 
         events = []
         for i, port in enumerate(ports):
-            events.append(SyntheticVPCFlowEvent(
-                time_dt=base_time + timedelta(milliseconds=i * 100),
-                src_endpoint=SrcEndpoint(
-                    ip=ip,
-                    port=random.randint(1024, 65535),
-                ),
-                dst_endpoint=DstEndpoint(
-                    ip=target_ip,
-                    port=port,
-                ),
-                action="Reject",
-                traffic={"packets": 1, "bytes": 64},
-            ))
+            events.append(
+                SyntheticVPCFlowEvent(
+                    time_dt=base_time + timedelta(milliseconds=i * 100),
+                    src_endpoint=SrcEndpoint(
+                        ip=ip,
+                        port=random.randint(1024, 65535),
+                    ),
+                    dst_endpoint=DstEndpoint(
+                        ip=target_ip,
+                        port=port,
+                    ),
+                    action="Reject",
+                    traffic={"packets": 1, "bytes": 64},
+                )
+            )
 
         return events
 

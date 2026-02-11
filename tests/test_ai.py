@@ -3,10 +3,10 @@
 import pytest
 
 from secdashboards.ai import (
-    BedrockModel,
-    ModelPricing,
     PROMPTS,
     TASK_MODEL_RECOMMENDATIONS,
+    BedrockModel,
+    ModelPricing,
     estimate_request_cost,
     get_pricing,
     get_prompt,
@@ -19,15 +19,11 @@ class TestBedrockModel:
     """Tests for BedrockModel enum."""
 
     def test_all_models_defined(self) -> None:
-        """Test that all expected models are defined."""
+        """Test that all expected Claude 4.5 models are defined."""
         expected_models = [
-            "CLAUDE_3_5_SONNET",
-            "CLAUDE_3_5_HAIKU",
-            "CLAUDE_3_OPUS",
-            "CLAUDE_3_SONNET",
-            "CLAUDE_3_HAIKU",
-            "CLAUDE_SONNET_4",
-            "CLAUDE_OPUS_4",
+            "CLAUDE_SONNET_4_5",
+            "CLAUDE_OPUS_4_5",
+            "CLAUDE_HAIKU_4_5",
         ]
         for model_name in expected_models:
             assert hasattr(BedrockModel, model_name)
@@ -40,9 +36,9 @@ class TestBedrockModel:
 
     def test_aliases_work(self) -> None:
         """Test that convenience aliases work."""
-        assert BedrockModel.SONNET == BedrockModel.CLAUDE_3_5_SONNET
-        assert BedrockModel.HAIKU == BedrockModel.CLAUDE_3_5_HAIKU
-        assert BedrockModel.OPUS == BedrockModel.CLAUDE_3_OPUS
+        assert BedrockModel.SONNET == BedrockModel.CLAUDE_SONNET_4_5
+        assert BedrockModel.HAIKU == BedrockModel.CLAUDE_HAIKU_4_5
+        assert BedrockModel.OPUS == BedrockModel.CLAUDE_OPUS_4_5
 
 
 class TestModelPricing:
@@ -91,13 +87,13 @@ class TestGetPricing:
 
     def test_get_pricing_by_enum(self) -> None:
         """Test getting pricing by enum."""
-        pricing = get_pricing(BedrockModel.CLAUDE_3_5_SONNET)
+        pricing = get_pricing(BedrockModel.CLAUDE_SONNET_4_5)
         assert isinstance(pricing, ModelPricing)
         assert pricing.input_price_per_mtok > 0
 
     def test_get_pricing_by_string(self) -> None:
         """Test getting pricing by model ID string."""
-        pricing = get_pricing(BedrockModel.CLAUDE_3_5_SONNET.value)
+        pricing = get_pricing(BedrockModel.CLAUDE_SONNET_4_5.value)
         assert isinstance(pricing, ModelPricing)
 
     def test_all_models_have_pricing(self) -> None:
@@ -115,7 +111,7 @@ class TestEstimateRequestCost:
     def test_estimate_includes_breakdown(self) -> None:
         """Test that estimate includes cost breakdown."""
         estimate = estimate_request_cost(
-            BedrockModel.CLAUDE_3_5_SONNET,
+            BedrockModel.CLAUDE_SONNET_4_5,
             input_tokens=2000,
             output_tokens=1000,
         )
@@ -130,7 +126,7 @@ class TestEstimateRequestCost:
     def test_estimate_values_are_reasonable(self) -> None:
         """Test that estimates are in reasonable range."""
         estimate = estimate_request_cost(
-            BedrockModel.CLAUDE_3_5_SONNET,
+            BedrockModel.CLAUDE_SONNET_4_5,
             input_tokens=2000,
             output_tokens=1000,
         )
@@ -161,9 +157,9 @@ class TestTaskModelRecommendations:
         assert isinstance(model, BedrockModel)
 
     def test_unknown_task_returns_default(self) -> None:
-        """Test that unknown tasks return default model."""
+        """Test that unknown tasks return default model (Sonnet 4.5)."""
         model = get_recommended_model("unknown_task_xyz")
-        assert model == BedrockModel.CLAUDE_3_5_SONNET
+        assert model == BedrockModel.CLAUDE_SONNET_4_5
 
 
 class TestPrompts:
@@ -198,7 +194,7 @@ class TestPrompts:
 
     def test_prompts_contain_security_context(self) -> None:
         """Test that prompts include security context."""
-        for prompt_name, prompt in PROMPTS.items():
+        for _prompt_name, prompt in PROMPTS.items():
             assert "security" in prompt.lower() or "Security" in prompt
 
 
@@ -245,21 +241,9 @@ class TestIntegration:
     def test_all_public_imports(self) -> None:
         """Test that all public API imports work."""
         from secdashboards.ai import (
-            ALL_TOOLS,
-            MODEL_PRICING,
-            PROMPTS,
-            TASK_MODEL_RECOMMENDATIONS,
-            AssistantResponse,
             BedrockAssistant,
             BedrockModel,
             ModelPricing,
-            TaskConfig,
-            ToolExecutor,
-            estimate_request_cost,
-            get_pricing,
-            get_prompt,
-            get_recommended_model,
-            get_tool_config,
         )
 
         # Just verify they imported without error
@@ -293,11 +277,11 @@ class TestIntegration:
         from secdashboards.ai import TaskConfig
 
         config = TaskConfig(
-            model=BedrockModel.CLAUDE_3_5_SONNET,
+            model=BedrockModel.CLAUDE_SONNET_4_5,
             max_tokens=2048,
             temperature=0.5,
         )
 
-        assert config.model == BedrockModel.CLAUDE_3_5_SONNET
+        assert config.model == BedrockModel.CLAUDE_SONNET_4_5
         assert config.max_tokens == 2048
         assert config.temperature == 0.5

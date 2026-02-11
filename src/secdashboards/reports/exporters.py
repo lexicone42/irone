@@ -51,11 +51,7 @@ def graph_to_report_data(
     entity_summaries = []
     for node_type, count in summary.get("nodes_by_type", {}).items():
         # Get examples of this type
-        examples = [
-            n.label
-            for n in graph.nodes.values()
-            if n.node_type.value == node_type
-        ][:5]
+        examples = [n.label for n in graph.nodes.values() if n.node_type.value == node_type][:5]
         entity_summaries.append(
             EntitySummary(
                 entity_type=node_type,
@@ -87,11 +83,13 @@ def graph_to_report_data(
             findings.append(props)
 
     # Get data sources from graph
-    data_sources = list({
-        node.properties.get("data_source", "Unknown")
-        for node in graph.nodes.values()
-        if node.properties.get("data_source")
-    })
+    data_sources = list(
+        {
+            node.properties.get("data_source", "Unknown")
+            for node in graph.nodes.values()
+            if node.properties.get("data_source")
+        }
+    )
 
     return InvestigationReportData(
         title="Security Investigation Report",
@@ -510,21 +508,18 @@ def export_report_to_s3(
         # Upload LaTeX
         if upload_to_s3(latex_file, bucket, latex_key, region, "text/x-tex"):
             result["latex_key"] = latex_key
-            result["latex_url"] = generate_presigned_url(
-                bucket, latex_key, region, url_expiration
-            )
+            result["latex_url"] = generate_presigned_url(bucket, latex_key, region, url_expiration)
         else:
             result["error"] = "Failed to upload LaTeX file to S3"
             return result
 
         # Try to compile PDF
         pdf_file = tmpdir_path / f"{report_name}.pdf"
-        if compile_latex_to_pdf(latex_content, pdf_file):
-            if upload_to_s3(pdf_file, bucket, pdf_key, region, "application/pdf"):
-                result["pdf_key"] = pdf_key
-                result["pdf_url"] = generate_presigned_url(
-                    bucket, pdf_key, region, url_expiration
-                )
+        if compile_latex_to_pdf(latex_content, pdf_file) and upload_to_s3(
+            pdf_file, bucket, pdf_key, region, "application/pdf"
+        ):
+            result["pdf_key"] = pdf_key
+            result["pdf_url"] = generate_presigned_url(bucket, pdf_key, region, url_expiration)
 
         result["success"] = True
 

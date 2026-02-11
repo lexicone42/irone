@@ -32,6 +32,13 @@ dev = [
     "ruff>=0.9.0",
     "ty>=0.0.1a6",
     "boto3-stubs[essential,athena,s3,lambda,events,glue,securitylake,neptune]>=1.35.0",
+    "moto>=5.1.20",
+    "pre-commit>=4.5.1",
+    "cfn-lint>=1.43.3",
+]
+cdk = [
+    "aws-cdk-lib>=2.170.0",
+    "constructs>=10.0.0",
 ]
 
 [project.scripts]
@@ -51,5 +58,32 @@ target-version = "py313"
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM", "PTH"]
 
+[tool.ruff.lint.per-file-ignores]
+# Allow longer lines in test files (test data, assertions)
+"tests/*.py" = ["E501"]
+"infrastructure/cdk/tests/*.py" = ["E501"]
+# Marimo notebooks use bare expressions to render UI elements
+"notebooks/*.py" = ["B018", "E501"]
+# Scripts contain long strings (ARNs, markdown content, demo data)
+"scripts/*.py" = ["E501"]
+# CDK stacks contain long resource strings and CSP policies
+"infrastructure/cdk/stacks/*.py" = ["E501"]
+
+[tool.ty]
+# Ty (Astral's type checker) configuration
+# Docs: https://docs.astral.sh/ty/
+
 [tool.ty.environment]
 python-version = "3.13"
+
+[tool.ty.rules]
+# Ignore unresolved imports for optional dependencies
+unresolved-import = "warn"
+# Allow missing type stubs for third-party libraries
+possibly-missing-attribute = "warn"
+
+[tool.ty.ignore]
+# Optional dependencies that may not be installed
+paths = [
+    "src/secdashboards/reports/exporters.py",  # playwright is optional
+]
