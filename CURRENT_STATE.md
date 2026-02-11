@@ -39,6 +39,7 @@ secdashboards/
 │   │   └── templates/     # Jinja2 LaTeX templates
 │   ├── health/            # Health monitoring
 │   │   ├── monitor.py     # HealthMonitor for checking data sources
+│   │   ├── alerting_handler.py # Lambda handler for alerting stack
 │   │   └── url_analyzer.py # URLAnalyzer for external URL health
 │   ├── deploy/            # Lambda deployment
 │   │   ├── lambda_builder.py  # LambdaBuilder for deployment packages
@@ -71,11 +72,9 @@ secdashboards/
 ├── detections/
 │   └── sample_rules.yaml  # 6 sample detection rules
 ├── infrastructure/
-│   ├── template.yaml          # Lambda SAM/CloudFormation template
 │   ├── neptune.yaml           # Neptune Serverless CloudFormation stack
 │   ├── marimo-apprunner.yaml  # App Runner VPC deployment
-│   ├── health-dashboard.yaml  # Health dashboard Lambda + API Gateway
-│   └── cdk/                   # AWS CDK stacks (alerting, monitoring)
+│   └── cdk/                   # AWS CDK stacks (alerting, detections, monitoring)
 ├── tests/                 # 414 tests total
 │   ├── test_catalog.py    # Catalog tests (8)
 │   ├── test_detections.py # Detection tests (9)
@@ -96,9 +95,20 @@ secdashboards/
 └── README.md              # Documentation
 ```
 
-## Recent Changes (2026-01-17)
+## Recent Changes (2026-02-10)
 
-### Application Log Onboarding (NEW)
+### CDK Consolidation & Notifications Wiring
+
+- **Removed SAM templates**: Deleted `template.yaml`, `health-dashboard.yaml`, `deploy-dashboard.sh`
+- **New DetectionRulesStack** (`infrastructure/cdk/stacks/detection_rules.py`): CDK stack for deploying detection Lambdas with shared notifications layer, EventBridge schedules, and cross-stack SNS topic import
+- **Updated AlertingStack**: Extracted inline Lambda code into `alerting_handler.py`, switched from `Code.from_inline()` to `Code.from_asset()`, removed separate Slack Lambda in favor of NotificationManager multi-channel routing
+- **Lambda handler templates**: Now use `NotificationManager` (SNS + Slack) instead of inline `sns.publish()` calls
+- **Notifications Lambda Layer**: `LambdaBuilder.build_notifications_layer()` packages the notifications module with httpx/pydantic deps
+- **CLI updates**: Removed `--sam` flag from `deploy`, removed `--api` flag from `adversary deploy-lambda`
+
+## Previous Changes (2026-01-17)
+
+### Application Log Onboarding
 
 **CloudWatch Logs Connector** (`cloudwatch_logs.py`):
 - Query Lambda, EKS, ALB, API Gateway, and Cloudflare logs via Logs Insights
@@ -131,7 +141,8 @@ secdashboards/
 
 **Dual-Target Lambda Builder**:
 - Generate Lambda handlers that query both CloudWatch and Athena
-- SAM template generation for dual-target rules
+- CDK-based deployment via DetectionRulesStack
+- Shared notifications Lambda Layer (SNS + Slack via NotificationManager)
 - Scheduled execution via EventBridge
 
 ### Previous Changes (2026-01-14)
@@ -180,7 +191,7 @@ Key dependencies in pyproject.toml:
 
 ## Test Status
 
-### Unit Tests (414 total - all passing)
+### Unit Tests (435 total - all passing)
 ```bash
 uv run pytest tests/ -v --ignore=tests/test_notebook_main.py
 ```
@@ -188,7 +199,7 @@ uv run pytest tests/ -v --ignore=tests/test_notebook_main.py
 Test breakdown:
 - Catalog: 8
 - Detection: 9
-- Adversary: 37
+- Adversary: 36
 - Graph: 50
 - AI/Bedrock: 26
 - Reports: 58
@@ -196,7 +207,8 @@ Test breakdown:
 - SQL Utils: 32
 - Timeline: 24
 - Notifications: 28
-- Deploy E2E + others: 110
+- Deployment: 33
+- Deploy E2E + others: 99
 
 ### Integration Tests (10 total - all passing)
 ```bash
@@ -320,7 +332,7 @@ secdash adversary test-detections --rules ./detections
 secdash adversary network-test --target 10.0.0.50 --type scan
 
 # Build Lambda deployment package
-secdash adversary deploy-lambda --output ./build --api
+secdash adversary deploy-lambda --output ./build
 
 # Invoke deployed Lambda
 secdash adversary invoke-lambda --scenario port_scan_sim
@@ -367,17 +379,17 @@ be0d9b0 Add deployment E2E tests and fix StrEnum serialization in SAM templates
 
 ## Pending Improvements
 
-1. Fix remaining `datetime.utcnow()` deprecation warnings
+1. ~~Fix remaining `datetime.utcnow()` deprecation warnings~~ Done (already fixed)
 2. ~~Add more detection rules for VPC Flow, Route53, Security Hub data~~ Done
 3. ~~Test Lambda deployment workflow end-to-end~~ Done (test_deploy_e2e.py)
 4. ~~Add alert notification integrations (SNS, Slack, etc.)~~ Done (notifications module)
-5. Add `py.typed` marker for PEP 561 type checking support
+5. ~~Add `py.typed` marker for PEP 561 type checking support~~ Done
 6. Consider adding mkdocs or sphinx for API documentation
 7. Add timeline export to LaTeX reports
 8. Implement Neptune persistence for timelines
-9. Wire notification module into Lambda handler templates (replace inline SNS publishing)
-10. Wire notification module into CDK alerting stack (replace inline Slack webhook code)
-11. Add property-based tests for SQL sanitization and alert serialization
-12. Fix case-sensitive SQL keyword detection in `rule_store.py` (sharp edges finding)
-13. Add URL validation to `SlackNotifier` and `URLAnalyzer` constructors
-14. Add bounds validation to `LambdaBuilder.deploy_lambda()` parameters
+9. ~~Wire notification module into Lambda handler templates (replace inline SNS publishing)~~ Done (uses NotificationManager)
+10. ~~Wire notification module into CDK alerting stack (replace inline Slack webhook code)~~ Done (alerting_handler.py + DetectionRulesStack)
+11. ~~Add property-based tests for SQL sanitization and alert serialization~~ Done (test_property_based.py)
+12. ~~Fix case-sensitive SQL keyword detection in `rule_store.py`~~ Verified as false positive (already case-insensitive)
+13. ~~Add URL validation to `SlackNotifier` and `URLAnalyzer` constructors~~ Done (HTTPS enforcement)
+14. ~~Add bounds validation to `LambdaBuilder.deploy_lambda()` parameters~~ Done (memory 128-10240, timeout 1-900)

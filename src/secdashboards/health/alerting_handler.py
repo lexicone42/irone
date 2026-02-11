@@ -1,0 +1,190 @@
+"""Lambda handler for Security Lake data freshness checks and detection alerting.
+
+Extracted from the CDK AlertingStack inline code to enable use of the
+``secdashboards.notifications`` module (provided via Lambda Layer).
+"""
+
+import json
+import os
+import time
+from datetime import datetime
+
+import boto3
+
+from secdashboards.notifications import (
+    NotificationManager,
+    SecurityAlert,
+    SlackNotifier,
+    SNSNotifier,
+)
+
+# Configuration from environment
+SECURITY_LAKE_DB = os.environ.get("SECURITY_LAKE_DB", "amazon_security_lake_glue_db_us_west_2")
+ATHENA_OUTPUT = os.environ.get("ATHENA_OUTPUT", "")
+ALERTS_TOPIC_ARN = os.environ.get("ALERTS_TOPIC_ARN", "")
+CRITICAL_TOPIC_ARN = os.environ.get("CRITICAL_TOPIC_ARN", "")
+FRESHNESS_THRESHOLD = int(os.environ.get("FRESHNESS_THRESHOLD_MINUTES", "60"))
+SLACK_WEBHOOK_URL = os.environ.get("SLACK_WEBHOOK_URL", "")
+
+# Security Lake table mappings
+TABLES = {
+    "cloud_trail_mgmt": "amazon_security_lake_table_us_west_2_cloud_trail_mgmt_2_0",
+    "vpc_flow": "amazon_security_lake_table_us_west_2_vpc_flow_2_0",
+    "route53": "amazon_security_lake_table_us_west_2_route53_2_0",
+    "sh_findings": "amazon_security_lake_table_us_west_2_sh_findings_2_0",
+    "lambda_execution": "amazon_security_lake_table_us_west_2_lambda_execution_2_0",
+}
+
+athena = boto3.client("athena")
+sns_client = boto3.client("sns")
+
+
+def _build_notification_manager() -> NotificationManager:
+    """Build notification manager from environment variables."""
+    channels = []
+    if ALERTS_TOPIC_ARN:
+        channels.append(SNSNotifier(topic_arn=ALERTS_TOPIC_ARN))
+    if SLACK_WEBHOOK_URL:
+        channels.append(SlackNotifier(webhook_url=SLACK_WEBHOOK_URL))
+    return NotificationManager(channels=channels)
+
+
+def run_query(query: str, timeout: int = 60) -> list:
+    """Execute Athena query and return results."""
+    response = athena.start_query_execution(
+        QueryString=query,
+        QueryExecutionContext={"Database": SECURITY_LAKE_DB},
+        ResultConfiguration={"OutputLocation": ATHENA_OUTPUT},
+    )
+    query_id = response["QueryExecutionId"]
+
+    start = time.time()
+    while time.time() - start < timeout:
+        result = athena.get_query_execution(QueryExecutionId=query_id)
+        state = result["QueryExecution"]["Status"]["State"]
+        if state == "SUCCEEDED":
+            break
+        elif state in ("FAILED", "CANCELLED"):
+            return []
+        time.sleep(1)
+    else:
+        return []
+
+    results = []
+    paginator = athena.get_paginator("get_query_results")
+    for page in paginator.paginate(QueryExecutionId=query_id):
+        columns = [col["Name"] for col in page["ResultSet"]["ResultSetMetadata"]["ColumnInfo"]]
+        for row in page["ResultSet"]["Rows"][1:]:
+            values = [field.get("VarCharValue", "") for field in row["Data"]]
+            results.append(dict(zip(columns, values, strict=False)))
+    return results
+
+
+def check_freshness(sources: list) -> list:
+    """Check data freshness for Security Lake sources."""
+    alerts = []
+    now = datetime.now(datetime.UTC)
+
+    for source in sources:
+        table = TABLES.get(source)
+        if not table:
+            continue
+
+        query = f"""
+        SELECT MAX(time_dt) as latest_event
+        FROM "{SECURITY_LAKE_DB}"."{table}"
+        WHERE time_dt >= CURRENT_TIMESTAMP - INTERVAL '24' HOUR
+        """
+
+        try:
+            results = run_query(query)
+            if not results or not results[0].get("latest_event"):
+                alerts.append(
+                    {
+                        "type": "DATA_FRESHNESS",
+                        "severity": "high",
+                        "source": source,
+                        "message": f"No data in last 24 hours for {source}",
+                        "table": table,
+                    }
+                )
+                continue
+
+            latest = results[0]["latest_event"]
+            clean_ts = latest.replace("Z", "").replace("T", " ").split(".")[0]
+            latest_dt = datetime.strptime(clean_ts, "%Y-%m-%d %H:%M:%S").replace(
+                tzinfo=datetime.UTC
+            )
+            minutes_ago = int((now - latest_dt).total_seconds() / 60)
+
+            if minutes_ago > FRESHNESS_THRESHOLD:
+                alerts.append(
+                    {
+                        "type": "DATA_FRESHNESS",
+                        "severity": "medium" if minutes_ago < FRESHNESS_THRESHOLD * 2 else "high",
+                        "source": source,
+                        "message": f"Data is {minutes_ago} minutes stale for {source}",
+                        "table": table,
+                        "minutes_stale": minutes_ago,
+                    }
+                )
+        except Exception as e:
+            alerts.append(
+                {
+                    "type": "SYSTEM_ERROR",
+                    "severity": "low",
+                    "source": source,
+                    "message": f"Failed to check freshness: {e!s}",
+                }
+            )
+
+    return alerts
+
+
+def send_alert(alert_data: dict) -> None:
+    """Send alert via NotificationManager (SNS + Slack)."""
+    manager = _build_notification_manager()
+    alert = SecurityAlert(
+        rule_id=f"freshness-{alert_data.get('source', 'unknown')}",
+        rule_name=alert_data["type"],
+        severity=alert_data.get("severity", "medium"),
+        message=alert_data["message"],
+        metadata={k: v for k, v in alert_data.items() if k not in ("type", "severity", "message")},
+    )
+    manager.notify(alert)
+
+    # Also send to critical topic for HIGH severity alerts
+    if alert_data.get("severity") == "high" and CRITICAL_TOPIC_ARN:
+        sns_client.publish(
+            TopicArn=CRITICAL_TOPIC_ARN,
+            Message=json.dumps(alert_data, indent=2, default=str),
+            Subject=f"CRITICAL: {alert_data['type']}: {alert_data.get('source', 'System')}"[:100],
+        )
+
+
+def handler(event, context):
+    """Main Lambda handler."""
+    check_type = event.get("check_type", "freshness")
+    alerts = []
+
+    if check_type == "freshness":
+        sources = event.get("sources", list(TABLES.keys()))
+        alerts = check_freshness(sources)
+    elif check_type == "detections":
+        # TODO: Integrate with DetectionRunner
+        pass
+
+    # Send alerts
+    for alert_data in alerts:
+        send_alert(alert_data)
+
+    return {
+        "statusCode": 200,
+        "body": json.dumps(
+            {
+                "check_type": check_type,
+                "alerts_sent": len(alerts),
+                "alerts": alerts,
+            }
+        ),
+    }

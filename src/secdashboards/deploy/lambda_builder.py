@@ -25,6 +25,10 @@ from datetime import UTC, datetime, timedelta
 
 import boto3
 
+from secdashboards.notifications import (
+    NotificationManager, SecurityAlert, SlackNotifier, SNSNotifier,
+)
+
 # Detection configuration
 RULE_ID = "{{ rule_id }}"
 RULE_NAME = "{{ rule_name }}"
@@ -41,8 +45,16 @@ def get_athena_client():
     return boto3.client("athena", region_name=os.environ.get("AWS_REGION", "us-west-2"))
 
 
-def get_sns_client():
-    return boto3.client("sns", region_name=os.environ.get("AWS_REGION", "us-west-2"))
+def build_notification_manager() -> NotificationManager:
+    """Build notification manager from environment variables."""
+    channels = []
+    sns_topic_arn = os.environ.get("SNS_TOPIC_ARN")
+    slack_webhook_url = os.environ.get("SLACK_WEBHOOK_URL")
+    if sns_topic_arn:
+        channels.append(SNSNotifier(topic_arn=sns_topic_arn))
+    if slack_webhook_url:
+        channels.append(SlackNotifier(webhook_url=slack_webhook_url))
+    return NotificationManager(channels=channels)
 
 
 def execute_query(athena, query: str, database: str, output_location: str) -> list[dict]:
@@ -90,7 +102,6 @@ def handler(event, context):
     # Configuration from environment
     database = os.environ.get("ATHENA_DATABASE", "amazon_security_lake_glue_db_us_east_1")
     output_location = os.environ.get("ATHENA_OUTPUT_LOCATION", "s3://aws-athena-query-results/")
-    sns_topic_arn = os.environ.get("SNS_TOPIC_ARN")
 
     # Calculate time window
     end_time = datetime.now(UTC)
@@ -114,29 +125,18 @@ def handler(event, context):
         print(f"Detection results: {match_count} matches, triggered={triggered}")
 
         # Send alert if triggered
-        if triggered and sns_topic_arn:
-            sns = get_sns_client()
-
-            alert = {
-                "rule_id": RULE_ID,
-                "rule_name": RULE_NAME,
-                "severity": SEVERITY,
-                "match_count": match_count,
-                "threshold": THRESHOLD,
-                "time_window": {
-                    "start": start_time.isoformat(),
-                    "end": end_time.isoformat(),
-                },
-                "sample_matches": results[:5],
-                "triggered_at": datetime.now(UTC).isoformat(),
-            }
-
-            sns.publish(
-                TopicArn=sns_topic_arn,
-                Subject=f"[{SEVERITY.upper()}] Security Detection: {RULE_NAME}",
-                Message=json.dumps(alert, indent=2),
+        if triggered:
+            manager = build_notification_manager()
+            alert = SecurityAlert(
+                rule_id=RULE_ID,
+                rule_name=RULE_NAME,
+                severity=SEVERITY,
+                match_count=match_count,
+                message=f"{match_count} matches (threshold: {THRESHOLD})",
+                sample_matches=results[:5],
             )
-            print(f"Alert sent to {sns_topic_arn}")
+            manager.notify(alert)
+            print("Alert sent via notification manager")
 
         return {
             "statusCode": 200,
@@ -243,6 +243,69 @@ class LambdaBuilder:
 
         return zip_path
 
+    def build_notifications_layer(self) -> Path:
+        """Build a Lambda Layer containing the notifications module and its dependencies.
+
+        Layer structure::
+
+            python/
+                secdashboards/
+                    __init__.py
+                    notifications/
+                        __init__.py
+                        base.py
+                        manager.py
+                        sns.py
+                        slack.py
+                    detections/
+                        __init__.py
+                        rule.py          # Severity enum required by notifications
+                httpx/...
+                pydantic/...
+
+        Returns:
+            Path to the layer directory (ready for ``Code.from_asset()``).
+        """
+        layer_dir = self.output_dir / "notifications_layer" / "python"
+        layer_dir.mkdir(parents=True, exist_ok=True)
+
+        # Locate source packages
+        src_root = Path(__file__).parent.parent  # secdashboards/
+
+        # Copy notifications module
+        notif_src = src_root / "notifications"
+        notif_dst = layer_dir / "secdashboards" / "notifications"
+        if notif_dst.exists():
+            shutil.rmtree(notif_dst)
+        shutil.copytree(notif_src, notif_dst)
+
+        # Copy detections/rule.py (needed for Severity enum)
+        det_dst = layer_dir / "secdashboards" / "detections"
+        det_dst.mkdir(parents=True, exist_ok=True)
+        shutil.copy(src_root / "detections" / "rule.py", det_dst / "rule.py")
+
+        # Ensure __init__.py stubs exist for package resolution
+        (layer_dir / "secdashboards" / "__init__.py").write_text("")
+        (det_dst / "__init__.py").write_text("")
+
+        # Install third-party deps into layer
+        subprocess.run(
+            [
+                "pip",
+                "install",
+                "httpx",
+                "pydantic",
+                "-t",
+                str(layer_dir),
+                "--quiet",
+                "--no-deps",
+            ],
+            check=True,
+        )
+
+        # Return the top-level layer dir (parent of python/)
+        return self.output_dir / "notifications_layer"
+
     def deploy_lambda(
         self,
         rule: DetectionRule,
@@ -310,86 +373,6 @@ class LambdaBuilder:
             "rule_id": rule.id,
         }
 
-    def generate_sam_template(
-        self,
-        rules: list[DetectionRule],
-        data_source: str,
-        role_arn: str | None = None,
-        sns_topic_arn: str | None = None,
-    ) -> dict[str, Any]:
-        """Generate a SAM template for deploying detection rules."""
-        template: dict[str, Any] = {
-            "AWSTemplateFormatVersion": "2010-09-09",
-            "Transform": "AWS::Serverless-2016-10-31",
-            "Description": "Security Detection Rules - Generated by secdashboards",
-            "Parameters": {
-                "AthenaDatabase": {
-                    "Type": "String",
-                    "Default": "amazon_security_lake_glue_db_us_east_1",
-                },
-                "AthenaOutputLocation": {
-                    "Type": "String",
-                    "Default": "s3://aws-athena-query-results/",
-                },
-                "SnsTopicArn": {
-                    "Type": "String",
-                    "Default": sns_topic_arn or "",
-                },
-            },
-            "Resources": {},
-        }
-
-        for rule in rules:
-            safe_name = rule.id.replace("-", "").replace("_", "").title()
-
-            # Lambda function
-            template["Resources"][f"Detection{safe_name}Function"] = {
-                "Type": "AWS::Serverless::Function",
-                "Properties": {
-                    "FunctionName": f"secdash-detection-{rule.id}",
-                    "CodeUri": f"./package_{rule.id}/",
-                    "Handler": "handler.handler",
-                    "Runtime": "python3.12",
-                    "MemorySize": 256,
-                    "Timeout": 300,
-                    "Environment": {
-                        "Variables": {
-                            "ATHENA_DATABASE": {"Ref": "AthenaDatabase"},
-                            "ATHENA_OUTPUT_LOCATION": {"Ref": "AthenaOutputLocation"},
-                            "SNS_TOPIC_ARN": {"Ref": "SnsTopicArn"},
-                        }
-                    },
-                    "Policies": [
-                        "AmazonAthenaFullAccess",
-                        "AmazonS3ReadOnlyAccess",
-                        "AmazonSNSFullAccess",
-                    ],
-                    "Events": {
-                        "ScheduleEvent": {
-                            "Type": "Schedule",
-                            "Properties": {
-                                "Schedule": rule.metadata.schedule,
-                                "Enabled": rule.metadata.enabled,
-                            },
-                        }
-                    },
-                    "Tags": {
-                        "Application": "secdashboards",
-                        "RuleId": rule.id,
-                        "Severity": str(rule.metadata.severity),
-                    },
-                },
-            }
-
-        return template
-
-    def write_sam_template(self, template: dict[str, Any], output_path: Path) -> None:
-        """Write SAM template to file."""
-        import yaml
-
-        with output_path.open("w") as f:
-            yaml.dump(template, f, default_flow_style=False, sort_keys=False)
-
 
 # Dual-target Lambda handler template for CloudWatch + Athena
 DUAL_TARGET_LAMBDA_TEMPLATE = '''"""Auto-generated dual-target handler: {{ rule_id }}
@@ -406,6 +389,10 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import boto3
+
+from secdashboards.notifications import (
+    NotificationManager, SecurityAlert, SlackNotifier, SNSNotifier,
+)
 
 # Detection configuration
 RULE_ID = "{{ rule_id }}"
@@ -430,8 +417,16 @@ def get_athena_client():
     return boto3.client("athena", region_name=os.environ.get("AWS_REGION", "us-west-2"))
 
 
-def get_sns_client():
-    return boto3.client("sns", region_name=os.environ.get("AWS_REGION", "us-west-2"))
+def build_notification_manager() -> NotificationManager:
+    """Build notification manager from environment variables."""
+    channels = []
+    sns_topic_arn = os.environ.get("SNS_TOPIC_ARN")
+    slack_webhook_url = os.environ.get("SLACK_WEBHOOK_URL")
+    if sns_topic_arn:
+        channels.append(SNSNotifier(topic_arn=sns_topic_arn))
+    if slack_webhook_url:
+        channels.append(SlackNotifier(webhook_url=slack_webhook_url))
+    return NotificationManager(channels=channels)
 
 
 def execute_cloudwatch_query(
@@ -518,25 +513,20 @@ def execute_athena_query(
     return results
 
 
-def send_alert(sns_client, topic_arn: str, results: list[dict], target: str) -> None:
-    """Send alert to SNS topic."""
-    alert = {
-        "rule_id": RULE_ID,
-        "rule_name": RULE_NAME,
-        "severity": SEVERITY,
-        "target": target,
-        "match_count": len(results),
-        "threshold": THRESHOLD,
-        "triggered_at": datetime.now(UTC).isoformat(),
-        "sample_matches": results[:5],
-    }
-
-    sns_client.publish(
-        TopicArn=topic_arn,
-        Subject=f"[{SEVERITY.upper()}] Security Detection: {RULE_NAME}",
-        Message=json.dumps(alert, indent=2),
+def send_alert(results: list[dict], target: str) -> None:
+    """Send alert via notification manager."""
+    manager = build_notification_manager()
+    alert = SecurityAlert(
+        rule_id=RULE_ID,
+        rule_name=RULE_NAME,
+        severity=SEVERITY,
+        match_count=len(results),
+        message=f"{len(results)} matches from {target} (threshold: {THRESHOLD})",
+        sample_matches=results[:5],
+        metadata={"target": target},
     )
-    print(f"Alert sent to {topic_arn}")
+    manager.notify(alert)
+    print(f"Alert sent via notification manager ({target})")
 
 
 def handler(event, context):
@@ -551,7 +541,6 @@ def handler(event, context):
     # Configuration from environment
     database = os.environ.get("ATHENA_DATABASE", "amazon_security_lake_glue_db_us_west_2")
     output_location = os.environ.get("ATHENA_OUTPUT_LOCATION", "s3://aws-athena-query-results/")
-    sns_topic_arn = os.environ.get("SNS_TOPIC_ARN")
 
     # Get target from event or default to both
     target = event.get("target", "both")
@@ -590,9 +579,7 @@ def handler(event, context):
 
             if triggered:
                 results_summary["triggered"] = True
-                if sns_topic_arn:
-                    sns_client = get_sns_client()
-                    send_alert(sns_client, sns_topic_arn, cw_results, "cloudwatch")
+                send_alert(cw_results, "cloudwatch")
 
         except Exception as e:
             print(f"CloudWatch query failed: {e}")
@@ -629,9 +616,7 @@ def handler(event, context):
 
             if triggered:
                 results_summary["triggered"] = True
-                if sns_topic_arn:
-                    sns_client = get_sns_client()
-                    send_alert(sns_client, sns_topic_arn, athena_results, "athena")
+                send_alert(athena_results, "athena")
 
         except Exception as e:
             print(f"Athena query failed: {e}")
@@ -711,83 +696,3 @@ class DualTargetLambdaBuilder(LambdaBuilder):
             threshold=rule.threshold,
             lookback_minutes=lookback_minutes,
         )
-
-    def generate_dual_target_sam_template(
-        self,
-        rules: list[DualTargetDetectionRule],  # noqa: F821
-        log_groups_map: dict[str, list[str]],
-        sns_topic_arn: str | None = None,
-    ) -> dict[str, Any]:
-        """Generate SAM template for dual-target detection rules.
-
-        Args:
-            rules: List of DualTargetDetectionRule instances
-            log_groups_map: Mapping of rule_id to log group list
-            sns_topic_arn: SNS topic for alerts
-        """
-        template: dict[str, Any] = {
-            "AWSTemplateFormatVersion": "2010-09-09",
-            "Transform": "AWS::Serverless-2016-10-31",
-            "Description": "Dual-Target Security Detection Rules - Generated by secdashboards",
-            "Parameters": {
-                "AthenaDatabase": {
-                    "Type": "String",
-                    "Default": "amazon_security_lake_glue_db_us_west_2",
-                },
-                "AthenaOutputLocation": {
-                    "Type": "String",
-                    "Default": "s3://aws-athena-query-results/",
-                },
-                "SnsTopicArn": {
-                    "Type": "String",
-                    "Default": sns_topic_arn or "",
-                },
-            },
-            "Resources": {},
-        }
-
-        for rule in rules:
-            safe_name = rule.id.replace("-", "").replace("_", "").title()
-            log_groups_map.get(rule.id, [])
-
-            template["Resources"][f"Detection{safe_name}Function"] = {
-                "Type": "AWS::Serverless::Function",
-                "Properties": {
-                    "FunctionName": f"secdash-dual-{rule.id}",
-                    "CodeUri": f"./package_{rule.id}/",
-                    "Handler": "handler.handler",
-                    "Runtime": "python3.12",
-                    "MemorySize": 256,
-                    "Timeout": 300,
-                    "Environment": {
-                        "Variables": {
-                            "ATHENA_DATABASE": {"Ref": "AthenaDatabase"},
-                            "ATHENA_OUTPUT_LOCATION": {"Ref": "AthenaOutputLocation"},
-                            "SNS_TOPIC_ARN": {"Ref": "SnsTopicArn"},
-                        }
-                    },
-                    "Policies": [
-                        "AmazonAthenaFullAccess",
-                        "CloudWatchLogsReadOnlyAccess",
-                        "AmazonS3ReadOnlyAccess",
-                        "AmazonSNSFullAccess",
-                    ],
-                    "Events": {
-                        "ScheduleEvent": {
-                            "Type": "Schedule",
-                            "Properties": {
-                                "Schedule": rule.metadata.schedule,
-                                "Enabled": rule.metadata.enabled,
-                            },
-                        }
-                    },
-                    "Tags": {
-                        "Application": "secdashboards",
-                        "RuleId": rule.id,
-                        "Severity": str(rule.metadata.severity),
-                        "DualTarget": "true",
-                    },
-                },
-            }
-
-        return template
