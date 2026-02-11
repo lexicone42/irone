@@ -734,6 +734,7 @@ def _(
                     graph=graph,
                     investigation_id=investigation_id_input.value,
                     ai_analysis=ai_text,
+                    timeline=timeline,
                 )
                 report_data.title = report_title.value
 
@@ -873,6 +874,44 @@ def _(graph, mo, neptune_connector, save_graph_btn):
             save_output = mo.md(f"**Save Error:** {e}")
 
     save_output
+    return
+
+
+@app.cell
+def _(mo):
+    save_timeline_btn = mo.ui.run_button(label="Save Timeline to Neptune")
+    save_timeline_btn
+    return (save_timeline_btn,)
+
+
+@app.cell
+def _(mo, neptune_connector, save_timeline_btn, timeline):
+    from secdashboards.graph.timeline import save_timeline_to_neptune
+
+    save_tl_output = mo.md("_Build a graph with a timeline and configure Neptune to save_")
+
+    if save_timeline_btn.value:
+        try:
+            if neptune_connector is None:
+                save_tl_output = mo.md("**Error:** Neptune not configured. Enter endpoint above.")
+            elif timeline is None or not timeline.events:
+                save_tl_output = mo.md("**Error:** No timeline to save. Build a graph first.")
+            else:
+                count = save_timeline_to_neptune(neptune_connector, timeline)
+                save_tl_output = mo.vstack(
+                    [
+                        mo.md("**Timeline saved to Neptune!**"),
+                        mo.md(f"- Entities written: {count}"),
+                        mo.md(f"- Events: {len(timeline.events)}"),
+                        mo.md(f"- Investigation ID: `{timeline.investigation_id}`"),
+                    ]
+                )
+        except NameError:
+            save_tl_output = mo.md("_Build a graph with a timeline first_")
+        except Exception as e:
+            save_tl_output = mo.md(f"**Save Error:** {e}")
+
+    save_tl_output
     return
 
 
@@ -1060,6 +1099,73 @@ def _(NodeType, mo, neptune_connector, search_btn, search_limit, search_node_typ
             search_output = mo.md(f"**Search Error:** {e}")
 
     search_output
+    return
+
+
+@app.cell
+def _(mo):
+    mo.md("""
+    ### Load Timeline from Neptune
+
+    Load a previously saved investigation timeline by its investigation ID.
+    """)
+    return
+
+
+@app.cell
+def _(mo):
+    load_timeline_inv_id = mo.ui.text(
+        value="",
+        label="Investigation ID",
+        placeholder="e.g. INC-2026-001",
+    )
+    load_timeline_btn = mo.ui.run_button(label="Load Timeline from Neptune")
+    mo.hstack([load_timeline_inv_id, load_timeline_btn])
+    return load_timeline_btn, load_timeline_inv_id
+
+
+@app.cell
+def _(
+    TimelineVisualizer,
+    load_timeline_btn,
+    load_timeline_inv_id,
+    mo,
+    neptune_connector,
+):
+    from secdashboards.graph.timeline import load_timeline_from_neptune
+
+    load_tl_output = mo.md("_Configure Neptune and enter an investigation ID to load a timeline_")
+
+    if load_timeline_btn.value:
+        try:
+            if neptune_connector is None:
+                load_tl_output = mo.md("**Error:** Neptune not configured. Enter endpoint above.")
+            elif not load_timeline_inv_id.value:
+                load_tl_output = mo.md("**Error:** Enter an investigation ID.")
+            else:
+                loaded_timeline = load_timeline_from_neptune(
+                    neptune_connector, load_timeline_inv_id.value
+                )
+                if loaded_timeline and loaded_timeline.events:
+                    visualizer = TimelineVisualizer(height="400px")
+                    tl_html = visualizer.to_html(loaded_timeline)
+                    legend_html = visualizer.generate_legend_html()
+                    summary = loaded_timeline.summary()
+                    load_tl_output = mo.vstack(
+                        [
+                            mo.md(f"**Timeline loaded:** {summary['total_events']} events"),
+                            mo.Html(tl_html),
+                            mo.Html(legend_html),
+                        ]
+                    )
+                else:
+                    load_tl_output = mo.md(
+                        f"_No timeline found for investigation " f"`{load_timeline_inv_id.value}`_"
+                    )
+        except Exception as e:
+            load_tl_output = mo.md(f"**Load Error:** {e}")
+
+    load_tl_output
     return
 
 

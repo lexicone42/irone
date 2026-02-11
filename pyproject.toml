@@ -51,6 +51,12 @@ dev = [
     "cfn-lint>=1.43.3",
     "hypothesis>=6.100.0",
 ]
+docs = [
+    "mkdocs-material>=9.5.0",
+    "mkdocstrings[python]>=0.27.0",
+    "mkdocs-gen-files>=0.5.0",
+    "mkdocs-literate-nav>=0.6.0",
+]
 cdk = [
     "aws-cdk-lib>=2.170.0",
     "constructs>=10.0.0",

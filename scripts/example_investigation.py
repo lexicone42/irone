@@ -358,6 +358,7 @@ def run_demo_investigation(output_dir: Path):
     report_data = graph_to_report_data(
         graph=graph,
         investigation_id="INC-2024-0115-001",
+        timeline=timeline,
         executive_summary="""
 This investigation identified a potential account compromise affecting the
 'compromised-admin' IAM user. The user authenticated from an unusual external
