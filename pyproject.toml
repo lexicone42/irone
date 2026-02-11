@@ -5,6 +5,13 @@ description = "Security Data Lake Analytics - Connect to AWS Security Lake, crea
 readme = "README.md"
 license = "Apache-2.0"
 requires-python = ">=3.13"
+keywords = ["security", "aws", "security-lake", "ocsf", "detection", "siem", "graph", "marimo"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Information Technology",
+    "Topic :: Security",
+    "Programming Language :: Python :: 3.13",
+]
 dependencies = [
     "marimo>=0.10.0",
     "boto3>=1.35.0",
@@ -25,6 +32,13 @@ dependencies = [
     "plotly>=5.24.0",
 ]
 
+[project.scripts]
+secdash = "secdashboards.cli:app"
+
+[project.urls]
+Repository = "https://github.com/lexicone42/secdashboards"
+Issues = "https://github.com/lexicone42/secdashboards/issues"
+
 [dependency-groups]
 dev = [
     "pytest>=8.3.0",
@@ -35,14 +49,12 @@ dev = [
     "moto>=5.1.20",
     "prek>=0.3.2",
     "cfn-lint>=1.43.3",
+    "hypothesis>=6.100.0",
 ]
 cdk = [
     "aws-cdk-lib>=2.170.0",
     "constructs>=10.0.0",
 ]
-
-[project.scripts]
-secdash = "secdashboards.cli:app"
 
 [build-system]
 requires = ["hatchling"]
