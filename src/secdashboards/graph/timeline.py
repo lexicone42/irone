@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any
 from pydantic import BaseModel, Field
 
 if TYPE_CHECKING:
+    from secdashboards.graph.connector import NeptuneConnector
     from secdashboards.graph.models import SecurityGraph
 
 
@@ -317,7 +318,7 @@ def extract_timeline_from_graph(
 class TimelineVisualizer:
     """Generate interactive timeline visualizations using Plotly."""
 
-    def __init__(self, height: str = "500px", width: str = "100%"):
+    def __init__(self, height: str = "500px", width: str = "100%") -> None:
         """Initialize the visualizer.
 
         Args:
@@ -554,7 +555,7 @@ Format as a professional incident summary for an analyst's report."""
 
 def save_timeline_to_neptune(
     timeline: InvestigationTimeline,
-    connector: Any,
+    connector: NeptuneConnector,
 ) -> int:
     """Save an InvestigationTimeline to Neptune graph database.
 
@@ -647,7 +648,7 @@ def save_timeline_to_neptune(
 
 def load_timeline_from_neptune(
     investigation_id: str,
-    connector: Any,
+    connector: NeptuneConnector,
 ) -> InvestigationTimeline | None:
     """Load an InvestigationTimeline from Neptune.
 
@@ -715,7 +716,7 @@ def load_timeline_from_neptune(
 
 def delete_timeline_from_neptune(
     investigation_id: str,
-    connector: Any,
+    connector: NeptuneConnector,
 ) -> bool:
     """Delete a timeline and its events from Neptune.
 

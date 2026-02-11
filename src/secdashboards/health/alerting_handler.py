@@ -9,6 +9,7 @@ import logging
 import os
 import time
 from datetime import UTC, datetime
+from typing import Any
 
 import boto3
 
@@ -235,7 +236,7 @@ def run_detections(event: dict) -> list:
     return alerts
 
 
-def handler(event, context):
+def handler(event: dict, context: Any) -> dict:
     """Main Lambda handler."""
     check_type = event.get("check_type", "freshness")
     alerts = []

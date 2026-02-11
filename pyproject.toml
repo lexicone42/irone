@@ -95,10 +95,12 @@ select = ["E", "F", "I", "UP", "B", "SIM", "PTH"]
 python-version = "3.13"
 
 [tool.ty.rules]
-# Ignore unresolved imports for optional dependencies
+# Warn on unresolved imports (optional deps may not be installed)
 unresolved-import = "warn"
-# Allow missing type stubs for third-party libraries
-possibly-missing-attribute = "warn"
+# Catch missing attributes (previously warn, now error since codebase is clean)
+possibly-missing-attribute = "error"
+# Catch potential division by zero
+division-by-zero = "warn"
 
 [tool.ty.src]
 # Exclude files with optional dependencies that may not be installed

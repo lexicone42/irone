@@ -9,7 +9,7 @@ from typing import Any
 
 from pyvis.network import Network
 
-from secdashboards.graph.models import EdgeType, NodeType, SecurityGraph
+from secdashboards.graph.models import EdgeType, GraphEdge, GraphNode, NodeType, SecurityGraph
 
 # Color scheme for node types
 NODE_COLORS: dict[NodeType, str] = {
@@ -177,7 +177,7 @@ class GraphVisualizer:
 
         return net
 
-    def _build_tooltip(self, node: Any) -> str:
+    def _build_tooltip(self, node: GraphNode) -> str:
         """Build HTML tooltip for node hover.
 
         Args:
@@ -236,7 +236,7 @@ class GraphVisualizer:
 
         return "<br>".join(lines)
 
-    def _build_edge_tooltip(self, edge: Any) -> str:
+    def _build_edge_tooltip(self, edge: GraphEdge) -> str:
         """Build tooltip for edge hover.
 
         Args:
@@ -257,7 +257,7 @@ class GraphVisualizer:
 
         return "<br>".join(lines)
 
-    def _calculate_node_size(self, node: Any) -> int:
+    def _calculate_node_size(self, node: GraphNode) -> int:
         """Calculate node size based on event count.
 
         Args:
@@ -278,7 +278,7 @@ class GraphVisualizer:
 
         return base_size
 
-    def _calculate_edge_width(self, edge: Any) -> int:
+    def _calculate_edge_width(self, edge: GraphEdge) -> int:
         """Calculate edge width based on event count.
 
         Args:

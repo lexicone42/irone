@@ -549,7 +549,7 @@ class GraphBuilder:
                         )
                         self._graph.add_edge(edge)
 
-    def _parse_timestamp(self, value: Any) -> datetime:
+    def _parse_timestamp(self, value: datetime | str | None) -> datetime:
         """Parse a timestamp from various formats.
 
         Args:

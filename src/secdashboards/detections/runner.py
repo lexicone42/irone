@@ -1,6 +1,7 @@
 """Detection rule runner for executing rules against data sources."""
 
 import importlib
+import importlib.util
 import os
 import sys
 from datetime import UTC, datetime, timedelta

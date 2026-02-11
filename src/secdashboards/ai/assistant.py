@@ -512,7 +512,9 @@ Generate only the SQL query."""
             "total_cost_usd": self._total_cost_usd,
             "request_count": self._request_count,
             "avg_cost_per_request": (
-                self._total_cost_usd / self._request_count if self._request_count > 0 else 0
+                self._total_cost_usd / self._request_count  # ty: ignore[division-by-zero]
+                if self._request_count > 0
+                else 0
             ),
         }
 
