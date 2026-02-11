@@ -247,6 +247,7 @@ def _(
     mo,
 ):
     graph_output = mo.md("_Enter users/IPs and click 'Build Investigation Graph'_")
+    graph = None
 
     if build_graph_btn.value:
         users = [u.strip() for u in investigate_users.value.split(",") if u.strip()]

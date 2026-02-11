@@ -7,7 +7,7 @@ Run with: marimo edit notebooks/monitoring.py
 
 import marimo
 
-__generated_with = "0.19.2"
+__generated_with = "0.19.9"
 app = marimo.App(width="full")
 
 
@@ -33,8 +33,6 @@ def _():
 
 @app.cell
 def _():
-    from datetime import UTC, datetime
-
     import polars as pl
 
     from secdashboards.catalog.models import DataSource, DataSourceType
@@ -48,20 +46,15 @@ def _():
         DataSourceType,
         HealthMonitor,
         URLAnalyzer,
-        UTC,
-        datetime,
         pl,
     )
 
 
-# =============================================================================
-# Configuration
-# =============================================================================
-
-
 @app.cell
 def _(mo):
-    mo.md("## Configuration")
+    mo.md("""
+    ## Configuration
+    """)
     return
 
 
@@ -139,23 +132,16 @@ def _(DataCatalog, DataSource, DataSourceType, region_input):
     )
 
     catalog
-    return catalog, region, region_underscore
-
-
-# =============================================================================
-# Data Catalog
-# =============================================================================
+    return catalog, region
 
 
 @app.cell
 def _(mo):
-    mo.md(
-        """
-        ## Data Catalog
+    mo.md("""
+    ## Data Catalog
 
-        Configured data sources for security monitoring.
-        """
-    )
+    Configured data sources for security monitoring.
+    """)
     return
 
 
@@ -177,23 +163,16 @@ def _(catalog, mo, pl):
         mo.ui.table(sources_df.to_pandas())
     else:
         mo.md("_No data sources configured_")
-    return sources_data, sources_df
-
-
-# =============================================================================
-# Health Monitoring
-# =============================================================================
+    return
 
 
 @app.cell
 def _(mo):
-    mo.md(
-        """
-        ## Health Monitoring
+    mo.md("""
+    ## Health Monitoring
 
-        Check connectivity and data freshness for all configured sources.
-        """
-    )
+    Check connectivity and data freshness for all configured sources.
+    """)
     return
 
 
@@ -253,24 +232,17 @@ def _(HealthMonitor, catalog, mo, run_health_btn):
             health_output = mo.md(f"**Error:** {e}")
 
     health_output
-    return (health_output,)
-
-
-# =============================================================================
-# URL Data Analysis
-# =============================================================================
+    return (pl,)
 
 
 @app.cell
 def _(mo):
-    mo.md(
-        """
-        ## URL/Endpoint Health Analysis
+    mo.md("""
+    ## URL/Endpoint Health Analysis
 
-        Check external data endpoints for availability and freshness.
-        Useful for monitoring threat intelligence feeds or external APIs.
-        """
-    )
+    Check external data endpoints for availability and freshness.
+    Useful for monitoring threat intelligence feeds or external APIs.
+    """)
     return
 
 
@@ -338,23 +310,16 @@ def _(URLAnalyzer, analyze_url_btn, mo, url_input):
             url_output = mo.md(f"**Error:** {e}")
 
     url_output
-    return (url_output,)
-
-
-# =============================================================================
-# AWS Console Links
-# =============================================================================
+    return
 
 
 @app.cell
 def _(mo):
-    mo.md(
-        """
-        ## AWS Console Links
+    mo.md("""
+    ## AWS Console Links
 
-        Quick links to relevant AWS console pages.
-        """
-    )
+    Quick links to relevant AWS console pages.
+    """)
     return
 
 
@@ -385,7 +350,7 @@ def _(mo, region):
 
     links_md = "\n".join(f"- [{name}]({url})" for name, url in console_links)
     mo.md(links_md)
-    return console_links, links_md
+    return
 
 
 if __name__ == "__main__":

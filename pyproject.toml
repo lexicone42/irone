@@ -80,8 +80,8 @@ select = ["E", "F", "I", "UP", "B", "SIM", "PTH"]
 # Allow longer lines in test files (test data, assertions)
 "tests/*.py" = ["E501"]
 "infrastructure/cdk/tests/*.py" = ["E501"]
-# Marimo notebooks use bare expressions to render UI elements
-"notebooks/*.py" = ["B018", "E501"]
+# Marimo notebooks use bare expressions (B018) and cross-cell type annotations (F821)
+"notebooks/*.py" = ["B018", "E501", "F821"]
 # Scripts contain long strings (ARNs, markdown content, demo data)
 "scripts/*.py" = ["E501"]
 # CDK stacks contain long resource strings and CSP policies

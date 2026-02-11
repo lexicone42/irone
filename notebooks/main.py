@@ -13,7 +13,7 @@ Individual notebooks:
 
 import marimo
 
-__generated_with = "0.19.2"
+__generated_with = "0.19.9"
 app = marimo.App(width="full")
 
 
@@ -89,59 +89,59 @@ def _(mo):
         cards.append(card)
 
     mo.vstack(cards)
-    return cards, nb, notebooks, roles_str, sensitive_badge
-
-
-@app.cell
-def _(mo):
-    mo.md(
-        """
-        ---
-
-        ## Quick Start
-
-        ### Local Development
-
-        ```bash
-        # Install dependencies
-        uv sync
-
-        # Run any notebook
-        uv run marimo edit notebooks/detection_engineering.py
-        ```
-
-        ### AWS Deployment
-
-        ```bash
-        # Build container
-        docker build -f Dockerfile.marimo -t secdash-marimo .
-
-        # Deploy to App Runner (VPC-only access)
-        aws cloudformation deploy \\
-          --template-file infrastructure/marimo-apprunner.yaml \\
-          --stack-name secdash-marimo-dev \\
-          --parameter-overrides VpcId=vpc-xxx ...
-        ```
-
-        ---
-
-        ## Features
-
-        | Feature | Description |
-        |---------|-------------|
-        | **Security Lake Integration** | Query OCSF-formatted security events |
-        | **Detection Rules** | SQL-based rules with threshold alerts |
-        | **Investigation Graphs** | Visual entity relationship mapping |
-        | **AI Assistance** | Bedrock Claude for analysis & generation |
-        | **AWS Deployment** | Lambda, App Runner, Neptune infrastructure |
-        """
-    )
     return
 
 
 @app.cell
 def _(mo):
-    mo.md("## Configuration")
+    mo.md("""
+    ---
+
+    ## Quick Start
+
+    ### Local Development
+
+    ```bash
+    # Install dependencies
+    uv sync
+
+    # Run any notebook
+    uv run marimo edit notebooks/detection_engineering.py
+    ```
+
+    ### AWS Deployment
+
+    ```bash
+    # Build container
+    docker build -f Dockerfile.marimo -t secdash-marimo .
+
+    # Deploy to App Runner (VPC-only access)
+    aws cloudformation deploy \
+      --template-file infrastructure/marimo-apprunner.yaml \
+      --stack-name secdash-marimo-dev \
+      --parameter-overrides VpcId=vpc-xxx ...
+    ```
+
+    ---
+
+    ## Features
+
+    | Feature | Description |
+    |---------|-------------|
+    | **Security Lake Integration** | Query OCSF-formatted security events |
+    | **Detection Rules** | SQL-based rules with threshold alerts |
+    | **Investigation Graphs** | Visual entity relationship mapping |
+    | **AI Assistance** | Bedrock Claude for analysis & generation |
+    | **AWS Deployment** | Lambda, App Runner, Neptune infrastructure |
+    """)
+    return
+
+
+@app.cell
+def _(mo):
+    mo.md("""
+    ## Configuration
+    """)
     return
 
 
@@ -178,22 +178,20 @@ def _(mo, region_input):
         - [Lambda Functions](<https://{region}.console.aws.amazon.com/lambda/home?region={region}#/functions>)
         """
     )
-    return (region,)
+    return
 
 
 @app.cell
 def _(mo):
-    mo.md(
-        """
-        ## About
+    mo.md("""
+    ## About
 
-        **secdashboards** is an Apache 2.0 licensed security analytics platform.
+    **secdashboards** is an Apache 2.0 licensed security analytics platform.
 
-        - GitHub: [secdashboards](https://github.com/your-org/secdashboards)
-        - Documentation: See README.md
-        - License: Apache License 2.0
-        """
-    )
+    - GitHub: [secdashboards](https://github.com/your-org/secdashboards)
+    - Documentation: See README.md
+    - License: Apache License 2.0
+    """)
     return
 
 

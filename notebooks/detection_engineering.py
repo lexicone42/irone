@@ -8,7 +8,7 @@ Run with: marimo edit notebooks/detection_engineering.py
 
 import marimo
 
-__generated_with = "0.19.2"
+__generated_with = "0.19.9"
 app = marimo.App(width="full")
 
 
@@ -34,14 +34,12 @@ def _():
 
 @app.cell
 def _():
-    from datetime import UTC, datetime, timedelta
-    from pathlib import Path
+    from datetime import UTC, datetime
 
     import polars as pl
 
     from secdashboards.catalog.models import DataSource, DataSourceType
     from secdashboards.catalog.registry import DataCatalog
-    from secdashboards.connectors.security_lake import OCSFEventClass
     from secdashboards.detections.rule import DetectionMetadata, Severity, SQLDetectionRule
     from secdashboards.detections.runner import DetectionRunner
     from secdashboards.graph import (
@@ -68,28 +66,22 @@ def _():
         IPAddressNode,
         NeptuneConnector,
         NodeType,
-        OCSFEventClass,
-        Path,
         PrincipalNode,
+        SQLDetectionRule,
         SecurityFindingNode,
         SecurityGraph,
-        SQLDetectionRule,
         Severity,
         UTC,
         datetime,
         pl,
-        timedelta,
     )
-
-
-# =============================================================================
-# Configuration
-# =============================================================================
 
 
 @app.cell
 def _(mo):
-    mo.md("## Configuration")
+    mo.md("""
+    ## Configuration
+    """)
     return
 
 
@@ -165,7 +157,14 @@ def _(mo):
 
 
 @app.cell
-def _(NeptuneConnector, mo, neptune_endpoint, neptune_iam_auth, neptune_port, region):
+def _(
+    NeptuneConnector,
+    mo,
+    neptune_endpoint,
+    neptune_iam_auth,
+    neptune_port,
+    region,
+):
     neptune_status = mo.md("_Neptune not configured_")
     neptune_connector = None
 
@@ -191,20 +190,13 @@ def _(NeptuneConnector, mo, neptune_endpoint, neptune_iam_auth, neptune_port, re
     return (neptune_connector,)
 
 
-# =============================================================================
-# Query Explorer
-# =============================================================================
-
-
 @app.cell
 def _(mo):
-    mo.md(
-        """
-        ## Query Explorer
+    mo.md("""
+    ## Query Explorer
 
-        Test SQL queries against Security Lake to develop detection logic.
-        """
-    )
+    Test SQL queries against Security Lake to develop detection logic.
+    """)
     return
 
 
@@ -224,9 +216,9 @@ def _(catalog, mo, region_underscore):
     api.operation,
     api.service.name as service,
     status
-FROM "amazon_security_lake_glue_db_{region_underscore}"."amazon_security_lake_table_{region_underscore}_cloud_trail_mgmt_2_0"
-WHERE time_dt >= current_timestamp - interval '1' hour
-LIMIT 100"""
+    FROM "amazon_security_lake_glue_db_{region_underscore}"."amazon_security_lake_table_{region_underscore}_cloud_trail_mgmt_2_0"
+    WHERE time_dt >= current_timestamp - interval '1' hour
+    LIMIT 100"""
 
     query_input = mo.ui.code_editor(
         value=default_query,
@@ -235,7 +227,7 @@ LIMIT 100"""
     )
 
     mo.vstack([query_source, query_input])
-    return default_query, query_input, query_source
+    return query_input, query_source
 
 
 @app.cell
@@ -267,23 +259,16 @@ def _(catalog, mo, pl, query_input, query_source, run_query_btn):
             query_result = mo.md(f"**Query Error:** {e}")
 
     query_result
-    return (query_result,)
-
-
-# =============================================================================
-# Create Detection Rule
-# =============================================================================
+    return
 
 
 @app.cell
 def _(mo):
-    mo.md(
-        """
-        ## Create Detection Rule
+    mo.md("""
+    ## Create Detection Rule
 
-        Define a new SQL-based detection rule.
-        """
-    )
+    Define a new SQL-based detection rule.
+    """)
     return
 
 
@@ -329,7 +314,9 @@ def _(Severity, mo):
 
 @app.cell
 def _(mo):
-    mo.md("**Detection Query** (use `{start_time}` and `{end_time}` placeholders):")
+    mo.md("""
+    **Detection Query** (use `{start_time}` and `{end_time}` placeholders):
+    """)
     return
 
 
@@ -341,11 +328,11 @@ def _(mo, region_underscore):
     actor.user.name,
     src_endpoint.ip,
     api.operation
-FROM "amazon_security_lake_glue_db_{region_underscore}"."amazon_security_lake_table_{region_underscore}_cloud_trail_mgmt_2_0"
-WHERE time_dt >= TIMESTAMP '{{start_time}}'
-  AND time_dt < TIMESTAMP '{{end_time}}'
-  AND actor.user.type = 'Root'
-  AND class_uid = 3002""",
+    FROM "amazon_security_lake_glue_db_{region_underscore}"."amazon_security_lake_table_{region_underscore}_cloud_trail_mgmt_2_0"
+    WHERE time_dt >= TIMESTAMP '{{start_time}}'
+      AND time_dt < TIMESTAMP '{{end_time}}'
+      AND actor.user.type = 'Root'
+      AND class_uid = 3002""",
         language="sql",
         min_height=200,
     )
@@ -392,11 +379,11 @@ def _(
         rule_creation_result = mo.md(f"**Created rule:** {rule_name.value}")
 
     rule_creation_result
-    return detection_rules, new_rule, rule_creation_result
+    return (detection_rules,)
 
 
 @app.cell
-def _(detection_rules, mo, pl):
+def _(detection_rules: "list[SQLDetectionRule]", mo, pl):
     if detection_rules:
         rules_df = pl.DataFrame(
             [
@@ -412,28 +399,21 @@ def _(detection_rules, mo, pl):
         mo.ui.table(rules_df.to_pandas())
     else:
         mo.md("_No detection rules created yet_")
-    return (rules_df,)
-
-
-# =============================================================================
-# Test Detections
-# =============================================================================
-
-
-@app.cell
-def _(mo):
-    mo.md(
-        """
-        ## Test Detections
-
-        Run detection rules against recent Security Lake data.
-        """
-    )
     return
 
 
 @app.cell
-def _(detection_rules, mo):
+def _(mo):
+    mo.md("""
+    ## Test Detections
+
+    Run detection rules against recent Security Lake data.
+    """)
+    return
+
+
+@app.cell
+def _(detection_rules: "list[SQLDetectionRule]", mo):
     rule_options = (
         [r.metadata.id for r in detection_rules] if detection_rules else ["(create a rule first)"]
     )
@@ -450,7 +430,7 @@ def _(detection_rules, mo):
     )
 
     mo.hstack([test_rule_select, test_lookback])
-    return rule_options, test_lookback, test_rule_select
+    return test_lookback, test_rule_select
 
 
 @app.cell
@@ -464,7 +444,7 @@ def _(mo):
 def _(
     DetectionRunner,
     catalog,
-    detection_rules,
+    detection_rules: "list[SQLDetectionRule]",
     mo,
     run_test_btn,
     test_lookback,
@@ -475,7 +455,7 @@ def _(
     if run_test_btn.value and detection_rules:
         try:
             connector = catalog.get_connector("cloudtrail")
-            runner = DetectionRunner(connector)
+            runner = DetectionRunner(catalog=catalog)
 
             rule = next(
                 (r for r in detection_rules if r.metadata.id == test_rule_select.value),
@@ -483,7 +463,10 @@ def _(
             )
 
             if rule:
-                test_result = runner.run_rule(rule, lookback_minutes=test_lookback.value)
+                runner.register_rule(rule)
+                test_result = runner.run_rule(
+                    rule.metadata.id, connector, lookback_minutes=test_lookback.value
+                )
 
                 status_color = "red" if test_result.triggered else "green"
                 result_items = [
@@ -499,14 +482,10 @@ def _(
                 if test_result.error:
                     result_items.append(mo.md(f"**Error:** {test_result.error}"))
 
-                if (
-                    test_result.triggered
-                    and test_result.matched_events is not None
-                    and len(test_result.matched_events) > 0
-                ):
+                if test_result.triggered and test_result.matches:
                     result_items.append(mo.md("**Sample Matches:**"))
                     result_items.append(
-                        mo.ui.table(test_result.matched_events.head(10).to_pandas())
+                        mo.ui.table(pl.DataFrame(test_result.matches[:10]).to_pandas())
                     )
 
                 test_result_output = mo.vstack(result_items)
@@ -517,25 +496,18 @@ def _(
             test_result_output = mo.md(f"**Test Error:** {e}")
 
     test_result_output
-    return (test_result_output,)
-
-
-# =============================================================================
-# AI-Assisted Rule Generation (Bedrock)
-# =============================================================================
+    return
 
 
 @app.cell
 def _(mo):
-    mo.md(
-        """
-        ## AI-Assisted Rule Generation
+    mo.md("""
+    ## AI-Assisted Rule Generation
 
-        Use Amazon Bedrock (Claude) to generate detection rules from natural language.
+    Use Amazon Bedrock (Claude) to generate detection rules from natural language.
 
-        **Note:** Requires Bedrock access in your AWS account.
-        """
-    )
+    **Note:** Requires Bedrock access in your AWS account.
+    """)
     return
 
 
@@ -586,7 +558,7 @@ def _(BedrockModel, ai_model, mo):
         ({pricing.input_price_per_1k:.4f}/1k input, {pricing.output_price_per_1k:.4f}/1k output)
         """
     )
-    return est_cost, est_input, est_output, get_pricing, pricing, selected_model
+    return
 
 
 @app.cell
@@ -627,27 +599,20 @@ def _(ai_description, ai_model, generate_btn, mo, region):
             ai_result = mo.md(f"**Error:** {e}")
 
     ai_result
-    return (ai_result,)
-
-
-# =============================================================================
-# Export Report
-# =============================================================================
+    return (BedrockModel,)
 
 
 @app.cell
 def _(mo):
-    mo.md(
-        """
-        ## Export Report
+    mo.md("""
+    ## Export Report
 
-        Export detection results as a formatted LaTeX report.
+    Export detection results as a formatted LaTeX report.
 
-        **Export Options:**
-        - **Local** - Download LaTeX source for local compilation
-        - **S3** - Upload to S3 and get a shareable presigned URL (valid 3 hours)
-        """
-    )
+    **Export Options:**
+    - **Local** - Download LaTeX source for local compilation
+    - **S3** - Upload to S3 and get a shareable presigned URL (valid 3 hours)
+    """)
     return
 
 
@@ -683,7 +648,7 @@ def _(mo):
 
 @app.cell
 def _(
-    detection_rules,
+    detection_rules: "list[SQLDetectionRule]",
     export_btn,
     export_format,
     mo,
@@ -800,12 +765,7 @@ def _(
             export_output = mo.md(f"**Export Error:** {e}")
 
     export_output
-    return (export_output,)
-
-
-# =============================================================================
-# Neptune Graph Persistence
-# =============================================================================
+    return
 
 
 @app.cell
@@ -837,7 +797,7 @@ def _(mo):
 
 
 @app.cell
-def _(detection_rules, mo):
+def _(detection_rules: "list[SQLDetectionRule]", mo):
     save_rule_options = (
         [r.metadata.id for r in detection_rules] if detection_rules else ["(create a rule first)"]
     )
@@ -854,7 +814,7 @@ def _(detection_rules, mo):
     )
 
     mo.hstack([save_rule_select, save_lookback])
-    return save_lookback, save_rule_options, save_rule_select
+    return save_lookback, save_rule_select
 
 
 @app.cell
@@ -874,15 +834,15 @@ def _(
     PrincipalNode,
     SecurityFindingNode,
     SecurityGraph,
+    UTC,
     catalog,
     datetime,
-    detection_rules,
+    detection_rules: "list[SQLDetectionRule]",
     mo,
     neptune_connector,
     save_finding_btn,
     save_lookback,
     save_rule_select,
-    UTC,
 ):
     save_finding_output = mo.md(
         "_Configure Neptune and select a rule, then click 'Run Detection & Save to Neptune'_"
@@ -906,8 +866,11 @@ def _(
                 if rule:
                     # Run the detection
                     connector = catalog.get_connector("cloudtrail")
-                    runner = DetectionRunner(connector)
-                    result = runner.run_rule(rule, lookback_minutes=save_lookback.value)
+                    runner = DetectionRunner(catalog=catalog)
+                    runner.register_rule(rule)
+                    result = runner.run_rule(
+                        rule.metadata.id, connector, lookback_minutes=save_lookback.value
+                    )
 
                     # Create a graph with the finding
                     detection_graph = SecurityGraph()
@@ -926,12 +889,12 @@ def _(
                     detection_graph.add_node(finding_node)
 
                     # If triggered and we have matched events, extract entities
-                    if result.triggered and result.matched_events is not None:
+                    if result.triggered and result.matches:
                         # Extract unique users and IPs from matched events
                         users = set()
                         ips = set()
 
-                        for row in result.matched_events.iter_rows(named=True):
+                        for row in result.matches:
                             # Try various column names for user
                             user = row.get("user_name") or row.get("name")
                             if user:
@@ -1016,7 +979,7 @@ def _(
             save_finding_output = mo.md(f"**Error:** {e}")
 
     save_finding_output
-    return (detection_graph,)
+    return
 
 
 @app.cell
