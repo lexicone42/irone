@@ -16,6 +16,52 @@ console = Console()
 
 
 @app.command()
+def serve(
+    host: Annotated[str, typer.Option(help="Bind address")] = "0.0.0.0",
+    port: Annotated[int, typer.Option(help="Port to listen on")] = 8000,
+    catalog: Annotated[
+        Path | None, typer.Option("--catalog", "-c", help="Path to catalog YAML")
+    ] = None,
+    rules_dir: Annotated[
+        Path | None, typer.Option("--rules", "-r", help="Path to rules directory")
+    ] = None,
+    duckdb_path: Annotated[str, typer.Option("--db", help="DuckDB database path")] = ":memory:",
+    reload: Annotated[bool, typer.Option(help="Enable auto-reload for development")] = False,
+) -> None:
+    """Start the FastAPI web server."""
+    import uvicorn
+
+    from secdashboards.web.app import create_app
+    from secdashboards.web.config import WebConfig
+
+    config = WebConfig(
+        host=host,
+        port=port,
+        catalog_path=str(catalog) if catalog else "",
+        rules_dir=str(rules_dir) if rules_dir else "",
+        duckdb_path=duckdb_path,
+        debug=reload,
+    )
+
+    if reload:
+        # Use factory string for uvicorn reload support
+        console.print(
+            f"[green]Starting dev server at http://{host}:{port} (reload enabled)[/green]"
+        )
+        uvicorn.run(
+            "secdashboards.web.app:create_app",
+            host=host,
+            port=port,
+            reload=True,
+            factory=True,
+        )
+    else:
+        console.print(f"[green]Starting server at http://{host}:{port}[/green]")
+        web_app = create_app(config)
+        uvicorn.run(web_app, host=host, port=port)
+
+
+@app.command()
 def notebook(
     port: Annotated[int, typer.Option(help="Port to run marimo on")] = 2718,
 ) -> None:
