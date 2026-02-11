@@ -4,18 +4,23 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
 
 from secdashboards.web.config import WebConfig
+from secdashboards.web.routers import dashboard, monitoring, security_lake
 from secdashboards.web.state import create_app_state
+
+_WEB_DIR = Path(__file__).parent
 
 
 @asynccontextmanager
 async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Startup/shutdown lifecycle for the FastAPI app."""
-    # Startup: state is already attached by create_app
     yield
     # Shutdown: close DuckDB connection
     state = getattr(app.state, "secdash", None)
@@ -41,8 +46,17 @@ def create_app(config: WebConfig | None = None) -> FastAPI:
         lifespan=_lifespan,
     )
 
+    # Static files and templates
+    app.mount("/static", StaticFiles(directory=_WEB_DIR / "static"), name="static")
+    app.state.templates = Jinja2Templates(directory=_WEB_DIR / "templates")
+
     # Build and attach application state
     app.state.secdash = create_app_state(config)
+
+    # Include routers
+    app.include_router(dashboard.router)
+    app.include_router(monitoring.router)
+    app.include_router(security_lake.router)
 
     # --- Health endpoint ---
     @app.get("/api/health")

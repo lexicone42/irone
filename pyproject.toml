@@ -90,6 +90,8 @@ select = ["E", "F", "I", "UP", "B", "SIM", "PTH"]
 "scripts/*.py" = ["E501"]
 # CDK stacks contain long resource strings and CSP policies
 "infrastructure/cdk/stacks/*.py" = ["E501"]
+# FastAPI routers use Depends() in default arguments — this is the standard pattern
+"src/secdashboards/web/routers/*.py" = ["B008"]
 
 [tool.ty]
 # Ty (Astral's type checker) configuration

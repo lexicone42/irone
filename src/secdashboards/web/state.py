@@ -1,19 +1,16 @@
 """Application state management and FastAPI dependency injection."""
 
-from __future__ import annotations
-
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
+
+from fastapi import Request
 
 from secdashboards.catalog.models import DataSource, DataSourceType
 from secdashboards.catalog.registry import DataCatalog
 from secdashboards.connectors.duckdb import DuckDBConnector
 from secdashboards.detections.runner import DetectionRunner
 from secdashboards.web.config import WebConfig
-
-if TYPE_CHECKING:
-    from fastapi import Request
 
 
 @dataclass
