@@ -33,7 +33,7 @@ dev = [
     "ty>=0.0.1a6",
     "boto3-stubs[essential,athena,s3,lambda,events,glue,securitylake,neptune]>=1.35.0",
     "moto>=5.1.20",
-    "pre-commit>=4.5.1",
+    "prek>=0.3.2",
     "cfn-lint>=1.43.3",
 ]
 cdk = [
