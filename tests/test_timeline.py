@@ -532,3 +532,155 @@ class TestTimelineSummaryPrompt:
         assert "[initial_access]" in prompt
         assert "Suspicious/attack events: 2" in prompt
         assert "TTPs" in prompt  # Instructions mention TTPs
+
+
+class TestNeptunePersistence:
+    """Tests for timeline Neptune persistence (mocked)."""
+
+    def _make_mock_connector(self, stored_data=None):
+        """Create a mock NeptuneConnector."""
+        from unittest.mock import MagicMock
+
+        connector = MagicMock()
+        calls = []
+
+        def track_gremlin(query):
+            calls.append(query)
+            if stored_data and "count()" in query:
+                return {"result": {"data": [1]}}
+            if stored_data and "valueMap" in query and "HAS_EVENT" in query:
+                return {"result": {"data": stored_data.get("events", [])}}
+            if stored_data and "valueMap" in query:
+                return {"result": {"data": [stored_data.get("timeline", {})]}}
+            return {"result": {"data": []}}
+
+        connector.execute_gremlin = MagicMock(side_effect=track_gremlin)
+        connector._calls = calls
+        return connector
+
+    def test_save_timeline_creates_vertices_and_edges(self):
+        """Test that saving a timeline creates correct Gremlin queries."""
+        from secdashboards.graph.timeline import save_timeline_to_neptune
+
+        timeline = InvestigationTimeline(
+            investigation_id="INV-001",
+            events=[
+                TimelineEvent(
+                    id="evt-1",
+                    timestamp=datetime(2026, 1, 15, 10, 0, tzinfo=UTC),
+                    title="Suspicious login",
+                    entity_type="Principal",
+                    entity_id="user-admin",
+                    operation="ConsoleLogin",
+                    tag=EventTag.SUSPICIOUS,
+                ),
+                TimelineEvent(
+                    id="evt-2",
+                    timestamp=datetime(2026, 1, 15, 10, 5, tzinfo=UTC),
+                    title="S3 bucket access",
+                    entity_type="Resource",
+                    entity_id="bucket-data",
+                    operation="GetObject",
+                    tag=EventTag.DATA_EXFILTRATION,
+                ),
+            ],
+            ai_summary="Attack chain detected.",
+        )
+        connector = self._make_mock_connector()
+        count = save_timeline_to_neptune(timeline, connector)
+
+        # 1 timeline vertex + 2 event vertices + 2 HAS_EVENT edges + 2 REFERS_TO edges
+        assert count >= 5
+        calls = connector._calls
+        # Verify timeline vertex was created
+        assert any("Timeline" in c for c in calls)
+        # Verify event vertices were created
+        assert any("TimelineEvent" in c for c in calls)
+        # Verify HAS_EVENT edges
+        assert any("HAS_EVENT" in c for c in calls)
+
+    def test_load_timeline_returns_none_when_missing(self):
+        """Test loading a non-existent timeline returns None."""
+        from unittest.mock import MagicMock
+
+        from secdashboards.graph.timeline import load_timeline_from_neptune
+
+        connector = self._make_mock_connector()
+        connector.execute_gremlin = MagicMock(return_value={"result": {"data": [0]}})
+        result = load_timeline_from_neptune("nonexistent", connector)
+        assert result is None
+
+    def test_load_timeline_returns_populated_timeline(self):
+        """Test loading a timeline with events."""
+        from secdashboards.graph.timeline import load_timeline_from_neptune
+
+        stored = {
+            "timeline": {
+                "ai_summary": ["AI analysis here"],
+                "analyst_summary": ["Analyst notes"],
+                "created_at": ["2026-01-15T10:00:00"],
+                "updated_at": ["2026-01-15T12:00:00"],
+            },
+            "events": [
+                {
+                    "id": ["evt-1"],
+                    "timestamp": ["2026-01-15T10:00:00"],
+                    "title": ["Login event"],
+                    "description": ["External IP login"],
+                    "entity_type": ["Principal"],
+                    "entity_id": ["user-1"],
+                    "operation": ["ConsoleLogin"],
+                    "status": ["success"],
+                    "tag": ["suspicious"],
+                    "notes": ["Flagged by analyst"],
+                },
+            ],
+        }
+        connector = self._make_mock_connector(stored_data=stored)
+        result = load_timeline_from_neptune("INV-001", connector)
+
+        assert result is not None
+        assert result.investigation_id == "INV-001"
+        assert len(result.events) == 1
+        assert result.events[0].title == "Login event"
+        assert result.events[0].tag == EventTag.SUSPICIOUS
+        assert result.ai_summary == "AI analysis here"
+
+    def test_delete_timeline(self):
+        """Test deleting a timeline."""
+        from secdashboards.graph.timeline import delete_timeline_from_neptune
+
+        connector = self._make_mock_connector()
+        result = delete_timeline_from_neptune("INV-001", connector)
+        assert result is True
+        calls = connector._calls
+        assert any("drop()" in c for c in calls)
+
+    def test_save_and_escape_special_chars(self):
+        """Test that special characters are properly escaped."""
+        from secdashboards.graph.timeline import save_timeline_to_neptune
+
+        timeline = InvestigationTimeline(
+            investigation_id="INV-O'Malley",
+            events=[
+                TimelineEvent(
+                    id="evt-special",
+                    timestamp=datetime(2026, 1, 15, 10, 0, tzinfo=UTC),
+                    title='User\'s "admin" access',
+                    entity_type="Principal",
+                    entity_id="o'malley",
+                    operation="Login",
+                ),
+            ],
+        )
+        connector = self._make_mock_connector()
+        count = save_timeline_to_neptune(timeline, connector)
+        assert count >= 3
+        # Verify no unescaped quotes in queries
+        for call in connector._calls:
+            assert (
+                "O\\'Malley" in call
+                or "o\\'malley" in call
+                or "admin" in call
+                or "Timeline" in call
+            )

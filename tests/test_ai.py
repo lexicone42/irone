@@ -19,10 +19,10 @@ class TestBedrockModel:
     """Tests for BedrockModel enum."""
 
     def test_all_models_defined(self) -> None:
-        """Test that all expected Claude 4.5 models are defined."""
+        """Test that all expected Claude models are defined."""
         expected_models = [
             "CLAUDE_SONNET_4_5",
-            "CLAUDE_OPUS_4_5",
+            "CLAUDE_OPUS_4_6",
             "CLAUDE_HAIKU_4_5",
         ]
         for model_name in expected_models:
@@ -38,7 +38,7 @@ class TestBedrockModel:
         """Test that convenience aliases work."""
         assert BedrockModel.SONNET == BedrockModel.CLAUDE_SONNET_4_5
         assert BedrockModel.HAIKU == BedrockModel.CLAUDE_HAIKU_4_5
-        assert BedrockModel.OPUS == BedrockModel.CLAUDE_OPUS_4_5
+        assert BedrockModel.OPUS == BedrockModel.CLAUDE_OPUS_4_6
 
 
 class TestModelPricing:
@@ -157,9 +157,9 @@ class TestTaskModelRecommendations:
         assert isinstance(model, BedrockModel)
 
     def test_unknown_task_returns_default(self) -> None:
-        """Test that unknown tasks return default model (Sonnet 4.5)."""
+        """Test that unknown tasks return default model (Opus 4.6)."""
         model = get_recommended_model("unknown_task_xyz")
-        assert model == BedrockModel.CLAUDE_SONNET_4_5
+        assert model == BedrockModel.CLAUDE_OPUS_4_6
 
 
 class TestPrompts:

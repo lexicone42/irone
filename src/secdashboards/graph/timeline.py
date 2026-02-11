@@ -545,3 +545,206 @@ summary for an incident response report.
 5. Provide recommendations for immediate response actions
 
 Format as a professional incident summary for an analyst's report."""
+
+
+# =============================================================================
+# Neptune persistence for timelines
+# =============================================================================
+
+
+def save_timeline_to_neptune(
+    timeline: InvestigationTimeline,
+    connector: Any,
+) -> int:
+    """Save an InvestigationTimeline to Neptune graph database.
+
+    Creates a Timeline vertex connected to TimelineEvent vertices.
+    Events that reference existing graph nodes are linked via
+    HAS_TIMELINE_EVENT edges.
+
+    Args:
+        timeline: The timeline to persist
+        connector: A NeptuneConnector instance
+
+    Returns:
+        Number of entities (vertices + edges) written
+    """
+    count = 0
+    tl_id = f"timeline:{timeline.investigation_id or 'default'}"
+
+    # Upsert the timeline root vertex
+    summary = timeline.summary()
+    tl_query = (
+        f"g.V('{_esc(tl_id)}')"
+        f".fold().coalesce(unfold(), addV('Timeline').property(id, '{_esc(tl_id)}'))"
+        f".property('investigation_id', '{_esc(timeline.investigation_id)}')"
+        f".property('total_events', {len(timeline.events)})"
+        f".property('ai_summary', '{_esc(timeline.ai_summary)}')"
+        f".property('analyst_summary', '{_esc(timeline.analyst_summary)}')"
+        f".property('created_at', '{timeline.created_at.isoformat()}')"
+        f".property('updated_at', '{timeline.updated_at.isoformat()}')"
+    )
+    for tag, tag_count in summary.get("tag_counts", {}).items():
+        tl_query += f".property('tag_{_esc(tag)}', {tag_count})"
+
+    connector.execute_gremlin(tl_query)
+    count += 1
+
+    # Upsert each event as a vertex and connect to timeline
+    for event in timeline.events:
+        evt_id = f"tlevt:{_esc(event.id)}"
+
+        evt_query = (
+            f"g.V('{evt_id}')"
+            f".fold().coalesce(unfold(), addV('TimelineEvent').property(id, '{evt_id}'))"
+            f".property('timestamp', '{event.timestamp.isoformat()}')"
+            f".property('title', '{_esc(event.title)}')"
+            f".property('description', '{_esc(event.description)}')"
+            f".property('entity_type', '{_esc(event.entity_type)}')"
+            f".property('entity_id', '{_esc(event.entity_id)}')"
+            f".property('operation', '{_esc(event.operation)}')"
+            f".property('status', '{_esc(event.status)}')"
+            f".property('tag', '{event.tag.value}')"
+            f".property('notes', '{_esc(event.notes)}')"
+        )
+        connector.execute_gremlin(evt_query)
+        count += 1
+
+        # Edge: Timeline -> TimelineEvent
+        edge_query = (
+            f"g.V('{_esc(tl_id)}').as('tl')"
+            f".V('{evt_id}').as('evt')"
+            f".select('tl').outE('HAS_EVENT').where(inV().is(select('evt')))"
+            f".fold().coalesce(unfold(), select('tl').addE('HAS_EVENT').to(select('evt')))"
+        )
+        connector.execute_gremlin(edge_query)
+        count += 1
+
+        # Edge: TimelineEvent -> referenced graph node (if it exists)
+        if event.entity_id and not event.entity_id.startswith("tlevt:"):
+            link_query = (
+                f"g.V('{_esc(event.entity_id)}')"
+                f".fold().coalesce("
+                f"  unfold().as('target'),"
+                f"  constant('missing')"
+                f")"
+                f".choose(is('missing'), identity(),"
+                f"  V('{evt_id}').outE('REFERS_TO')"
+                f"  .where(inV().is(select('target')))"
+                f"  .fold().coalesce(unfold(),"
+                f"    V('{evt_id}').addE('REFERS_TO').to(select('target'))"
+                f"  )"
+                f")"
+            )
+            try:
+                connector.execute_gremlin(link_query)
+                count += 1
+            except Exception:
+                pass  # Target node may not exist in graph
+
+    return count
+
+
+def load_timeline_from_neptune(
+    investigation_id: str,
+    connector: Any,
+) -> InvestigationTimeline | None:
+    """Load an InvestigationTimeline from Neptune.
+
+    Args:
+        investigation_id: The investigation ID to load
+        connector: A NeptuneConnector instance
+
+    Returns:
+        InvestigationTimeline if found, None otherwise
+    """
+    tl_id = f"timeline:{_esc(investigation_id or 'default')}"
+
+    # Check if timeline exists
+    check = connector.execute_gremlin(f"g.V('{tl_id}').hasLabel('Timeline').count()")
+    result_data = check.get("result", {}).get("data", [])
+    if not result_data or result_data[0] == 0:
+        return None
+
+    # Load timeline properties
+    tl_props = connector.execute_gremlin(f"g.V('{tl_id}').valueMap(true)")
+    tl_data = tl_props.get("result", {}).get("data", [{}])[0]
+
+    # Load events connected to this timeline
+    events_result = connector.execute_gremlin(
+        f"g.V('{tl_id}').out('HAS_EVENT')"
+        f".hasLabel('TimelineEvent')"
+        f".order().by('timestamp')"
+        f".valueMap(true)"
+    )
+    events_data = events_result.get("result", {}).get("data", [])
+
+    # Build timeline
+    events = []
+    for evt in events_data:
+        events.append(
+            TimelineEvent(
+                id=_get_prop(evt, "id", ""),
+                timestamp=datetime.fromisoformat(
+                    _get_prop(evt, "timestamp", "2000-01-01T00:00:00")
+                ),
+                title=_get_prop(evt, "title", ""),
+                description=_get_prop(evt, "description", ""),
+                entity_type=_get_prop(evt, "entity_type", ""),
+                entity_id=_get_prop(evt, "entity_id", ""),
+                operation=_get_prop(evt, "operation", ""),
+                status=_get_prop(evt, "status", "success"),
+                tag=EventTag(_get_prop(evt, "tag", "unreviewed")),
+                notes=_get_prop(evt, "notes", ""),
+            )
+        )
+
+    return InvestigationTimeline(
+        investigation_id=investigation_id,
+        events=events,
+        ai_summary=_get_prop(tl_data, "ai_summary", ""),
+        analyst_summary=_get_prop(tl_data, "analyst_summary", ""),
+        created_at=datetime.fromisoformat(
+            _get_prop(tl_data, "created_at", datetime.now().isoformat())
+        ),
+        updated_at=datetime.fromisoformat(
+            _get_prop(tl_data, "updated_at", datetime.now().isoformat())
+        ),
+    )
+
+
+def delete_timeline_from_neptune(
+    investigation_id: str,
+    connector: Any,
+) -> bool:
+    """Delete a timeline and its events from Neptune.
+
+    Args:
+        investigation_id: The investigation ID to delete
+        connector: A NeptuneConnector instance
+
+    Returns:
+        True if deleted, False if not found
+    """
+    tl_id = f"timeline:{_esc(investigation_id or 'default')}"
+
+    # Delete events first, then timeline vertex
+    connector.execute_gremlin(f"g.V('{tl_id}').out('HAS_EVENT').hasLabel('TimelineEvent').drop()")
+    result = connector.execute_gremlin(f"g.V('{tl_id}').hasLabel('Timeline').drop()")
+    return result is not None
+
+
+def _esc(value: str) -> str:
+    """Escape a string for Gremlin queries."""
+    return str(value).replace("\\", "\\\\").replace("'", "\\'").replace('"', '\\"')
+
+
+def _get_prop(data: dict, key: str, default: str = "") -> str:
+    """Extract a property from Neptune valueMap result.
+
+    Neptune valueMap returns lists for property values.
+    """
+    val = data.get(key, default)
+    if isinstance(val, list) and val:
+        return str(val[0])
+    return str(val) if val else default

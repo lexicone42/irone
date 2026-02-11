@@ -22,7 +22,7 @@ Example usage:
     print(f"Cost: ${response.cost_usd:.4f}")
 
     # Configure specific model for a task
-    config = TaskConfig(model=BedrockModel.CLAUDE_OPUS_4_5)
+    config = TaskConfig(model=BedrockModel.CLAUDE_OPUS_4_6)
     response = assistant.analyze_attack_chain(events, config=config)
 
     # Check session costs

@@ -103,6 +103,12 @@ class InvestigationReportData(BaseModel):
     # Graph visualization
     graph_image_path: Path | str | None = None
 
+    # Timeline data
+    timeline_events: list[dict[str, Any]] = Field(default_factory=list)
+    timeline_tag_counts: dict[str, int] = Field(default_factory=dict)
+    timeline_ai_summary: str = ""
+    timeline_analyst_summary: str = ""
+
     # Metadata
     time_range_start: datetime | None = None
     time_range_end: datetime | None = None

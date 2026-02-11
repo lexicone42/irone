@@ -30,6 +30,7 @@ def graph_to_report_data(
     time_range_start: datetime | None = None,
     time_range_end: datetime | None = None,
     graph_image_path: Path | str | None = None,
+    timeline: Any | None = None,
 ) -> InvestigationReportData:
     """Convert a SecurityGraph to InvestigationReportData.
 
@@ -91,6 +92,18 @@ def graph_to_report_data(
         }
     )
 
+    # Extract timeline data if provided
+    timeline_events: list[dict[str, Any]] = []
+    timeline_tag_counts: dict[str, int] = {}
+    timeline_ai_summary = ""
+    timeline_analyst_summary = ""
+    if timeline is not None:
+        timeline_events = [e.to_dict() for e in timeline.events]
+        tl_summary = timeline.summary()
+        timeline_tag_counts = tl_summary.get("tag_counts", {})
+        timeline_ai_summary = timeline.ai_summary
+        timeline_analyst_summary = timeline.analyst_summary
+
     return InvestigationReportData(
         title="Security Investigation Report",
         investigation_id=investigation_id,
@@ -105,6 +118,10 @@ def graph_to_report_data(
         findings=findings,
         ai_analysis=ai_analysis,
         graph_image_path=graph_image_path,
+        timeline_events=timeline_events,
+        timeline_tag_counts=timeline_tag_counts,
+        timeline_ai_summary=timeline_ai_summary,
+        timeline_analyst_summary=timeline_analyst_summary,
         time_range_start=time_range_start,
         time_range_end=time_range_end,
         data_sources=data_sources,
@@ -120,6 +137,7 @@ def export_investigation_report(
     time_range_start: datetime | None = None,
     time_range_end: datetime | None = None,
     graph_image_path: Path | str | None = None,
+    timeline: Any | None = None,
 ) -> Path:
     """Export an investigation report to LaTeX.
 
@@ -132,6 +150,7 @@ def export_investigation_report(
         time_range_start: Start of analysis time window
         time_range_end: End of analysis time window
         graph_image_path: Path to saved graph visualization image
+        timeline: Optional InvestigationTimeline to include
 
     Returns:
         Path to the created LaTeX file
@@ -147,6 +166,7 @@ def export_investigation_report(
         time_range_start=time_range_start,
         time_range_end=time_range_end,
         graph_image_path=graph_image_path,
+        timeline=timeline,
     )
 
     # Render LaTeX

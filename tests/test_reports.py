@@ -733,3 +733,137 @@ class TestExporters:
         assert r"\documentclass" in content
         assert "test-rule" in content
         assert "T1078" in content
+
+
+class TestTimelineInReports:
+    """Tests for timeline data in investigation reports."""
+
+    def test_investigation_report_with_timeline_data(self) -> None:
+        """Test that timeline fields are included in report data."""
+        data = InvestigationReportData(
+            title="Timeline Test",
+            timeline_events=[
+                {
+                    "id": "evt-1",
+                    "timestamp": "2026-01-15T10:00:00",
+                    "title": "Login attempt",
+                    "tag": "suspicious",
+                    "entity_type": "Principal",
+                    "entity_id": "user-1",
+                    "operation": "ConsoleLogin",
+                },
+                {
+                    "id": "evt-2",
+                    "timestamp": "2026-01-15T10:05:00",
+                    "title": "S3 access",
+                    "tag": "data_exfiltration",
+                    "entity_type": "Resource",
+                    "entity_id": "bucket-1",
+                    "operation": "GetObject",
+                },
+            ],
+            timeline_tag_counts={"suspicious": 1, "data_exfiltration": 1},
+            timeline_ai_summary="AI detected attack chain.",
+            timeline_analyst_summary="Confirmed credential compromise.",
+        )
+        assert len(data.timeline_events) == 2
+        assert data.timeline_tag_counts["suspicious"] == 1
+        assert data.timeline_ai_summary == "AI detected attack chain."
+
+    def test_render_investigation_with_timeline(self) -> None:
+        """Test LaTeX rendering includes timeline section."""
+        data = InvestigationReportData(
+            title="Timeline Report",
+            investigation_id="INV-TL-001",
+            total_nodes=5,
+            total_edges=10,
+            timeline_events=[
+                {
+                    "id": "evt-1",
+                    "timestamp": "2026-01-15T10:00:00",
+                    "title": "Suspicious login from external IP",
+                    "tag": "initial_access",
+                    "entity_type": "Principal",
+                    "entity_id": "admin-user",
+                    "operation": "ConsoleLogin",
+                },
+            ],
+            timeline_tag_counts={"initial_access": 1},
+            timeline_analyst_summary="Confirmed attack vector.",
+        )
+        renderer = LaTeXRenderer()
+        latex = renderer.render_investigation_report(data)
+
+        assert "Investigation Timeline" in latex
+        assert "Chronological Events" in latex
+        assert "Suspicious login" in latex
+        assert "Initial Access" in latex
+        assert "Confirmed attack vector" in latex
+
+    def test_render_investigation_without_timeline(self) -> None:
+        """Test that timeline section shows placeholder when empty."""
+        data = InvestigationReportData(
+            title="No Timeline Report",
+            total_nodes=5,
+            total_edges=10,
+        )
+        renderer = LaTeXRenderer()
+        latex = renderer.render_investigation_report(data)
+
+        assert "No timeline data" in latex
+
+    def test_render_timeline_tag_summary(self) -> None:
+        """Test tag summary table renders correctly."""
+        data = InvestigationReportData(
+            title="Tag Summary Test",
+            total_nodes=5,
+            total_edges=10,
+            timeline_events=[
+                {
+                    "id": f"evt-{i}",
+                    "timestamp": f"2026-01-15T{10+i}:00:00",
+                    "title": f"Event {i}",
+                    "tag": tag,
+                    "entity_type": "Principal",
+                    "entity_id": "user-1",
+                    "operation": "Op",
+                }
+                for i, tag in enumerate(["suspicious", "suspicious", "benign", "initial_access"])
+            ],
+            timeline_tag_counts={
+                "suspicious": 2,
+                "benign": 1,
+                "initial_access": 1,
+            },
+        )
+        renderer = LaTeXRenderer()
+        latex = renderer.render_investigation_report(data)
+
+        assert "Tag Summary" in latex
+        assert "Suspicious" in latex
+        assert "Benign" in latex
+
+    def test_render_timeline_ai_summary(self) -> None:
+        """Test AI summary section renders when present."""
+        data = InvestigationReportData(
+            title="AI Summary Test",
+            total_nodes=1,
+            total_edges=0,
+            timeline_events=[
+                {
+                    "id": "evt-1",
+                    "timestamp": "2026-01-15T10:00:00",
+                    "title": "Event",
+                    "tag": "unreviewed",
+                    "entity_type": "Principal",
+                    "entity_id": "user-1",
+                    "operation": "",
+                }
+            ],
+            timeline_ai_summary="The timeline shows a clear pattern.",
+        )
+        renderer = LaTeXRenderer()
+        latex = renderer.render_investigation_report(data)
+
+        assert "AI Timeline Summary" in latex
+        assert "clear pattern" in latex

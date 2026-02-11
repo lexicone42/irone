@@ -112,7 +112,7 @@ class BedrockAssistant:
     def __init__(
         self,
         region: str = "us-west-2",
-        default_model: BedrockModel = BedrockModel.CLAUDE_SONNET_4_5,
+        default_model: BedrockModel = BedrockModel.CLAUDE_OPUS_4_6,
         task_configs: dict[str, TaskConfig] | None = None,
     ) -> None:
         """Initialize the Bedrock assistant.
