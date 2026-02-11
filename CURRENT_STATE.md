@@ -191,7 +191,7 @@ Key dependencies in pyproject.toml:
 
 ## Test Status
 
-### Unit Tests (435 total - all passing)
+### Unit Tests (437 total - all passing)
 ```bash
 uv run pytest tests/ -v --ignore=tests/test_notebook_main.py
 ```
@@ -384,9 +384,9 @@ be0d9b0 Add deployment E2E tests and fix StrEnum serialization in SAM templates
 3. ~~Test Lambda deployment workflow end-to-end~~ Done (test_deploy_e2e.py)
 4. ~~Add alert notification integrations (SNS, Slack, etc.)~~ Done (notifications module)
 5. ~~Add `py.typed` marker for PEP 561 type checking support~~ Done
-6. Consider adding mkdocs or sphinx for API documentation
-7. Add timeline export to LaTeX reports
-8. Implement Neptune persistence for timelines
+6. ~~Consider adding mkdocs or sphinx for API documentation~~ Done (mkdocs-material + mkdocstrings)
+7. ~~Add timeline export to LaTeX reports~~ Done (wired timeline into report generation)
+8. ~~Implement Neptune persistence for timelines~~ Done (already implemented, wired into notebook)
 9. ~~Wire notification module into Lambda handler templates (replace inline SNS publishing)~~ Done (uses NotificationManager)
 10. ~~Wire notification module into CDK alerting stack (replace inline Slack webhook code)~~ Done (alerting_handler.py + DetectionRulesStack)
 11. ~~Add property-based tests for SQL sanitization and alert serialization~~ Done (test_property_based.py)

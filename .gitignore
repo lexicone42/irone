@@ -57,6 +57,7 @@ cdk.context.json
 # Generated output
 output/
 /reports/
+site/
 *.pdf
 *.html
 

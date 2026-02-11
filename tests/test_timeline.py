@@ -684,3 +684,121 @@ class TestNeptunePersistence:
                 or "admin" in call
                 or "Timeline" in call
             )
+
+    def test_save_load_roundtrip_preserves_data(self):
+        """Test that save→load preserves timeline events and summaries."""
+        from secdashboards.graph.timeline import (
+            load_timeline_from_neptune,
+            save_timeline_to_neptune,
+        )
+
+        # Create timeline with multiple tags
+        timeline = InvestigationTimeline(
+            investigation_id="ROUNDTRIP-001",
+            events=[
+                TimelineEvent(
+                    id="evt-1",
+                    timestamp=datetime(2026, 1, 15, 10, 0, tzinfo=UTC),
+                    title="Initial access",
+                    description="Login from external IP",
+                    entity_type="Principal",
+                    entity_id="admin-user",
+                    operation="ConsoleLogin",
+                    tag=EventTag.INITIAL_ACCESS,
+                    notes="First observed",
+                ),
+                TimelineEvent(
+                    id="evt-2",
+                    timestamp=datetime(2026, 1, 15, 10, 5, tzinfo=UTC),
+                    title="Privilege escalation",
+                    description="IAM policy attached",
+                    entity_type="Principal",
+                    entity_id="admin-user",
+                    operation="AttachUserPolicy",
+                    tag=EventTag.PRIVILEGE_ESCALATION,
+                ),
+                TimelineEvent(
+                    id="evt-3",
+                    timestamp=datetime(2026, 1, 15, 10, 10, tzinfo=UTC),
+                    title="Data exfil",
+                    description="S3 objects downloaded",
+                    entity_type="Resource",
+                    entity_id="prod-bucket",
+                    operation="GetObject",
+                    tag=EventTag.DATA_EXFILTRATION,
+                    notes="15 objects in 2 minutes",
+                ),
+            ],
+            ai_summary="Three-stage attack: access, escalation, exfiltration.",
+            analyst_summary="Confirmed credential compromise via phishing.",
+        )
+
+        # Save
+        save_connector = self._make_mock_connector()
+        count = save_timeline_to_neptune(timeline, save_connector)
+        assert count >= 7  # 1 timeline + 3 events + 3 HAS_EVENT
+
+        # Load with mock returning stored data
+        stored = {
+            "timeline": {
+                "ai_summary": ["Three-stage attack: access, escalation, exfiltration."],
+                "analyst_summary": ["Confirmed credential compromise via phishing."],
+                "created_at": [timeline.created_at.isoformat()],
+                "updated_at": [timeline.updated_at.isoformat()],
+            },
+            "events": [
+                {
+                    "id": ["evt-1"],
+                    "timestamp": ["2026-01-15T10:00:00"],
+                    "title": ["Initial access"],
+                    "description": ["Login from external IP"],
+                    "entity_type": ["Principal"],
+                    "entity_id": ["admin-user"],
+                    "operation": ["ConsoleLogin"],
+                    "status": [""],
+                    "tag": ["initial_access"],
+                    "notes": ["First observed"],
+                },
+                {
+                    "id": ["evt-2"],
+                    "timestamp": ["2026-01-15T10:05:00"],
+                    "title": ["Privilege escalation"],
+                    "description": ["IAM policy attached"],
+                    "entity_type": ["Principal"],
+                    "entity_id": ["admin-user"],
+                    "operation": ["AttachUserPolicy"],
+                    "status": [""],
+                    "tag": ["privilege_escalation"],
+                    "notes": [""],
+                },
+                {
+                    "id": ["evt-3"],
+                    "timestamp": ["2026-01-15T10:10:00"],
+                    "title": ["Data exfil"],
+                    "description": ["S3 objects downloaded"],
+                    "entity_type": ["Resource"],
+                    "entity_id": ["prod-bucket"],
+                    "operation": ["GetObject"],
+                    "status": [""],
+                    "tag": ["data_exfiltration"],
+                    "notes": ["15 objects in 2 minutes"],
+                },
+            ],
+        }
+        load_connector = self._make_mock_connector(stored_data=stored)
+        loaded = load_timeline_from_neptune("ROUNDTRIP-001", load_connector)
+
+        # Verify roundtrip fidelity
+        assert loaded is not None
+        assert loaded.investigation_id == "ROUNDTRIP-001"
+        assert len(loaded.events) == 3
+        assert loaded.ai_summary == "Three-stage attack: access, escalation, exfiltration."
+        assert loaded.analyst_summary == "Confirmed credential compromise via phishing."
+
+        # Verify events preserved
+        assert loaded.events[0].title == "Initial access"
+        assert loaded.events[0].tag == EventTag.INITIAL_ACCESS
+        assert loaded.events[0].notes == "First observed"
+        assert loaded.events[1].tag == EventTag.PRIVILEGE_ESCALATION
+        assert loaded.events[2].tag == EventTag.DATA_EXFILTRATION
+        assert loaded.events[2].notes == "15 objects in 2 minutes"

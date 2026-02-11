@@ -867,3 +867,87 @@ class TestTimelineInReports:
 
         assert "AI Timeline Summary" in latex
         assert "clear pattern" in latex
+
+    def test_graph_to_report_data_with_timeline_integration(self) -> None:
+        """Test full flow: graph → timeline → report data → LaTeX rendering."""
+        from secdashboards.graph.models import (
+            GraphNode,
+            NodeType,
+            SecurityGraph,
+        )
+        from secdashboards.graph.timeline import (
+            EventTag,
+            InvestigationTimeline,
+            TimelineEvent,
+        )
+        from secdashboards.reports.exporters import graph_to_report_data
+
+        # Build a small graph
+        graph = SecurityGraph(investigation_id="INT-TEST-001")
+        graph.add_node(
+            GraphNode(
+                id="principal-admin",
+                node_type=NodeType.PRINCIPAL,
+                label="admin-user",
+                properties={"data_source": "CloudTrail"},
+            )
+        )
+        graph.add_node(
+            GraphNode(
+                id="ip-10.0.0.1",
+                node_type=NodeType.IP_ADDRESS,
+                label="10.0.0.1",
+            )
+        )
+
+        # Build a timeline with tagged events
+        timeline = InvestigationTimeline(investigation_id="INT-TEST-001")
+        timeline.add_event(
+            TimelineEvent(
+                id="evt-1",
+                timestamp=datetime(2026, 1, 15, 10, 0, 0),
+                title="Suspicious login",
+                description="Admin login from external IP",
+                entity_type="Principal",
+                entity_id="principal-admin",
+                operation="ConsoleLogin",
+                tag=EventTag.SUSPICIOUS,
+            )
+        )
+        timeline.add_event(
+            TimelineEvent(
+                id="evt-2",
+                timestamp=datetime(2026, 1, 15, 10, 5, 0),
+                title="Data access",
+                description="S3 bucket accessed",
+                entity_type="Resource",
+                entity_id="bucket-prod",
+                operation="GetObject",
+                tag=EventTag.DATA_EXFILTRATION,
+            )
+        )
+        timeline.ai_summary = "AI: Credential compromise followed by exfiltration."
+        timeline.analyst_summary = "Confirmed incident — escalated to IR team."
+
+        # Wire timeline into report
+        report_data = graph_to_report_data(
+            graph=graph,
+            investigation_id="INT-TEST-001",
+            timeline=timeline,
+        )
+
+        # Verify timeline data flowed through
+        assert len(report_data.timeline_events) == 2
+        assert report_data.timeline_tag_counts["suspicious"] == 1
+        assert report_data.timeline_tag_counts["data_exfiltration"] == 1
+        assert "Credential compromise" in report_data.timeline_ai_summary
+        assert "Confirmed incident" in report_data.timeline_analyst_summary
+
+        # Render to LaTeX and verify
+        renderer = LaTeXRenderer()
+        latex = renderer.render_investigation_report(report_data)
+        assert "Investigation Timeline" in latex
+        assert "Suspicious login" in latex
+        assert "Data access" in latex
+        assert "Credential compromise" in latex
+        assert "Confirmed incident" in latex
