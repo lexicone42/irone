@@ -2607,7 +2607,6 @@ dependencies = [
     { name = "httpx" },
     { name = "jinja2" },
     { name = "mangum" },
-    { name = "marimo" },
     { name = "networkx" },
     { name = "pandas" },
     { name = "plotly" },
@@ -2645,6 +2644,9 @@ docs = [
     { name = "mkdocs-material" },
     { name = "mkdocstrings", extra = ["python"] },
 ]
+notebook = [
+    { name = "marimo" },
+]
 
 [package.metadata]
 requires-dist = [
@@ -2656,7 +2658,6 @@ requires-dist = [
     { name = "httpx", specifier = ">=0.28.0" },
     { name = "jinja2", specifier = ">=3.1.0" },
     { name = "mangum", specifier = ">=0.19.0" },
-    { name = "marimo", specifier = ">=0.10.0" },
     { name = "networkx", specifier = ">=3.2" },
     { name = "pandas", specifier = ">=2.2.0" },
     { name = "plotly", specifier = ">=5.24.0" },
@@ -2694,6 +2695,7 @@ docs = [
     { name = "mkdocs-material", specifier = ">=9.5.0" },
     { name = "mkdocstrings", extras = ["python"], specifier = ">=0.27.0" },
 ]
+notebook = [{ name = "marimo", specifier = ">=0.10.0" }]
 
 [[package]]
 name = "shellingham"
