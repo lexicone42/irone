@@ -49,8 +49,14 @@ def _(mo):
         value="primary",
         label="Athena Workgroup",
     )
-    workgroup_input
-    return (workgroup_input,)
+    output_location_input = mo.ui.text(
+        value="",
+        label="S3 Output Location (leave blank to use workgroup default)",
+        full_width=True,
+        placeholder="s3://your-bucket/athena-results/",
+    )
+    mo.vstack([workgroup_input, output_location_input])
+    return output_location_input, workgroup_input
 
 
 @app.cell
@@ -80,7 +86,7 @@ def _(mo):
 
 
 @app.cell
-def _(database, mo, region, run_btn, security_lake_tables, workgroup_input):
+def _(database, mo, output_location_input, region, run_btn, security_lake_tables, workgroup_input):
     import time
     from datetime import UTC, datetime
 
@@ -92,21 +98,36 @@ def _(database, mo, region, run_btn, security_lake_tables, workgroup_input):
     if run_btn.value:
         athena = boto3.client("athena", region_name=region)
         workgroup = workgroup_input.value
+        output_location = output_location_input.value.strip()
+
+        # Build query execution kwargs
+        base_kwargs = {"WorkGroup": workgroup}
+        if output_location:
+            base_kwargs["ResultConfiguration"] = {"OutputLocation": output_location}
+        else:
+            # Auto-discover: try account ID for default bucket
+            sts = boto3.client("sts", region_name=region)
+            account_id = sts.get_caller_identity()["Account"]
+            base_kwargs["ResultConfiguration"] = {
+                "OutputLocation": f"s3://aws-athena-query-results-{account_id}-{region}/"
+            }
 
         results = []
         for label, table in security_lake_tables.items():
             row = {"Source": label, "Table": table}
             start = time.time()
             try:
+                # OCSF 2.0: time is epoch milliseconds (bigint), not a timestamp
                 sql = f"""
-                SELECT COUNT(*) as cnt, MAX(time) as latest_time
+                SELECT COUNT(*) as cnt,
+                       from_unixtime(MAX(time) / 1000) as latest_time
                 FROM "{database}"."{table}"
-                WHERE time >= CURRENT_TIMESTAMP - INTERVAL '24' HOUR
+                WHERE time >= to_unixtime(CURRENT_TIMESTAMP - INTERVAL '24' HOUR) * 1000
                 """
 
                 resp = athena.start_query_execution(
                     QueryString=sql,
-                    WorkGroup=workgroup,
+                    **base_kwargs,
                 )
                 qid = resp["QueryExecutionId"]
 
@@ -129,7 +150,7 @@ def _(database, mo, region, run_btn, security_lake_tables, workgroup_input):
                         row["Records (24h)"] = int(cnt)
                         row["Latest Event"] = latest or "-"
                         if latest:
-                            latest_dt = datetime.fromisoformat(latest.replace("Z", "+00:00"))
+                            latest_dt = datetime.fromisoformat(latest).replace(tzinfo=UTC)
                             age = (datetime.now(UTC) - latest_dt).total_seconds() / 60
                             row["Age (min)"] = round(age, 1)
                             row["Status"] = "Healthy" if age < 120 else "Stale"
