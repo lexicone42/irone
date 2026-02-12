@@ -47,7 +47,10 @@ class SharedAuthStack(Stack):
         pool_name: str = "secdash-shared-pool",
         cognito_domain_prefix: str = "",
         require_passkey_only: bool = False,
+        passkey_relying_party_domain: str = "",
         allowed_admin_emails: list[str] | None = None,
+        additional_callback_urls: list[str] | None = None,
+        additional_logout_urls: list[str] | None = None,
         **kwargs: Any,
     ) -> None:
         """Initialize the Shared Auth Stack.
@@ -56,6 +59,7 @@ class SharedAuthStack(Stack):
             pool_name: Name for the Cognito User Pool
             cognito_domain_prefix: Prefix for Cognito hosted UI domain
             require_passkey_only: If True, ONLY passkey auth allowed (no passwords)
+            passkey_relying_party_domain: Custom domain for WebAuthn RP ID (e.g. secdash.lexicone.com)
             allowed_admin_emails: List of emails to pre-create as admin users
         """
         super().__init__(scope, construct_id, **kwargs)
@@ -69,22 +73,28 @@ class SharedAuthStack(Stack):
         # =====================================================================
 
         # Configure allowed first-factor authentication methods
+        # Passkey requires a custom domain for the relying party ID (WebAuthn RP ID
+        # must match the serving domain). Until a custom domain is configured,
+        # use password + email OTP. Passkey can be enabled later by setting
+        # passkey_relying_party_id to the custom domain (e.g., secdash.lexicone.com).
         if require_passkey_only:
-            # Passkey-only mode: Maximum security
-            # Users MUST register a passkey to authenticate
             allowed_factors = cognito.AllowedFirstAuthFactors(
-                password=False,  # No password-based auth
-                passkey=True,  # Passkey required
-                email_otp=False,  # No email OTP fallback
+                password=False,
+                passkey=True,
+                email_otp=False,
             )
         else:
-            # Standard mode: Passkey-first with fallbacks
-            # Users can use passkey, password, or email OTP
             allowed_factors = cognito.AllowedFirstAuthFactors(
-                password=True,  # Password allowed as fallback
-                passkey=True,  # Passkey preferred
-                email_otp=True,  # Email OTP allowed
+                password=True,
+                passkey=False,  # Requires custom domain for RP ID
+                email_otp=True,
             )
+
+        # Build passkey kwargs only when a custom RP domain is provided
+        passkey_kwargs: dict[str, object] = {}
+        if passkey_relying_party_domain:
+            passkey_kwargs["passkey_relying_party_id"] = passkey_relying_party_domain
+            passkey_kwargs["passkey_user_verification"] = cognito.PasskeyUserVerification.REQUIRED
 
         user_pool = cognito.UserPool(
             self,
@@ -96,22 +106,18 @@ class SharedAuthStack(Stack):
             # MFA Configuration
             mfa=cognito.Mfa.OPTIONAL,
             mfa_second_factor=cognito.MfaSecondFactor(sms=False, otp=True),
-            # Password Policy (enforced even if passkey-only, for account recovery)
+            # Password Policy
             password_policy=cognito.PasswordPolicy(
-                min_length=16,  # Extra strong for security platform
+                min_length=16,
                 require_lowercase=True,
                 require_uppercase=True,
                 require_digits=True,
                 require_symbols=True,
             ),
             account_recovery=cognito.AccountRecovery.EMAIL_ONLY,
-            removal_policy=RemovalPolicy.RETAIN,  # Keep user data on stack deletion
-            # Passkey/WebAuthn Configuration
+            removal_policy=RemovalPolicy.RETAIN,
             sign_in_policy=cognito.SignInPolicy(allowed_first_auth_factors=allowed_factors),
-            passkey_relying_party_id=f"{cognito_domain_prefix}.auth.{self.region}.amazoncognito.com",
-            passkey_user_verification=cognito.PasskeyUserVerification.REQUIRED,
-            # Advanced Security Features
-            advanced_security_mode=cognito.AdvancedSecurityMode.ENFORCED,
+            **passkey_kwargs,
         )
 
         # User pool domain for hosted UI
@@ -190,8 +196,14 @@ class SharedAuthStack(Stack):
                     cognito.OAuthScope.EMAIL,
                     cognito.OAuthScope.PROFILE,
                 ],
-                callback_urls=["https://localhost:8000/auth/callback"],
-                logout_urls=["https://localhost:8000/auth/login"],
+                callback_urls=[
+                    "https://localhost:8000/auth/callback",
+                    *(additional_callback_urls or []),
+                ],
+                logout_urls=[
+                    "https://localhost:8000/auth/login",
+                    *(additional_logout_urls or []),
+                ],
             ),
             generate_secret=True,
             id_token_validity=Duration.hours(1),

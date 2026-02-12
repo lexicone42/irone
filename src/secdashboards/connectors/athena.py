@@ -1,12 +1,16 @@
 """Athena connector for querying data via AWS Athena."""
 
+from __future__ import annotations
+
 import io
 import time
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import boto3
-import polars as pl
+
+if TYPE_CHECKING:
+    import polars as pl
 
 from secdashboards.catalog.models import DataSource
 from secdashboards.connectors.base import DataConnector, HealthCheckResult
@@ -74,6 +78,8 @@ class AthenaConnector(DataConnector):
 
     def _read_results(self, s3_location: str) -> pl.DataFrame:
         """Read query results from S3."""
+        import polars as pl
+
         # Parse S3 location
         # Format: s3://bucket/key
         parts = s3_location.replace("s3://", "").split("/", 1)

@@ -1,11 +1,15 @@
 """URL-based data analyzer for external data sources."""
 
+from __future__ import annotations
+
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import httpx
-import polars as pl
 import structlog
+
+if TYPE_CHECKING:
+    import polars as pl
 
 logger = structlog.get_logger()
 
@@ -36,6 +40,8 @@ class URLAnalyzer:
         headers: dict[str, str] | None = None,
     ) -> pl.DataFrame:
         """Fetch data from a URL and return as a Polars DataFrame."""
+        import polars as pl
+
         response = self.client.get(url, headers=headers)
         response.raise_for_status()
 
@@ -125,6 +131,8 @@ class URLAnalyzer:
         expected_freshness_minutes: int = 60,
     ) -> dict[str, Any]:
         """Analyze data freshness from a URL endpoint."""
+        import polars as pl
+
         result: dict[str, Any] = {
             "url": url,
             "checked_at": datetime.now(UTC).isoformat(),
@@ -223,7 +231,7 @@ class URLAnalyzer:
             self._client.close()
             self._client = None
 
-    def __enter__(self) -> "URLAnalyzer":
+    def __enter__(self) -> URLAnalyzer:
         return self
 
     def __exit__(self, *args: object) -> None:

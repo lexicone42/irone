@@ -1,12 +1,16 @@
 """AWS Security Lake connector with OCSF schema support."""
 
+from __future__ import annotations
+
 import time
 from datetime import UTC, datetime, timedelta
 from enum import IntEnum
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-import polars as pl
 import structlog
+
+if TYPE_CHECKING:
+    import polars as pl
 
 from secdashboards.catalog.models import DataSource
 from secdashboards.connectors.athena import AthenaConnector
@@ -220,6 +224,8 @@ class SecurityLakeConnector(AthenaConnector):
         limit: int = 1000,
     ) -> pl.DataFrame:
         """Query network activity events."""
+        import polars as pl
+
         filters = []
         if src_ip:
             try:
@@ -403,6 +409,8 @@ class SecurityLakeConnector(AthenaConnector):
             direction: Filter by traffic direction ('Inbound' or 'Outbound')
             limit: Maximum number of records to return
         """
+        import polars as pl
+
         filters = []
 
         if src_ip:

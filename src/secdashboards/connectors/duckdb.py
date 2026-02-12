@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import time
+from typing import TYPE_CHECKING
 
 import duckdb
-import polars as pl
+
+if TYPE_CHECKING:
+    import polars as pl
 
 from secdashboards.catalog.models import DataSource
 from secdashboards.connectors.base import DataConnector, HealthCheckResult

@@ -5,14 +5,17 @@ events matching real-world attack patterns. Each scenario is mapped to
 MITRE ATT&CK techniques for detection coverage validation.
 """
 
+from __future__ import annotations
+
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-import polars as pl
+if TYPE_CHECKING:
+    import polars as pl
 
 from secdashboards.adversary.events import (
     EventStatus,

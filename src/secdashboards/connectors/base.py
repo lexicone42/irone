@@ -1,12 +1,15 @@
 """Base connector interface for data sources."""
 
+from __future__ import annotations
+
 from abc import ABC, abstractmethod
 from datetime import UTC, datetime, timedelta
-from typing import Any
-
-import polars as pl
+from typing import TYPE_CHECKING, Any
 
 from secdashboards.catalog.models import DataSource
+
+if TYPE_CHECKING:
+    import polars as pl
 
 
 class DataConnector(ABC):
@@ -26,7 +29,7 @@ class DataConnector(ABC):
         ...
 
     @abstractmethod
-    def check_health(self) -> "HealthCheckResult":
+    def check_health(self) -> HealthCheckResult:
         """Check if the data source is healthy and producing data."""
         ...
 

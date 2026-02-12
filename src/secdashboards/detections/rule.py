@@ -1,12 +1,16 @@
 """Detection rule definitions and models."""
 
+from __future__ import annotations
+
 from abc import ABC, abstractmethod
 from datetime import UTC, datetime
 from enum import StrEnum
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-import polars as pl
 from pydantic import BaseModel, Field
+
+if TYPE_CHECKING:
+    import polars as pl
 
 
 class Severity(StrEnum):
