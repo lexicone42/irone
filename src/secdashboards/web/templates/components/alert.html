@@ -1,0 +1,8 @@
+{# Alert component. Usage:
+   {% set alert_type = "success" %}
+   {% set alert_message = "All checks passed" %}
+   {% include "components/alert.html" %}
+#}
+<div class="alert alert-{{ alert_type }}" {% if auto_dismiss %}data-auto-dismiss{% endif %}>
+    {{ alert_message }}
+</div>

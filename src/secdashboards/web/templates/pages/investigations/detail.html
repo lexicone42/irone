@@ -1,0 +1,91 @@
+{% extends "base.html" %}
+{% block title %}{{ inv.name }} — secdashboards{% endblock %}
+
+{% block content %}
+<h1>{{ inv.name }}</h1>
+<p style="color: var(--text-secondary); margin-bottom: 1rem;">
+    ID: {{ inv_id }} | Created: {{ inv.created_at[:19] if inv.created_at else "N/A" }}
+</p>
+
+<div class="grid grid-3" style="margin-bottom: 1rem;">
+    <div class="card">
+        <div class="stat-value">{{ summary.get("node_count", 0) }}</div>
+        <div class="stat-label">Nodes</div>
+    </div>
+    <div class="card">
+        <div class="stat-value">{{ summary.get("edge_count", 0) }}</div>
+        <div class="stat-label">Edges</div>
+    </div>
+    <div class="card">
+        <div class="stat-value">{{ summary.get("node_types", {}) | length }}</div>
+        <div class="stat-label">Node Types</div>
+    </div>
+</div>
+
+{# Graph visualization iframe #}
+<div class="card">
+    <div class="card-header">Graph Visualization</div>
+    {% if summary.get("node_count", 0) > 0 %}
+    <iframe src="/investigations/{{ inv_id }}/graph.html"
+            style="width: 100%; height: 500px; border: 1px solid var(--border); border-radius: 4px;">
+    </iframe>
+    {% else %}
+    <p style="color: var(--text-muted);">No nodes in graph. Enrich the investigation to add data.</p>
+    {% endif %}
+</div>
+
+{# Enrichment form #}
+<div class="card">
+    <div class="card-header">Enrich Investigation</div>
+    <form hx-post="/investigations/{{ inv_id }}/enrich"
+          hx-target="#enrich-results"
+          hx-indicator="#enrich-spinner">
+        <div class="grid grid-2" style="margin-bottom: 0.75rem;">
+            <div>
+                <label style="display: block; color: var(--text-secondary); margin-bottom: 0.25rem;">
+                    Add Users
+                </label>
+                <input type="text" name="users" style="width: 100%;" placeholder="user1, user2">
+            </div>
+            <div>
+                <label style="display: block; color: var(--text-secondary); margin-bottom: 0.25rem;">
+                    Add IPs
+                </label>
+                <input type="text" name="ips" style="width: 100%;" placeholder="10.0.1.1, 10.0.1.2">
+            </div>
+        </div>
+        <button type="submit" class="btn btn-primary">Enrich</button>
+        <span id="enrich-spinner" class="htmx-indicator">
+            <span class="spinner"></span> Enriching...
+        </span>
+    </form>
+    <div id="enrich-results" style="margin-top: 0.75rem;"></div>
+</div>
+
+{# AI Analysis #}
+<div class="card">
+    <div class="card-header">AI Analysis</div>
+    <form hx-post="/investigations/{{ inv_id }}/ai-analyze"
+          hx-target="#ai-analysis"
+          hx-indicator="#ai-spinner">
+        <div style="margin-bottom: 0.75rem;">
+            <label style="display: block; color: var(--text-secondary); margin-bottom: 0.25rem;">
+                Focus Area (optional)
+            </label>
+            <input type="text" name="focus_area" style="width: 100%;"
+                   placeholder="e.g. lateral movement, privilege escalation">
+        </div>
+        <button type="submit" class="btn btn-primary">Analyze</button>
+        <span id="ai-spinner" class="htmx-indicator">
+            <span class="spinner"></span> Analyzing...
+        </span>
+    </form>
+    <div id="ai-analysis" style="margin-top: 0.75rem;"></div>
+</div>
+
+{# Export #}
+<div style="margin-top: 1rem;">
+    <a href="/investigations/{{ inv_id }}/export" class="btn">Export JSON</a>
+    <a href="/investigations/" class="btn">Back to List</a>
+</div>
+{% endblock %}

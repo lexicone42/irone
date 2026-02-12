@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}Data Catalog — secdashboards{% endblock %}
+
+{% block content %}
+<h1>Data Catalog</h1>
+
+<div class="card">
+    <div class="card-header">{{ sources | length }} Source(s)</div>
+    {% if sources %}
+    <table class="data-table">
+        <thead>
+            <tr>
+                <th>Name</th>
+                <th>Type</th>
+                <th>Database</th>
+                <th>Table</th>
+                <th>Region</th>
+                <th>Tags</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for src in sources %}
+            <tr>
+                <td>{{ src.name }}</td>
+                <td><span class="badge badge-ok">{{ src.type }}</span></td>
+                <td>{{ src.database or "—" }}</td>
+                <td>{{ src.table or "—" }}</td>
+                <td>{{ src.region }}</td>
+                <td>{{ src.tags | join(", ") }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p style="color: var(--text-muted);">No sources registered.</p>
+    {% endif %}
+</div>
+{% endblock %}

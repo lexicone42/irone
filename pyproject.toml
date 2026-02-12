@@ -30,6 +30,11 @@ dependencies = [
     "gremlinpython>=3.7.0",
     "networkx>=3.2",
     "plotly>=5.24.0",
+    "duckdb>=1.1.0",
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.32.0",
+    "mangum>=0.19.0",
+    "python-multipart>=0.0.22",
 ]
 
 [project.scripts]
@@ -86,6 +91,8 @@ select = ["E", "F", "I", "UP", "B", "SIM", "PTH"]
 "scripts/*.py" = ["E501"]
 # CDK stacks contain long resource strings and CSP policies
 "infrastructure/cdk/stacks/*.py" = ["E501"]
+# FastAPI routers use Depends() in default arguments — this is the standard pattern
+"src/secdashboards/web/routers/*.py" = ["B008"]
 
 [tool.ty]
 # Ty (Astral's type checker) configuration

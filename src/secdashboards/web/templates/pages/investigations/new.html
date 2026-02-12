@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block title %}New Investigation — secdashboards{% endblock %}
+
+{% block content %}
+<h1>New Investigation</h1>
+
+<div class="card">
+    <form method="post" action="/investigations/">
+        <div style="margin-bottom: 0.75rem;">
+            <label style="display: block; color: var(--text-secondary); margin-bottom: 0.25rem;">
+                Investigation Name (optional)
+            </label>
+            <input type="text" name="name" style="width: 100%;"
+                   placeholder="e.g. Suspicious login investigation">
+        </div>
+
+        <div style="margin-bottom: 0.75rem;">
+            <label style="display: block; color: var(--text-secondary); margin-bottom: 0.25rem;">
+                Users (comma-separated)
+            </label>
+            <input type="text" name="users" style="width: 100%;"
+                   placeholder="e.g. admin@example.com, john.doe">
+        </div>
+
+        <div style="margin-bottom: 0.75rem;">
+            <label style="display: block; color: var(--text-secondary); margin-bottom: 0.25rem;">
+                IP Addresses (comma-separated)
+            </label>
+            <input type="text" name="ips" style="width: 100%;"
+                   placeholder="e.g. 10.0.1.100, 192.168.1.50">
+        </div>
+
+        <button type="submit" class="btn btn-primary">Start Investigation</button>
+        <a href="/investigations/" class="btn">Cancel</a>
+    </form>
+</div>
+{% endblock %}

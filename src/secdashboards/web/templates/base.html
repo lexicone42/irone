@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}secdashboards{% endblock %}</title>
+    <link rel="stylesheet" href="/static/css/terminal.css">
+    <script src="https://unpkg.com/htmx.org@2.0.4"></script>
+</head>
+<body hx-boost="true">
+    <div class="layout">
+        {% include "components/nav.html" %}
+        <main class="main-content">
+            {% block content %}{% endblock %}
+        </main>
+    </div>
+    <script src="/static/js/app.js"></script>
+</body>
+</html>
