@@ -65,10 +65,6 @@ cdk = [
     "aws-cdk-lib>=2.170.0",
     "constructs>=10.0.0",
 ]
-notebook = [
-    "marimo>=0.10.0",
-]
-
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
@@ -87,8 +83,6 @@ select = ["E", "F", "I", "UP", "B", "SIM", "PTH"]
 # Allow longer lines in test files (test data, assertions)
 "tests/*.py" = ["E501"]
 "infrastructure/cdk/tests/*.py" = ["E501"]
-# Marimo notebooks use bare expressions (B018) and cross-cell type annotations (F821)
-"notebooks/*.py" = ["B018", "E501", "F821"]
 # Scripts contain long strings (ARNs, markdown content, demo data)
 "scripts/*.py" = ["E501"]
 # CDK stacks contain long resource strings and CSP policies
@@ -115,5 +109,4 @@ division-by-zero = "warn"
 # Exclude files with optional dependencies that may not be installed
 exclude = [
     "src/secdashboards/reports/exporters.py",  # playwright is optional
-    "src/secdashboards/graph/visualization.py",  # marimo is optional
 ]

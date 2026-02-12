@@ -2,7 +2,7 @@
 
 **Security Data Lake Analytics for AWS Security Lake**
 
-A Marimo notebook-based security analytics platform for AWS Security Lake. Create detection rules, visualize security investigation graphs, and deploy automated monitoring to AWS.
+A FastAPI + HTMX security analytics platform for AWS Security Lake. Create detection rules, visualize security investigation graphs, and deploy automated monitoring to AWS.
 
 ## Features
 

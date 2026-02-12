@@ -2,7 +2,7 @@
 
 [![Built with Claude Code](https://img.shields.io/badge/Built%20with-Claude%20Code-6B48FF?style=flat&logo=claude)](https://claude.com/claude-code)
 
-A Marimo notebook-based security analytics platform for AWS Security Lake. Create detection rules, visualize security investigation graphs, and deploy automated monitoring to AWS.
+A FastAPI + HTMX security analytics platform for AWS Security Lake. Create detection rules, visualize security investigation graphs, and deploy automated monitoring to AWS.
 
 ## Features
 
@@ -16,9 +16,8 @@ A Marimo notebook-based security analytics platform for AWS Security Lake. Creat
 - **Neptune Graph Database**: Persist and query security graphs with AWS Neptune Serverless
 - **Adversary Emulation**: Test detections with MITRE ATT&CK-aligned attack scenarios
 - **Lambda Deployment**: Deploy detection rules to Lambda with CloudWatch schedules
-- **AWS App Runner Deployment**: Deploy Marimo notebooks to AWS with VPC-only access
+- **FastAPI + HTMX Web Interface**: Server-rendered dashboard with DuckDB for local SQL
 - **Health Monitoring**: Check data freshness and source connectivity
-- **Interactive Marimo Notebook**: Visual interface for exploration and rule development
 
 ## Quick Start
 
@@ -40,18 +39,14 @@ uv sync
 uv sync --group dev
 ```
 
-### Launch the Notebook
+### Launch the Web Dashboard
 
 ```bash
-# Run the interactive Marimo notebook
-uv run marimo edit notebooks/main.py
+# Start the FastAPI web server
+uv run secdash serve
 ```
 
-Or use the CLI:
-
-```bash
-uv run secdash notebook
-```
+Open http://localhost:8000 in your browser.
 
 ### Configure AWS Credentials
 
@@ -150,7 +145,7 @@ npx cdk deploy secdash-alerting secdash-detections \
 secdashboards/
 ├── src/secdashboards/
 │   ├── catalog/          # Data catalog and source management
-│   ├── connectors/       # Data source connectors (Athena, Security Lake, CloudWatch)
+│   ├── connectors/       # Data source connectors (Athena, Security Lake, DuckDB)
 │   ├── detections/       # Detection rules framework (SQL, dual-target)
 │   ├── graph/            # Investigation graph module
 │   │   ├── models.py     # Node/edge entity models
@@ -160,30 +155,25 @@ secdashboards/
 │   │   ├── visualization.py  # pyvis graph visualization
 │   │   ├── timeline.py   # Plotly timeline visualization
 │   │   └── queries.py    # Gremlin/openCypher templates
+│   ├── web/              # FastAPI + HTMX web application
+│   │   ├── app.py        # create_app() factory
+│   │   ├── config.py     # WebConfig with SECDASH_ env prefix
+│   │   ├── state.py      # AppState dataclass
+│   │   ├── routers/      # Route handlers (dashboard, detections, etc.)
+│   │   ├── templates/    # Jinja2 HTML templates
+│   │   └── static/       # CSS and JS assets
 │   ├── notifications/    # Alert delivery (SNS, Slack)
 │   ├── ai/               # AI assistance (Bedrock)
-│   │   ├── assistant.py  # BedrockAssistant class
-│   │   ├── models.py     # Model configs and pricing
-│   │   ├── prompts.py    # Security-focused prompts
-│   │   └── tools.py      # Agent tools skeleton
 │   ├── health/           # Health monitoring and URL analysis
 │   ├── adversary/        # Adversary emulation and testing
 │   ├── deploy/           # Lambda deployment utilities
 │   └── cli.py            # Command-line interface
-├── notebooks/
-│   ├── main.py               # Navigation hub
-│   ├── detection_engineering.py  # Create/test detection rules
-│   ├── investigation.py      # Graph visualization & IR
-│   ├── monitoring.py         # Health monitoring
-│   └── deployment.py         # Infrastructure (admin only)
 ├── detections/
 │   └── sample_rules.yaml # Example detection rules
 ├── infrastructure/
-│   ├── neptune.yaml           # Neptune Serverless stack
-│   ├── marimo-apprunner.yaml  # App Runner VPC deployment
-│   └── cdk/                   # AWS CDK stacks (alerting, detections, monitoring)
+│   ├── neptune.yaml      # Neptune Serverless stack
+│   └── cdk/              # AWS CDK stacks (alerting, detections, web, monitoring)
 ├── tests/                # Unit and integration tests
-├── Dockerfile.marimo     # Container for AWS deployment
 ├── catalog.example.yaml  # Example catalog configuration
 └── pyproject.toml        # Project configuration
 ```
@@ -316,8 +306,6 @@ Pricing source: [AWS Bedrock Pricing](https://aws.amazon.com/bedrock/pricing/)
 
 ## AWS Deployment
 
-Deploy Marimo notebooks to AWS with VPC-only access using App Runner.
-
 ### Deploy Neptune Graph Database
 
 ```bash
@@ -331,35 +319,13 @@ aws cloudformation deploy \
   --capabilities CAPABILITY_NAMED_IAM
 ```
 
-### Deploy Marimo App Runner
-
-```bash
-# Build and push container
-docker build -f Dockerfile.marimo -t secdash-marimo .
-aws ecr get-login-password | docker login --username AWS --password-stdin <account>.dkr.ecr.<region>.amazonaws.com
-docker tag secdash-marimo:latest <account>.dkr.ecr.<region>.amazonaws.com/secdash-marimo:latest
-docker push <account>.dkr.ecr.<region>.amazonaws.com/secdash-marimo:latest
-
-# Deploy App Runner
-aws cloudformation deploy \
-  --template-file infrastructure/marimo-apprunner.yaml \
-  --stack-name secdash-marimo-dev \
-  --parameter-overrides \
-    Environment=dev \
-    VpcId=vpc-xxx \
-    PrivateSubnetIds=subnet-xxx,subnet-yyy \
-    ImageUri=<account>.dkr.ecr.<region>.amazonaws.com/secdash-marimo:latest \
-    AthenaOutputBucket=my-athena-results \
-  --capabilities CAPABILITY_NAMED_IAM
-```
-
 ## Development
 
 ### Run Tests
 
 ```bash
-# Full test suite (435 tests)
-uv run pytest tests/ --ignore=tests/test_notebook_main.py
+# Full test suite
+uv run pytest tests/
 
 # Integration tests (require AWS credentials)
 RUN_INTEGRATION_TESTS=1 uv run pytest tests/test_security_lake_integration.py -v

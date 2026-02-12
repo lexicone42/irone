@@ -10,14 +10,11 @@ uv run secdash init-catalog --region us-west-2 --output catalog.yaml
 cp catalog.example.yaml catalog.yaml
 ```
 
-## 2. Launch the Notebook
+## 2. Launch the Web Dashboard
 
 ```bash
-# Interactive Marimo notebook
-uv run secdash notebook
-
-# Or directly
-uv run marimo edit notebooks/main.py
+# Start the FastAPI web server
+uv run secdash serve
 ```
 
 ## 3. Run Health Checks
@@ -56,7 +53,7 @@ Run `uv run secdash --help` for the full command list:
 
 | Command | Description |
 |---------|-------------|
-| `notebook` | Launch Marimo notebook |
+| `serve` | Start the FastAPI web dashboard |
 | `health` | Check data source connectivity and freshness |
 | `run-detections` | Execute detection rules |
 | `deploy` | Build Lambda deployment packages |

@@ -4,7 +4,6 @@
 Authentication Architecture:
 - SharedAuthStack: Centralized Cognito User Pool with passkey support
 - HealthDashboardStack: Health monitoring dashboard (uses shared pool or embedded pool)
-- MarimoAuthStack: Notebook authentication layer (CloudFront + Cognito)
 
 Passkey-Only Mode:
 - Set PASSKEY_ONLY=true to enforce passkey-only authentication
@@ -87,9 +86,6 @@ env = cdk.Environment(account=account, region=region)
 # =============================================================================
 # Currently uses its own embedded Cognito User Pool.
 # To use shared pool instead, pass user_pool_id from shared_auth.
-#
-# For Marimo notebooks at /notebooks, deploy App Runner first, then uncomment:
-#   app_runner_domain="xxx.us-west-2.awsapprunner.com",
 HealthDashboardStack(
     app,
     "secdash-health",
@@ -100,7 +96,6 @@ HealthDashboardStack(
     allowed_email=admin_email,
     security_lake_db=security_lake_db,
     athena_output=athena_output,
-    # app_runner_domain="",  # Uncomment after App Runner deployment
     description="Security Dashboards - Health Monitor with Cognito Passkey Auth",
 )
 
@@ -153,24 +148,5 @@ FastAPIStack(
     athena_output=athena_output,
     description="Security Dashboards - FastAPI Web Dashboard",
 )
-
-# =============================================================================
-# Marimo Notebooks Auth Stack (Optional - when ready for public notebook access)
-# =============================================================================
-# Uncomment when you have App Runner deployed and want to add CloudFront + auth:
-#
-# MarimoAuthStack(
-#     app,
-#     "secdash-marimo-auth",
-#     env=env,
-#     user_pool_id="us-west-2_XXXXXXXX",  # From shared auth or health dashboard
-#     user_pool_arn="arn:aws:cognito-idp:us-west-2:651804262336:userpool/us-west-2_XXXXXXXX",
-#     app_runner_domain="XXXXXXXX.us-west-2.awsapprunner.com",  # From App Runner deployment
-#     domain_name="notebooks.lexicone.com",
-#     hosted_zone_id="ZN8XM06S79WID",
-#     certificate_arn="arn:aws:acm:us-east-1:651804262336:certificate/XXXXXXXX",
-#     require_passkey_only=passkey_only,
-#     description="Security Dashboards - Marimo Notebooks with Cognito Passkey Auth",
-# )
 
 app.synth()

@@ -1,8 +1,7 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: |
-  Application Load Balancer with OIDC Authentication for Marimo Notebooks.
+  Application Load Balancer with OIDC Authentication for Security Dashboards.
   Provides SSO integration via Okta, Azure AD, Google Workspace, or any OIDC provider.
-  Deploy this stack AFTER the marimo-apprunner.yaml stack.
 
 Parameters:
   Environment:
@@ -287,7 +286,7 @@ Resources:
       Scope: REGIONAL
       DefaultAction:
         Allow: {}
-      Description: WAF rules for Marimo notebook protection
+      Description: WAF rules for Security Dashboards protection
       Rules:
         # Rate limiting - prevent brute force
         - Name: RateLimitRule
@@ -399,7 +398,7 @@ Outputs:
       Name: !Sub "${AWS::StackName}-ALBArn"
 
   LoadBalancerUrl:
-    Description: Full URL to access the protected notebook
+    Description: Full URL to access the protected application
     Value: !If
       - HasHostedZone
       - !Sub "https://${DomainName}"
