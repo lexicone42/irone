@@ -4,11 +4,15 @@ This module provides specialized query methods for enriching security
 investigation graphs with related events from Security Lake.
 """
 
-from datetime import datetime, timedelta
-from typing import Any
+from __future__ import annotations
 
-import polars as pl
+from datetime import datetime, timedelta
+from typing import TYPE_CHECKING, Any
+
 import structlog
+
+if TYPE_CHECKING:
+    import polars as pl
 
 from secdashboards.connectors.security_lake import OCSFEventClass, SecurityLakeConnector
 
@@ -130,6 +134,8 @@ class SecurityLakeEnricher:
         Returns:
             DataFrame of events involving the user
         """
+        import polars as pl
+
         classes = event_classes or [
             OCSFEventClass.API_ACTIVITY,
             OCSFEventClass.AUTHENTICATION,
@@ -190,6 +196,8 @@ class SecurityLakeEnricher:
         Returns:
             DataFrame of events involving the IP
         """
+        import polars as pl
+
         # Validate IP address format to prevent injection
         if not self._validate_ip_address(ip_address):
             logger.warning("invalid_ip_address_format", ip=ip_address)
@@ -289,6 +297,8 @@ class SecurityLakeEnricher:
         Returns:
             DataFrame of API activity for the service
         """
+        import polars as pl
+
         safe_service = self._sanitize_sql_string(service_name)
         filters = [f""""api"."service"."name" = '{safe_service}'"""]
 
@@ -336,6 +346,8 @@ class SecurityLakeEnricher:
         Returns:
             DataFrame of API activity for the operation
         """
+        import polars as pl
+
         safe_op = self._sanitize_sql_string(operation)
         filters = [f""""api"."operation" = '{safe_op}'"""]
 
@@ -382,6 +394,8 @@ class SecurityLakeEnricher:
         Returns:
             DataFrame of authentication events
         """
+        import polars as pl
+
         safe_user = self._sanitize_sql_string(user_name)
 
         try:
@@ -422,6 +436,8 @@ class SecurityLakeEnricher:
         Returns:
             DataFrame with principal information
         """
+        import polars as pl
+
         # Validate IP address format
         if not self._validate_ip_address(ip_address):
             logger.warning("invalid_ip_address_format", ip=ip_address)
@@ -570,6 +586,8 @@ class SecurityLakeEnricher:
         Returns:
             DataFrame of access events for the resource
         """
+        import polars as pl
+
         # Validate ARN format
         if not resource_arn.startswith("arn:"):
             logger.warning("invalid_arn_format", arn=resource_arn)
@@ -623,6 +641,8 @@ class SecurityLakeEnricher:
         Returns:
             DataFrame of DNS query events
         """
+        import polars as pl
+
         filters: list[str] = []
 
         if domain_pattern:
@@ -676,6 +696,8 @@ class SecurityLakeEnricher:
         Returns:
             DataFrame of failed operations
         """
+        import polars as pl
+
         filters = ["status = 'Failure'"]
 
         if user_name:

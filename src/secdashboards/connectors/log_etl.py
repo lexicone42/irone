@@ -10,18 +10,22 @@ The ETL pattern supports a hot/cold tier architecture:
 Reference: https://schema.ocsf.io/
 """
 
+from __future__ import annotations
+
 import hashlib
 import json
 from abc import ABC, abstractmethod
 from datetime import UTC, datetime, timedelta
 from enum import IntEnum
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 import boto3
-import polars as pl
 import structlog
+
+if TYPE_CHECKING:
+    import polars as pl
 
 logger = structlog.get_logger()
 
@@ -603,6 +607,8 @@ class LogETLPipeline:
         df: pl.DataFrame,
     ) -> pl.DataFrame:
         """Transform a Polars DataFrame to OCSF format."""
+        import polars as pl
+
         records = df.to_dicts()
         ocsf_records = self.transform(source_type, records)
         return pl.DataFrame(ocsf_records)
@@ -620,6 +626,8 @@ class LogETLPipeline:
             output_path: Output file path
             partition_by: Optional columns to partition by (e.g., ['class_uid', 'time_dt'])
         """
+        import polars as pl
+
         df = pl.DataFrame(records)
 
         if partition_by:

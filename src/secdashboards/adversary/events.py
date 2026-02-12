@@ -1,14 +1,18 @@
 """OCSF-compliant synthetic event generators for testing detections."""
 
+from __future__ import annotations
+
 import json
 import random
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
-import polars as pl
 from pydantic import BaseModel, Field
+
+if TYPE_CHECKING:
+    import polars as pl
 
 from secdashboards.connectors.security_lake import OCSFEventClass
 
@@ -563,6 +567,8 @@ class OCSFEventGenerator:
 
         This creates a DataFrame structure compatible with detection rules.
         """
+        import polars as pl
+
         records = [e.to_ocsf_dict() for e in events]
 
         # Flatten nested structures for SQL compatibility

@@ -71,6 +71,9 @@ athena_output = os.environ.get(
 # Security settings
 passkey_only = os.environ.get("PASSKEY_ONLY", "false").lower() == "true"
 
+# API Gateway URL (set after first deploy, used for Cognito callback URLs)
+api_gateway_url = os.environ.get("API_GATEWAY_URL", "")
+
 env = cdk.Environment(account=account, region=region)
 
 # =============================================================================
@@ -82,6 +85,8 @@ shared_auth = SharedAuthStack(
     env=env,
     pool_name="secdash-shared-pool",
     require_passkey_only=passkey_only,
+    additional_callback_urls=[f"{api_gateway_url}/auth/callback"] if api_gateway_url else [],
+    additional_logout_urls=[f"{api_gateway_url}/auth/login"] if api_gateway_url else [],
     description="Security Dashboards - Shared Cognito Authentication",
 )
 
@@ -144,15 +149,21 @@ DetectionRulesStack(
 # =============================================================================
 # Deploys the FastAPI app as a Lambda behind HTTP API Gateway.
 # Reports are stored in a dedicated S3 bucket.
+# Pre-built Lambda package directory (built via: scripts/build_lambda.sh)
+# Falls back to source tree if not set (won't include dependencies)
+lambda_package_dir = os.environ.get("LAMBDA_PACKAGE_DIR", "/tmp/secdash-lambda")
+
 FastAPIStack(
     app,
     "secdash-web",
     env=env,
     security_lake_db=security_lake_db,
     athena_output=athena_output,
+    lambda_package_dir=lambda_package_dir,
     auth_enabled=True,
     cognito_user_pool_id=shared_auth.user_pool.user_pool_id,
     cognito_client_id=shared_auth.web_client.user_pool_client_id,
+    cognito_client_secret=shared_auth.web_client.user_pool_client_secret.to_string(),
     cognito_domain=f"secdash-auth-{account}.auth.{region}.amazoncognito.com",
     session_secret_key=os.environ.get("SECDASH_SESSION_SECRET_KEY", "change-me-in-production"),
     description="Security Dashboards - FastAPI Web Dashboard",

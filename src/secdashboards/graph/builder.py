@@ -5,10 +5,11 @@ investigation graphs from detection results and enriches them with
 related events from Security Lake.
 """
 
+from __future__ import annotations
+
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
-import polars as pl
 import structlog
 
 from secdashboards.connectors.security_lake import SecurityLakeConnector
@@ -25,6 +26,8 @@ from secdashboards.graph.models import (
 )
 
 if TYPE_CHECKING:
+    import polars as pl
+
     from secdashboards.detections.rule import DetectionResult
     from secdashboards.graph.connector import NeptuneConnector
 
@@ -59,7 +62,7 @@ class GraphBuilder:
     def __init__(
         self,
         security_lake: SecurityLakeConnector,
-        neptune: "NeptuneConnector | None" = None,
+        neptune: NeptuneConnector | None = None,
     ) -> None:
         """Initialize the graph builder.
 
@@ -74,7 +77,7 @@ class GraphBuilder:
 
     def build_from_detection(
         self,
-        result: "DetectionResult",
+        result: DetectionResult,
         enrichment_window_minutes: int = 60,
         max_related_events: int = 500,
         include_events: bool = False,

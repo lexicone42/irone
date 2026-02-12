@@ -36,6 +36,7 @@ class FastAPIStack(Stack):
         athena_output: str = "",
         report_bucket_name: str = "",
         rules_dir: str = "detections/",
+        lambda_package_dir: str = "",
         memory_mb: int = 512,
         timeout_seconds: int = 30,
         # Auth configuration
@@ -81,21 +82,25 @@ class FastAPIStack(Stack):
             "FastAPIHandler",
             runtime=lambda_.Runtime.PYTHON_3_13,
             code=lambda_.Code.from_asset(
-                "../../",
-                exclude=[
-                    "*.pyc",
-                    "__pycache__",
-                    ".git",
-                    ".venv",
-                    "node_modules",
-                    "infrastructure",
-                    "notebooks",
-                    "tests",
-                    ".ruff_cache",
-                    ".pytest_cache",
-                ],
+                lambda_package_dir or "../../",
+                exclude=(
+                    []
+                    if lambda_package_dir
+                    else [
+                        "*.pyc",
+                        "__pycache__",
+                        ".git",
+                        ".venv",
+                        "node_modules",
+                        "infrastructure",
+                        "notebooks",
+                        "tests",
+                        ".ruff_cache",
+                        ".pytest_cache",
+                    ]
+                ),
             ),
-            handler="src.secdashboards.web.lambda_handler.handler",
+            handler="secdashboards.web.lambda_handler.handler",
             memory_size=memory_mb,
             timeout=Duration.seconds(timeout_seconds),
             environment={

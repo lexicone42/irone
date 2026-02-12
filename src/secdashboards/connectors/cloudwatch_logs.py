@@ -4,16 +4,20 @@ This connector provides a flexible interface for querying various application lo
 via CloudWatch Logs Insights, supporting Lambda, EKS, ALB, and custom log sources.
 """
 
+from __future__ import annotations
+
 import asyncio
 import contextlib
 import time
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import boto3
-import polars as pl
 import structlog
+
+if TYPE_CHECKING:
+    import polars as pl
 from botocore.exceptions import ClientError
 
 from secdashboards.catalog.models import DataSource
@@ -175,6 +179,8 @@ class CloudWatchLogsConnector(DataConnector):
         Returns:
             Query results as a Polars DataFrame
         """
+        import polars as pl
+
         end = end or datetime.now(UTC)
         start = start or (end - timedelta(hours=1))
         groups = log_groups or self._log_groups
@@ -214,6 +220,8 @@ class CloudWatchLogsConnector(DataConnector):
         timeout: int,
     ) -> pl.DataFrame:
         """Wait for a Logs Insights query to complete."""
+        import polars as pl
+
         start_time = time.time()
 
         while time.time() - start_time < timeout:
@@ -240,6 +248,8 @@ class CloudWatchLogsConnector(DataConnector):
 
     def _parse_results(self, results: list[list[dict[str, str]]]) -> pl.DataFrame:
         """Parse Logs Insights results into a Polars DataFrame."""
+        import polars as pl
+
         if not results:
             return pl.DataFrame()
 

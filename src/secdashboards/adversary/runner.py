@@ -4,14 +4,18 @@ This module orchestrates adversary emulation tests against detection rules,
 providing a framework for validating detection coverage.
 """
 
+from __future__ import annotations
+
 import logging
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-import polars as pl
 from pydantic import BaseModel, Field
+
+if TYPE_CHECKING:
+    import polars as pl
 
 from secdashboards.adversary.events import OCSFEventGenerator, SyntheticEvent
 from secdashboards.adversary.network import NetworkEmulator
