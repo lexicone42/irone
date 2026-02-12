@@ -143,6 +143,36 @@ secdashboards/
 
 ## Recent Changes (2026-02-11)
 
+### PR #14 — Deploy Lambda with Lazy Imports (`feature/deploy-lambda-lazy-imports`)
+
+Deployed `secdash-shared-auth` and `secdash-web` CDK stacks to AWS. Converted all heavy optional dependencies to lazy imports for fast Lambda cold starts. Full auth flow verified end-to-end in browser.
+
+**Deployed infrastructure:**
+| Resource | Details |
+|----------|---------|
+| User Pool | `us-west-2_EgkXXauzP` (5 RBAC groups, OAuth web client) |
+| Web Client ID | `5hh278qt9lcmm5q4nls1nq110h` |
+| Cognito Domain | `secdash-auth-651804262336.auth.us-west-2.amazoncognito.com` |
+| API Gateway | `https://udy3l282oh.execute-api.us-west-2.amazonaws.com` |
+| Lambda | `secdash-web-FastAPIHandlerC4831E27-KlK3BmblmlcV` (Python 3.13, 512MB) |
+| Session Table | `secdash_sessions` (DynamoDB, TTL-enabled) |
+| Report Bucket | `secdash-web-reportbucket577f0fcd-f0gcyawogvqr` |
+| Test User | `bryan.egan@gmail.com` (admin group) |
+
+**Lazy imports (13 files):**
+- Package `__init__.py`: `__getattr__` pattern — avoids eager loading of polars, pyvis, pyarrow, plotly at import time
+- All connector, detection, graph, adversary, and health modules: `TYPE_CHECKING` + runtime `import polars as pl` inside methods
+- Lambda package reduced from 662MB to 160MB via slim requirements (excludes polars, pyarrow, pandas, numpy, plotly)
+
+**CDK changes:**
+- `shared_auth.py`: Disabled passkey (needs custom domain for WebAuthn RP ID), added `passkey_relying_party_domain` param, added `additional_callback_urls`/`additional_logout_urls`
+- `fastapi_stack.py`: Added `lambda_package_dir` param, fixed handler to `secdashboards.web.lambda_handler.handler`
+- `app.py`: Wired `user_pool_client_secret` via CDK cross-stack reference, added `API_GATEWAY_URL` and `LAMBDA_PACKAGE_DIR` env vars
+
+**Lambda packaging**: Built with `uv pip install --target /tmp/secdash-lambda -r requirements-slim.txt` + source copy. No Docker needed.
+
+**Auth flow verified**: Browser → middleware redirect → Cognito hosted UI → OAuth callback → session → dashboard loads with nav, stats (38 detection rules), and registered sources.
+
 ### PR #13 — Cognito Passkey Auth + Cedar Authorization (`feature/cognito-cedar-auth`)
 
 Ported authentication system from `l42-cognito-passkey` into secdashboards with Secdash-specific Cedar RBAC policies. Auth is disabled by default (`auth_enabled=False`) so all existing tests pass unchanged.
@@ -403,11 +433,11 @@ uv run ty check src/
 
 | Component | Template | Status |
 |-----------|----------|--------|
-| CDK FastAPIStack | `cdk/stacks/fastapi_stack.py` | Ready (+ DynamoDB sessions, auth env vars) |
-| CDK SharedAuthStack | `cdk/stacks/shared_auth.py` | Ready (Cognito User Pool + web client) |
-| CDK AlertingStack | `cdk/stacks/alerting.py` | Ready (tested) |
-| CDK DetectionRulesStack | `cdk/stacks/detection_rules.py` | Ready (tested) |
-| CDK HealthDashboardStack | `cdk/stacks/health_dashboard.py` | Ready (tested) |
+| CDK FastAPIStack | `cdk/stacks/fastapi_stack.py` | **Deployed** (`secdash-web`) |
+| CDK SharedAuthStack | `cdk/stacks/shared_auth.py` | **Deployed** (`secdash-shared-auth`) |
+| CDK AlertingStack | `cdk/stacks/alerting.py` | Ready (tested, not deployed) |
+| CDK DetectionRulesStack | `cdk/stacks/detection_rules.py` | Ready (tested, not deployed) |
+| CDK HealthDashboardStack | `cdk/stacks/health_dashboard.py` | Ready (tested, not deployed) |
 | Neptune Serverless | `neptune.yaml` | CloudFormation template ready |
 
 ## Investigation Graph Module
@@ -472,6 +502,7 @@ Note: OCSF 2.0 `time` field is epoch milliseconds (bigint), not a SQL timestamp.
 ## Git Commit History (Recent)
 
 ```
+0cabfc9 Deploy Lambda with lazy imports for fast cold starts
 0d5d3b1 Add Cognito passkey authentication and Cedar authorization (#13)
 df9258d Update CURRENT_STATE.md with PR #12 cleanup
 27a5c89 Merge pull request #12 from lexicone42/feature/remove-marimo-docker
@@ -512,10 +543,11 @@ All 14 originally tracked improvements are done:
 
 ## Potential Next Steps
 
-- Deploy FastAPI stack to AWS (CDK `cdk deploy secdash-web`)
-- Configure Cognito User Pool with passkey authenticator in AWS console
-- End-to-end auth testing against live Cognito (manual verification)
+- Create `scripts/build_lambda.sh` to automate Lambda packaging (`uv pip install --target` + source copy)
+- Enable passkey auth once custom domain is configured (WebAuthn RP ID needs custom domain, not `.amazoncognito.com`)
+- Add per-route Cedar enforcement (currently global allow/deny + `/auth/authorize` endpoint)
+- Deploy alerting and detection rules stacks (`secdash-alerting`, `secdash-detections`)
+- Store session secret in SSM Parameter Store or Secrets Manager (currently set via env var)
 - Add GitHub Actions CI back when ruff version alignment is sorted out
 - Real-world detection rule tuning against live Security Lake data
 - Add WebSocket support for real-time detection alerts
-- Add per-route Cedar enforcement (currently global allow/deny + `/auth/authorize` endpoint)
