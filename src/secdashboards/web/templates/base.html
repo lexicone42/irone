@@ -7,7 +7,7 @@
     <link rel="stylesheet" href="/static/css/terminal.css">
     <script src="https://unpkg.com/htmx.org@2.0.4"></script>
 </head>
-<body hx-boost="true">
+<body hx-boost="true" hx-headers='{"X-L42-CSRF": "1"}'>
     <div class="layout">
         {% include "components/nav.html" %}
         <main class="main-content">

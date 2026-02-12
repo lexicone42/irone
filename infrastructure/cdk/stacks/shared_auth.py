@@ -13,6 +13,7 @@ from typing import Any
 
 from aws_cdk import (
     CfnOutput,
+    Duration,
     RemovalPolicy,
     Stack,
 )
@@ -173,6 +174,33 @@ class SharedAuthStack(Stack):
         )
 
         # =====================================================================
+        # Web Dashboard Client
+        # =====================================================================
+        web_client = user_pool.add_client(
+            "WebDashboardClient",
+            user_pool_client_name="secdash-web-dashboard",
+            auth_flows=cognito.AuthFlow(
+                user_password=not require_passkey_only,
+                user_srp=not require_passkey_only,
+            ),
+            o_auth=cognito.OAuthSettings(
+                flows=cognito.OAuthFlows(authorization_code_grant=True),
+                scopes=[
+                    cognito.OAuthScope.OPENID,
+                    cognito.OAuthScope.EMAIL,
+                    cognito.OAuthScope.PROFILE,
+                ],
+                callback_urls=["https://localhost:8000/auth/callback"],
+                logout_urls=["https://localhost:8000/auth/login"],
+            ),
+            generate_secret=True,
+            id_token_validity=Duration.hours(1),
+            access_token_validity=Duration.hours(1),
+            refresh_token_validity=Duration.days(30),
+        )
+        self.web_client = web_client
+
+        # =====================================================================
         # Export Values
         # =====================================================================
         self.user_pool = user_pool
@@ -214,6 +242,14 @@ class SharedAuthStack(Stack):
             "CreateUserCommand",
             value=f"aws cognito-idp admin-create-user --user-pool-id {user_pool.user_pool_id} --username USER_EMAIL",
             description="Command to create a new user",
+        )
+
+        CfnOutput(
+            self,
+            "WebClientId",
+            value=web_client.user_pool_client_id,
+            description="Web Dashboard Cognito Client ID",
+            export_name=f"{construct_id}-WebClientId",
         )
 
         CfnOutput(

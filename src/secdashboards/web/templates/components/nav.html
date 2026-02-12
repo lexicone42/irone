@@ -17,4 +17,10 @@
 
     <div class="nav-section">Deploy</div>
     <a href="/deploy/" class="nav-link">Deployment</a>
+
+    {% if request.state.session is defined and request.state.session.tokens is defined %}
+    <div class="nav-section" style="margin-top: auto;">Account</div>
+    <div class="nav-link" style="opacity: 0.7; font-size: 0.85em;">{{ request.state.user.email if request.state.user is defined else 'Authenticated' }}</div>
+    <a href="#" class="nav-link" hx-post="/auth/logout" hx-target="body" hx-swap="innerHTML" hx-headers='{"X-L42-CSRF": "1"}' onclick="window.location.href='/auth/login'; return false;">Logout</a>
+    {% endif %}
 </nav>

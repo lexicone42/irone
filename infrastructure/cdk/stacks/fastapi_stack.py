@@ -9,6 +9,9 @@ from aws_cdk import (
     Stack,
 )
 from aws_cdk import (
+    aws_dynamodb as dynamodb,
+)
+from aws_cdk import (
     aws_iam as iam,
 )
 from aws_cdk import (
@@ -35,6 +38,13 @@ class FastAPIStack(Stack):
         rules_dir: str = "detections/",
         memory_mb: int = 512,
         timeout_seconds: int = 30,
+        # Auth configuration
+        auth_enabled: bool = False,
+        cognito_user_pool_id: str = "",
+        cognito_client_id: str = "",
+        cognito_client_secret: str = "",
+        cognito_domain: str = "",
+        session_secret_key: str = "",
         **kwargs: object,
     ) -> None:
         super().__init__(scope, construct_id, **kwargs)
@@ -49,6 +59,21 @@ class FastAPIStack(Stack):
             encryption=s3.BucketEncryption.S3_MANAGED,
             block_public_access=s3.BlockPublicAccess.BLOCK_ALL,
         )
+
+        # --- DynamoDB Session Table (conditional on auth) ---
+        session_table = None
+        if auth_enabled:
+            session_table = dynamodb.Table(
+                self,
+                "SessionTable",
+                table_name="secdash_sessions",
+                partition_key=dynamodb.Attribute(
+                    name="session_id", type=dynamodb.AttributeType.STRING
+                ),
+                billing_mode=dynamodb.BillingMode.PAY_PER_REQUEST,
+                removal_policy=RemovalPolicy.DESTROY,
+                time_to_live_attribute="ttl",
+            )
 
         # --- Lambda Function ---
         handler = lambda_.Function(
@@ -80,6 +105,20 @@ class FastAPIStack(Stack):
                 "SECDASH_REPORT_BUCKET": report_bucket.bucket_name,
                 "SECDASH_RULES_DIR": rules_dir,
                 "SECDASH_DUCKDB_PATH": "/tmp/secdash.duckdb",
+                # Auth configuration (only relevant when auth_enabled)
+                **(
+                    {
+                        "SECDASH_AUTH_ENABLED": "true",
+                        "SECDASH_COGNITO_USER_POOL_ID": cognito_user_pool_id,
+                        "SECDASH_COGNITO_CLIENT_ID": cognito_client_id,
+                        "SECDASH_COGNITO_CLIENT_SECRET": cognito_client_secret,
+                        "SECDASH_COGNITO_DOMAIN": cognito_domain,
+                        "SECDASH_SESSION_SECRET_KEY": session_secret_key,
+                        "SECDASH_SESSION_BACKEND": "dynamodb",
+                    }
+                    if auth_enabled
+                    else {}
+                ),
             },
         )
 
@@ -133,6 +172,10 @@ class FastAPIStack(Stack):
                 resources=["*"],
             )
         )
+
+        # --- DynamoDB Session Table Permissions ---
+        if session_table:
+            session_table.grant_read_write_data(handler)
 
         # --- HTTP API Gateway ---
         api = CfnApi(
