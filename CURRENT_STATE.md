@@ -8,6 +8,8 @@ A security operations platform for connecting to AWS Security Lake, creating det
 
 **Primary UI**: FastAPI + HTMX web application. Server-rendered HTML with HTMX for dynamic updates, DuckDB for local/Lambda SQL, deployable to Lambda via Mangum.
 
+**Authentication**: Cognito passkey/OAuth + Cedar RBAC authorization. 5 groups (admin, detection-engineer, soc-analyst, incident-responder, read-only), 20 Cedar actions. Off by default (`auth_enabled=False`).
+
 **Architecture**: Supports hybrid hot/cold tier with CloudWatch Logs Insights for real-time queries (0-7 days) and Security Lake for long-term storage (7+ days), with unified dual-target detection rules.
 
 ## Project Structure
@@ -36,11 +38,33 @@ secdashboards/
 │   │   ├── timeline.py    # Timeline visualization with Plotly
 │   │   └── queries.py     # Gremlin/openCypher query templates
 │   ├── web/               # FastAPI + HTMX web application (NEW)
-│   │   ├── app.py         # create_app() factory, router registration
-│   │   ├── config.py      # WebConfig(BaseSettings) with SECDASH_ env prefix
+│   │   ├── app.py         # create_app() factory, router registration, auth wiring
+│   │   ├── config.py      # WebConfig(BaseSettings) with SECDASH_ env prefix + auth fields
 │   │   ├── state.py       # AppState dataclass, create_app_state() factory
 │   │   ├── lambda_handler.py  # Mangum ASGI→Lambda adapter
 │   │   ├── report_generator.py  # HTML report rendering (Report models → HTML)
+│   │   ├── auth/                  # Authentication & authorization (NEW — PR #13)
+│   │   │   ├── __init__.py        # Exports: require_auth, get_current_user
+│   │   │   ├── cognito.py         # JWKS verification, token exchange, refresh
+│   │   │   ├── cedar_engine.py    # Cedar authorization (Secdash:: namespace)
+│   │   │   ├── dependencies.py    # FastAPI deps: require_auth, require_csrf
+│   │   │   ├── middleware.py      # Global auth enforcement (redirect/401)
+│   │   │   ├── session/           # Server-side session management
+│   │   │   │   ├── backend.py     # SessionBackend protocol + InMemoryBackend
+│   │   │   │   ├── middleware.py  # ASGI session middleware (signed cookies)
+│   │   │   │   └── dynamodb.py   # DynamoDB session backend (production)
+│   │   │   └── routes/            # 8 auth endpoints (/auth/*)
+│   │   │       ├── login.py      # GET /auth/login → Cognito redirect
+│   │   │       ├── token.py      # GET /auth/token
+│   │   │       ├── session_ep.py  # POST /auth/session
+│   │   │       ├── callback.py   # GET /auth/callback (OAuth)
+│   │   │       ├── refresh.py    # POST /auth/refresh
+│   │   │       ├── logout.py     # POST /auth/logout
+│   │   │       ├── me.py         # GET /auth/me
+│   │   │       └── authorize.py  # POST /auth/authorize (Cedar)
+│   │   ├── cedar/                 # Cedar policy files (NEW — PR #13)
+│   │   │   ├── schema.cedarschema.json  # Secdash entity types + 20 actions
+│   │   │   └── policies/         # 5 RBAC group policies
 │   │   ├── routers/
 │   │   │   ├── dashboard.py      # GET / — overview with source/rule counts
 │   │   │   ├── monitoring.py     # /monitoring/ — health checks
@@ -50,8 +74,8 @@ secdashboards/
 │   │   │   ├── deploy.py         # /deploy/ — Lambda build dashboard
 │   │   │   └── api.py            # /api/ — JSON API for programmatic access
 │   │   ├── templates/
-│   │   │   ├── base.html         # Base layout with nav, HTMX, terminal CSS
-│   │   │   ├── components/       # Reusable HTMX fragments
+│   │   │   ├── base.html         # Base layout with nav, HTMX, CSRF header, terminal CSS
+│   │   │   ├── components/       # Reusable HTMX fragments (+ user info/logout)
 │   │   │   ├── pages/            # Full-page templates per router
 │   │   │   └── reports/          # Self-contained HTML report templates
 │   │   └── static/
@@ -103,13 +127,14 @@ secdashboards/
 │       │   ├── alerting.py          # AlertingStack (SNS, Lambda, EventBridge)
 │       │   ├── detection_rules.py   # DetectionRulesStack (Lambda per rule, shared Layer)
 │       │   ├── health_dashboard.py  # HealthDashboardStack (API Gateway, Cognito)
-│       │   └── fastapi_stack.py     # FastAPIStack (Lambda + API Gateway v2) (NEW)
+│       │   ├── fastapi_stack.py     # FastAPIStack (Lambda + API GW v2 + DynamoDB sessions)
+│       │   └── shared_auth.py       # SharedAuthStack (Cognito User Pool + web client)
 │       └── tests/
 │           ├── test_health_dashboard_stack.py  # 12 tests
 │           ├── test_alerting_stack.py          # 7 tests
 │           └── test_detection_rules_stack.py   # 10 tests
 ├── docs/                    # mkdocs-material API documentation
-├── tests/                   # 609 tests total (+ 29 CDK tests separate)
+├── tests/                   # 697 tests total (+ 29 CDK tests separate)
 ├── catalog.example.yaml     # Example catalog configuration
 ├── mkdocs.yml               # Documentation site config
 ├── pyproject.toml           # Project configuration (uv, ruff, ty)
@@ -117,6 +142,44 @@ secdashboards/
 ```
 
 ## Recent Changes (2026-02-11)
+
+### PR #13 — Cognito Passkey Auth + Cedar Authorization (`feature/cognito-cedar-auth`)
+
+Ported authentication system from `l42-cognito-passkey` into secdashboards with Secdash-specific Cedar RBAC policies. Auth is disabled by default (`auth_enabled=False`) so all existing tests pass unchanged.
+
+**New modules (22 files):**
+- `auth/cognito.py`: JWKS verification, token exchange, refresh via Cognito
+- `auth/cedar_engine.py`: Cedar authorization with `Secdash::` namespace, custom group mapping
+- `auth/dependencies.py`: FastAPI deps — `require_auth`, `require_csrf`, `get_current_user`
+- `auth/middleware.py`: Global auth enforcement (exempt: `/auth/*`, `/api/health`, `/static/*`)
+- `auth/session/`: Server-side sessions — `InMemoryBackend`, `DynamoDBSessionBackend`, ASGI middleware
+- `auth/routes/`: 8 endpoints — login, token, session, callback, refresh, logout, me, authorize
+- `cedar/`: Schema (20 actions) + 5 policy files (admin, detection-engineer, soc-analyst, incident-responder, read-only)
+
+**Cedar RBAC groups and actions (20 total):**
+| Group | Key permissions |
+|-------|----------------|
+| admin | All 20 actions |
+| detection-engineer | view:*, create/test detections, query:data, ai:generate_rule |
+| soc-analyst | view:*, create/view investigations, ai:analyze |
+| incident-responder | view dashboards/detections/investigations, create/enrich/export investigations |
+| read-only | view:dashboard, view:monitoring |
+
+**Modified files (9):**
+- `pyproject.toml`: Added pyjwt, cedarpy, itsdangerous, aioboto3 + cryptography dev dep
+- `config.py`: 12 auth fields (cognito_*, session_*, auth_enabled, cedar_enabled)
+- `app.py`: Conditional auth middleware, Cedar init in lifespan, `_build_session_backend()`
+- `templates/base.html`: CSRF header (`X-L42-CSRF`) for all HTMX requests
+- `templates/components/nav.html`: User info display + logout link
+- CDK: DynamoDB session table, auth env vars, SharedAuthStack web UserPoolClient
+
+**New tests (88 tests across 14 files):**
+- `tests/conftest.py`: Shared fixtures (RSA keys, JWT factory, auth app/client)
+- 13 `test_auth_*.py` files: session middleware, all endpoints, Cedar engine, CSRF, DynamoDB, integration
+
+**Net**: 47 files changed, +3,095 lines
+
+**Test count**: 609 → 697 (+88 new auth tests)
 
 ### PR #12 — Remove Marimo/Docker/App Runner (`feature/remove-marimo-docker`)
 
@@ -207,11 +270,15 @@ Replaced Marimo notebook UI with FastAPI + HTMX web application. 6 PRs, all merg
 ## Dependencies
 
 Key dependencies in pyproject.toml:
-- fastapi>=0.115.0 - Web framework (NEW)
-- uvicorn[standard]>=0.32.0 - Local dev server (NEW)
-- mangum>=0.19.0 - ASGI→Lambda adapter (NEW)
-- duckdb>=1.1.0 - Local/Lambda SQL engine (NEW)
-- python-multipart>=0.0.22 - Form data parsing for FastAPI (NEW)
+- fastapi>=0.115.0 - Web framework
+- uvicorn[standard]>=0.32.0 - Local dev server
+- mangum>=0.19.0 - ASGI→Lambda adapter
+- duckdb>=1.1.0 - Local/Lambda SQL engine
+- python-multipart>=0.0.22 - Form data parsing for FastAPI
+- pyjwt[crypto]>=2.10.0 - JWT verification (Cognito JWKS) (NEW)
+- cedarpy>=4.8.0 - Cedar authorization engine (NEW)
+- itsdangerous>=2.2.0 - Session cookie signing (NEW)
+- aioboto3>=13.0.0 - Async DynamoDB for session backend (NEW)
 - boto3>=1.35.0 - AWS SDK
 - polars>=1.0.0 - Data processing
 - pydantic>=2.10.0 - Data validation
@@ -223,20 +290,20 @@ Key dependencies in pyproject.toml:
 
 ## Test Status
 
-### Unit Tests (609 total - all passing)
+### Unit Tests (697 total - all passing)
 ```bash
 uv run pytest tests/ -v
 ```
 
 Test breakdown:
 - Catalog: 8
-- DuckDB Connector: 21 (NEW)
+- DuckDB Connector: 21
 - Detection: 23
 - Adversary: 36
 - Graph: 50
 - AI/Bedrock: 26
 - Reports: 58
-- Report Generator (HTML): 16 (NEW)
+- Report Generator (HTML): 16
 - Rule Store: 32
 - SQL Utils: 32
 - Timeline: 24
@@ -244,12 +311,26 @@ Test breakdown:
 - Deployment: 33
 - Alerting Handler: 8
 - Neptune Connector: 39
-- Web App: 10 (NEW)
-- Web Routers (simple): 14 (NEW)
-- Web Routers (detections): 13 (NEW)
-- Web Routers (investigations): 15 (NEW)
-- Web Routers (API): 13 (NEW)
-- Web Routers (deploy): 9 (NEW)
+- Web App: 10
+- Web Routers (simple): 14
+- Web Routers (detections): 13
+- Web Routers (investigations): 15
+- Web Routers (API): 13
+- Web Routers (deploy): 9
+- Auth Session Middleware: 9 (NEW)
+- Auth Session Endpoint: 6 (NEW)
+- Auth Token: 4 (NEW)
+- Auth Callback: 5 (NEW)
+- Auth Refresh: 5 (NEW)
+- Auth Logout: 2 (NEW)
+- Auth Me: 2 (NEW)
+- Auth Authorize: 7 (NEW)
+- Auth Cedar Engine: 15 (NEW)
+- Auth CSRF: 3 (NEW)
+- Auth DynamoDB Session: 6 (NEW)
+- Auth Middleware: 5 (NEW)
+- Auth Integration (E2E): 4 (NEW)
+- Auth Conftest fixtures: 15 (NEW)
 - Deploy E2E + others: 99
 - Property-based: 2
 
@@ -274,6 +355,14 @@ uv run ty check src/
 
 | Route | Method | Description |
 |-------|--------|-------------|
+| `/auth/login` | GET | Redirect to Cognito hosted UI (NEW) |
+| `/auth/callback` | GET | OAuth2 callback from Cognito (NEW) |
+| `/auth/token` | GET | Return tokens from session (NEW) |
+| `/auth/session` | POST | Store tokens (direct/passkey login) (NEW) |
+| `/auth/refresh` | POST | Refresh tokens via Cognito (NEW) |
+| `/auth/logout` | POST | Destroy session (NEW) |
+| `/auth/me` | GET | Current user info (email, groups) (NEW) |
+| `/auth/authorize` | POST | Cedar policy check (NEW) |
 | `/` | GET | Dashboard overview (source/rule counts, region) |
 | `/monitoring/` | GET | Health monitoring page |
 | `/monitoring/check` | POST | Run health checks (HTMX fragment) |
@@ -314,7 +403,8 @@ uv run ty check src/
 
 | Component | Template | Status |
 |-----------|----------|--------|
-| CDK FastAPIStack | `cdk/stacks/fastapi_stack.py` | Ready (tested) — **NEW** |
+| CDK FastAPIStack | `cdk/stacks/fastapi_stack.py` | Ready (+ DynamoDB sessions, auth env vars) |
+| CDK SharedAuthStack | `cdk/stacks/shared_auth.py` | Ready (Cognito User Pool + web client) |
 | CDK AlertingStack | `cdk/stacks/alerting.py` | Ready (tested) |
 | CDK DetectionRulesStack | `cdk/stacks/detection_rules.py` | Ready (tested) |
 | CDK HealthDashboardStack | `cdk/stacks/health_dashboard.py` | Ready (tested) |
@@ -382,6 +472,8 @@ Note: OCSF 2.0 `time` field is epoch milliseconds (bigint), not a SQL timestamp.
 ## Git Commit History (Recent)
 
 ```
+0d5d3b1 Add Cognito passkey authentication and Cedar authorization (#13)
+df9258d Update CURRENT_STATE.md with PR #12 cleanup
 27a5c89 Merge pull request #12 from lexicone42/feature/remove-marimo-docker
 2bef56e Remove Marimo notebooks, Docker, and App Runner artifacts
 8a43b73 Update CURRENT_STATE.md with FastAPI migration (PRs #6-#11)
@@ -416,12 +508,14 @@ All 14 originally tracked improvements are done:
 14. ~~Add bounds validation to `LambdaBuilder.deploy_lambda()` parameters~~ Done
 15. ~~Migrate from Marimo notebooks to FastAPI + HTMX~~ Done (PRs #6–#11)
 16. ~~Remove Marimo notebooks, Docker, App Runner artifacts~~ Done (PR #12)
+17. ~~Integrate Cognito passkey auth + Cedar authorization~~ Done (PR #13)
 
 ## Potential Next Steps
 
 - Deploy FastAPI stack to AWS (CDK `cdk deploy secdash-web`)
-- Add Cognito JWT authorizer to FastAPIStack (pool exists in HealthDashboardStack)
-- Integrate `l42-cognito-passkey` library for passkey auth (GitHub issue lexicone42/l42-cognito-passkey#13 filed)
+- Configure Cognito User Pool with passkey authenticator in AWS console
+- End-to-end auth testing against live Cognito (manual verification)
 - Add GitHub Actions CI back when ruff version alignment is sorted out
 - Real-world detection rule tuning against live Security Lake data
 - Add WebSocket support for real-time detection alerts
+- Add per-route Cedar enforcement (currently global allow/deny + `/auth/authorize` endpoint)
