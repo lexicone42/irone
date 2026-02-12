@@ -5,7 +5,6 @@ HTML visualizations of security investigation graphs.
 """
 
 from pathlib import Path
-from typing import Any
 
 from pyvis.network import Network
 
@@ -58,8 +57,7 @@ class GraphVisualizer:
     """Generate interactive visualizations from security graphs.
 
     This class uses pyvis to create interactive HTML graph visualizations
-    that can be displayed in Marimo notebooks or exported as standalone
-    HTML files.
+    exported as standalone HTML files.
 
     Example usage:
         ```python
@@ -68,9 +66,6 @@ class GraphVisualizer:
 
         # Generate HTML
         html = visualizer.to_html(graph)
-
-        # Or display in Marimo
-        display = visualizer.display_in_marimo(graph)
         ```
     """
 
@@ -317,29 +312,6 @@ class GraphVisualizer:
 
         # Generate HTML without saving to file
         return net.generate_html()
-
-    def display_in_marimo(
-        self,
-        graph: SecurityGraph,
-        physics: bool = True,
-    ) -> Any:
-        """Generate Marimo-compatible HTML display.
-
-        Args:
-            graph: The SecurityGraph to visualize
-            physics: Enable physics simulation
-
-        Returns:
-            A Marimo Html object
-        """
-        try:
-            import marimo as mo
-
-            html_content = self.to_html(graph, notebook=True, physics=physics)
-            return mo.Html(html_content)
-        except ImportError:
-            # If marimo not available, return raw HTML
-            return self.to_html(graph, notebook=False, physics=physics)
 
     def generate_legend_html(self) -> str:
         """Generate HTML for a graph legend.

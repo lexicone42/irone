@@ -61,28 +61,6 @@ def serve(
         uvicorn.run(web_app, host=host, port=port)
 
 
-@app.command(deprecated=True)
-def notebook(
-    port: Annotated[int, typer.Option(help="Port to run marimo on")] = 2718,
-) -> None:
-    """Launch the Marimo notebook (deprecated — use 'secdash serve' instead)."""
-    import subprocess
-
-    console.print(
-        "[yellow]Warning: 'secdash notebook' is deprecated. "
-        "Use 'secdash serve' for the FastAPI web dashboard.[/yellow]"
-    )
-
-    notebook_path = Path(__file__).parent.parent.parent.parent / "notebooks" / "main.py"
-
-    if not notebook_path.exists():
-        console.print(f"[red]Notebook not found at {notebook_path}[/red]")
-        raise typer.Exit(1)
-
-    console.print(f"[green]Starting Marimo notebook at http://localhost:{port}[/green]")
-    subprocess.run(["marimo", "edit", str(notebook_path), "--port", str(port)])
-
-
 @app.command()
 def health(
     catalog_path: Annotated[

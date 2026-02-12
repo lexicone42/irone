@@ -66,7 +66,6 @@ class HealthDashboardStack(Stack):
         allowed_email: str = "bryan.egan@gmail.com",
         security_lake_db: str = "amazon_security_lake_glue_db_us_west_2",
         athena_output: str = "s3://aws-athena-query-results-651804262336-us-west-2/",
-        app_runner_domain: str = "",  # Optional: App Runner domain for /notebooks
         **kwargs: Any,
     ) -> None:
         super().__init__(scope, construct_id, **kwargs)
@@ -484,35 +483,6 @@ class HealthDashboardStack(Stack):
             ],
         )
 
-        # =====================================================================
-        # App Runner Origin for /notebooks (optional)
-        # =====================================================================
-        if app_runner_domain:
-            # Add behavior for /notebooks/* routing to App Runner
-            distribution.add_behavior(
-                "/notebooks/*",
-                origins.HttpOrigin(
-                    app_runner_domain,
-                    protocol_policy=cloudfront.OriginProtocolPolicy.HTTPS_ONLY,
-                ),
-                viewer_protocol_policy=cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
-                cache_policy=cloudfront.CachePolicy.CACHING_DISABLED,
-                origin_request_policy=cloudfront.OriginRequestPolicy.ALL_VIEWER,
-                response_headers_policy=security_headers,
-            )
-            # Also handle the base /notebooks path
-            distribution.add_behavior(
-                "/notebooks",
-                origins.HttpOrigin(
-                    app_runner_domain,
-                    protocol_policy=cloudfront.OriginProtocolPolicy.HTTPS_ONLY,
-                ),
-                viewer_protocol_policy=cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
-                cache_policy=cloudfront.CachePolicy.CACHING_DISABLED,
-                origin_request_policy=cloudfront.OriginRequestPolicy.ALL_VIEWER,
-                response_headers_policy=security_headers,
-            )
-
         # Route53 A record for custom domain
         if domain_name and hosted_zone_id:
             hosted_zone = route53.HostedZone.from_hosted_zone_attributes(
@@ -590,13 +560,3 @@ class HealthDashboardStack(Stack):
             value=f"Create user: aws cognito-idp admin-create-user --user-pool-id {user_pool.user_pool_id} --username {allowed_email}",
             description="Post-deployment instructions",
         )
-
-        if app_runner_domain:
-            CfnOutput(
-                self,
-                "NotebooksUrl",
-                value=f"https://{domain_name}/notebooks"
-                if domain_name
-                else f"https://{distribution.distribution_domain_name}/notebooks",
-                description="Marimo Notebooks URL",
-            )

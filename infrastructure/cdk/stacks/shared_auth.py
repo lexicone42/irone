@@ -4,7 +4,7 @@ This stack creates the centralized authentication layer that all services share:
 - Single Cognito User Pool with passkey/WebAuthn support
 - User groups for RBAC (admin, detection-engineer, soc-analyst, incident-responder)
 - Configurable passkey-only mode for maximum security
-- Shared across: Health Dashboard, Marimo Notebooks, Detection API, Investigation API
+- Shared across: Health Dashboard, FastAPI Web App, Detection API, Investigation API
 """
 
 from __future__ import annotations

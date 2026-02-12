@@ -6,7 +6,7 @@
 
 A security operations platform for connecting to AWS Security Lake, creating detection rules, deploying them to Lambda for automated security monitoring, and testing detections with adversary emulation. Includes investigation graph visualization with Neptune, AI-assisted analysis via Bedrock, and professional report generation.
 
-**Primary UI**: FastAPI + HTMX web application (replaced Marimo notebooks as of 2026-02-11). Server-rendered HTML with HTMX for dynamic updates, DuckDB for local/Lambda SQL, deployable to Lambda via Mangum.
+**Primary UI**: FastAPI + HTMX web application. Server-rendered HTML with HTMX for dynamic updates, DuckDB for local/Lambda SQL, deployable to Lambda via Mangum.
 
 **Architecture**: Supports hybrid hot/cold tier with CloudWatch Logs Insights for real-time queries (0-7 days) and Security Lake for long-term storage (7+ days), with unified dual-target detection rules.
 
@@ -88,14 +88,7 @@ secdashboards/
 │   │   └── tools.py       # Agent tools skeleton
 │   ├── security/          # Security infrastructure
 │   │   └── auth.py        # OIDCAuthenticator for ALB/Cognito auth
-│   └── cli.py             # CLI: serve, notebook (deprecated), deploy, etc.
-├── notebooks/             # Marimo notebooks (deprecated — kept for reference)
-│   ├── main.py                  # Main Marimo notebook (navigation hub)
-│   ├── investigation.py         # Investigation notebook with graph + timeline
-│   ├── detection_engineering.py # Detection rule creation and testing
-│   ├── monitoring.py            # Data source health monitoring
-│   ├── security_lake_health.py  # Quick Security Lake connectivity check
-│   └── deployment.py            # CDK deployment management notebook
+│   └── cli.py             # CLI: serve, deploy, etc.
 ├── scripts/
 │   └── example_investigation.py  # Demo investigation workflow
 ├── detections/
@@ -105,7 +98,6 @@ secdashboards/
 │   └── security_hub_rules.yaml   # 4 Security Hub detection rules
 ├── infrastructure/
 │   ├── neptune.yaml           # Neptune Serverless CloudFormation stack
-│   ├── marimo-apprunner.yaml  # App Runner VPC deployment (legacy)
 │   └── cdk/                   # AWS CDK stacks
 │       ├── stacks/
 │       │   ├── alerting.py          # AlertingStack (SNS, Lambda, EventBridge)
@@ -118,7 +110,6 @@ secdashboards/
 │           └── test_detection_rules_stack.py   # 10 tests
 ├── docs/                    # mkdocs-material API documentation
 ├── tests/                   # 609 tests total (+ 29 CDK tests separate)
-├── Dockerfile.marimo        # Container for AWS App Runner deployment (legacy)
 ├── catalog.example.yaml     # Example catalog configuration
 ├── mkdocs.yml               # Documentation site config
 ├── pyproject.toml           # Project configuration (uv, ruff, ty)
@@ -255,14 +246,11 @@ Key dependencies in pyproject.toml:
 - networkx>=3.2 - Graph analysis
 - jinja2>=3.1.0 - Template rendering
 
-Optional:
-- marimo>=0.10.0 - Interactive notebooks (moved to `[dependency-groups.notebook]`)
-
 ## Test Status
 
 ### Unit Tests (609 total - all passing)
 ```bash
-uv run pytest tests/ -v --ignore=tests/test_notebook_main.py
+uv run pytest tests/ -v
 ```
 
 Test breakdown:
@@ -356,8 +344,6 @@ uv run ty check src/
 | CDK DetectionRulesStack | `cdk/stacks/detection_rules.py` | Ready (tested) |
 | CDK HealthDashboardStack | `cdk/stacks/health_dashboard.py` | Ready (tested) |
 | Neptune Serverless | `neptune.yaml` | CloudFormation template ready |
-| App Runner + VPC | `marimo-apprunner.yaml` | Legacy (replaced by FastAPIStack) |
-| Dockerfile | `Dockerfile.marimo` | Legacy (replaced by Lambda deployment) |
 
 ## Investigation Graph Module
 
@@ -391,7 +377,7 @@ uv run ty check src/
 uv sync
 
 # Run unit tests
-uv run pytest tests/ --ignore=tests/test_notebook_main.py
+uv run pytest tests/
 
 # Launch FastAPI web application (primary UI)
 uv run secdash serve
@@ -405,9 +391,6 @@ uv run python scripts/example_investigation.py --demo
 
 # Build API docs
 uv sync --group docs && uv run mkdocs serve
-
-# Launch Marimo notebook (deprecated)
-uv sync --group notebook && uv run secdash notebook
 ```
 
 ## Available Security Lake Tables
@@ -465,6 +448,4 @@ All 14 originally tracked improvements are done:
 - Add Cognito JWT authorizer to FastAPIStack (pool exists in HealthDashboardStack)
 - Add GitHub Actions CI back when ruff version alignment is sorted out
 - Real-world detection rule tuning against live Security Lake data
-- Build Dockerfile for FastAPI (alternative to Lambda deployment)
 - Add WebSocket support for real-time detection alerts
-- Remove Marimo notebooks entirely (currently kept for reference)

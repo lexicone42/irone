@@ -63,9 +63,6 @@ site/
 # But track Jinja2 templates
 !src/secdashboards/web/templates/**/*.html
 
-# Marimo session state
-notebooks/__marimo__/
-
 # Log files
 *.log
 logs/
