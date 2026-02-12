@@ -34,6 +34,10 @@ dependencies = [
     "uvicorn[standard]>=0.32.0",
     "mangum>=0.19.0",
     "python-multipart>=0.0.22",
+    "pyjwt[crypto]>=2.10.0",
+    "cedarpy>=4.8.0",
+    "itsdangerous>=2.2.0",
+    "aioboto3>=13.0.0",
 ]
 
 [project.scripts]
@@ -54,6 +58,7 @@ dev = [
     "prek>=0.3.2",
     "cfn-lint>=1.43.3",
     "hypothesis>=6.100.0",
+    "cryptography>=44.0.0",
 ]
 docs = [
     "mkdocs-material>=9.5.0",
@@ -89,6 +94,8 @@ select = ["E", "F", "I", "UP", "B", "SIM", "PTH"]
 "infrastructure/cdk/stacks/*.py" = ["E501"]
 # FastAPI routers use Depends() in default arguments — this is the standard pattern
 "src/secdashboards/web/routers/*.py" = ["B008"]
+# Auth routes also use Depends() in default arguments
+"src/secdashboards/web/auth/routes/*.py" = ["B008"]
 
 [tool.ty]
 # Ty (Astral's type checker) configuration

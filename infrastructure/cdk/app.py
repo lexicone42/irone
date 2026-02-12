@@ -32,7 +32,13 @@ from __future__ import annotations
 import os
 
 import aws_cdk as cdk
-from stacks import AlertingStack, DetectionRulesStack, FastAPIStack, HealthDashboardStack
+from stacks import (
+    AlertingStack,
+    DetectionRulesStack,
+    FastAPIStack,
+    HealthDashboardStack,
+    SharedAuthStack,
+)
 
 app = cdk.App()
 
@@ -68,18 +74,16 @@ passkey_only = os.environ.get("PASSKEY_ONLY", "false").lower() == "true"
 env = cdk.Environment(account=account, region=region)
 
 # =============================================================================
-# Shared Authentication Stack (Optional - for multi-service deployments)
+# Shared Authentication Stack
 # =============================================================================
-# Uncomment to deploy a shared Cognito User Pool for all services:
-#
-# shared_auth = SharedAuthStack(
-#     app,
-#     "secdash-shared-auth",
-#     env=env,
-#     pool_name="secdash-shared-pool",
-#     require_passkey_only=passkey_only,
-#     description="Security Dashboards - Shared Cognito Authentication",
-# )
+shared_auth = SharedAuthStack(
+    app,
+    "secdash-shared-auth",
+    env=env,
+    pool_name="secdash-shared-pool",
+    require_passkey_only=passkey_only,
+    description="Security Dashboards - Shared Cognito Authentication",
+)
 
 # =============================================================================
 # Health Dashboard Stack
@@ -146,6 +150,11 @@ FastAPIStack(
     env=env,
     security_lake_db=security_lake_db,
     athena_output=athena_output,
+    auth_enabled=True,
+    cognito_user_pool_id=shared_auth.user_pool.user_pool_id,
+    cognito_client_id=shared_auth.web_client.user_pool_client_id,
+    cognito_domain=f"secdash-auth-{account}.auth.{region}.amazoncognito.com",
+    session_secret_key=os.environ.get("SECDASH_SESSION_SECRET_KEY", "change-me-in-production"),
     description="Security Dashboards - FastAPI Web Dashboard",
 )
 
