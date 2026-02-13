@@ -96,7 +96,7 @@ class _SharedConnection:
             # init tries to auto-install it and fails to find home_directory on Lambda)
             for ext in ("httpfs", "aws", "avro", "iceberg"):
                 self._conn.execute(f"INSTALL {ext};")
-            for ext in ("httpfs", "aws", "iceberg"):
+            for ext in ("httpfs", "aws", "avro", "iceberg"):
                 self._conn.execute(f"LOAD {ext};")
 
             # Configure AWS region

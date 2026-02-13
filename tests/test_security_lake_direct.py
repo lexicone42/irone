@@ -72,10 +72,14 @@ class TestSharedConnection:
         assert any("INSTALL httpfs" in c for c in execute_calls)
         assert any("INSTALL aws" in c for c in execute_calls)
         assert any("INSTALL avro" in c for c in execute_calls)
+        assert any("LOAD avro" in c for c in execute_calls)
         # avro must be installed before iceberg is loaded
         avro_idx = next(i for i, c in enumerate(execute_calls) if "INSTALL avro" in c)
         load_ice = next(i for i, c in enumerate(execute_calls) if "LOAD iceberg" in c)
         assert avro_idx < load_ice
+        # avro must be loaded before iceberg is loaded
+        load_avro = next(i for i, c in enumerate(execute_calls) if "LOAD avro" in c)
+        assert load_avro < load_ice
 
     @patch("secdashboards.connectors.security_lake_direct.duckdb")
     def test_attaches_glue_catalog(self, mock_duckdb: MagicMock) -> None:
