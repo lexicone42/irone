@@ -1,6 +1,6 @@
 # Security Dashboards - Current State
 
-**Last Updated**: 2026-02-11
+**Last Updated**: 2026-02-12
 
 ## Project Overview
 
@@ -141,7 +141,38 @@ secdashboards/
 └── README.md                # Documentation
 ```
 
-## Recent Changes (2026-02-11)
+## Recent Changes (2026-02-12)
+
+### PRs #15–#17 — Two-Tier Architecture: Lightweight Serverless + Investigation Extras
+
+Stripped heavy dependencies from the Lambda deployment path. All connectors and consumers now use a lightweight `QueryResult` wrapper instead of `pl.DataFrame`.
+
+**PR #15** — `QueryResult` class (`connectors/result.py`): Zero-dependency `list[dict]` wrapper implementing the DataFrame read-API surface (`columns`, `to_dicts()`, `head()`, `is_empty()`, `len()`, column access with `.to_list()`, `.drop_nulls()`, `.unique()`). 59 tests.
+
+**PR #16** — Replaced polars across 18 files:
+- DuckDB: `fetchall()+description` instead of `result.pl()`
+- Athena: stdlib `csv.DictReader` instead of `pl.read_csv()`
+- CloudWatch Logs: `QueryResult.from_dicts()` instead of `pl.DataFrame()`
+- Graph enrichment: `QueryResult.concat()` instead of `pl.concat(how="diagonal")`
+- Visualization: lazy pyvis import inside method body
+- All consumer type annotations updated (`detections`, `graph`, `adversary`, `health`)
+
+**PR #17** — Split `pyproject.toml` dependencies:
+| Package | Before | After |
+|---------|--------|-------|
+| polars (~40MB) | core | `[investigation]` extras |
+| pyarrow (~80MB) | core | `[investigation]` extras |
+| plotly (~15MB) | core | `[investigation]` extras |
+| pyvis | core | `[investigation]` extras |
+| gremlinpython | core | `[investigation]` extras |
+| networkx | core | `[investigation]` extras |
+| pandas | core | **removed** (never imported) |
+
+Install investigation features: `uv add "secdashboards[investigation]"`. Dev group includes them automatically.
+
+**Test count**: 697 → 756 (+59 QueryResult tests)
+
+## Previous Changes (2026-02-11)
 
 ### PR #14 — Deploy Lambda with Lazy Imports (`feature/deploy-lambda-lazy-imports`)
 
@@ -299,28 +330,24 @@ Replaced Marimo notebook UI with FastAPI + HTMX web application. 6 PRs, all merg
 
 ## Dependencies
 
-Key dependencies in pyproject.toml:
-- fastapi>=0.115.0 - Web framework
-- uvicorn[standard]>=0.32.0 - Local dev server
-- mangum>=0.19.0 - ASGI→Lambda adapter
-- duckdb>=1.1.0 - Local/Lambda SQL engine
-- python-multipart>=0.0.22 - Form data parsing for FastAPI
-- pyjwt[crypto]>=2.10.0 - JWT verification (Cognito JWKS) (NEW)
-- cedarpy>=4.8.0 - Cedar authorization engine (NEW)
-- itsdangerous>=2.2.0 - Session cookie signing (NEW)
-- aioboto3>=13.0.0 - Async DynamoDB for session backend (NEW)
-- boto3>=1.35.0 - AWS SDK
-- polars>=1.0.0 - Data processing
-- pydantic>=2.10.0 - Data validation
-- pyvis>=0.3.2 - Graph visualization
-- plotly>=5.24.0 - Timeline visualization
-- gremlinpython>=3.7.0 - Neptune client
-- networkx>=3.2 - Graph analysis
-- jinja2>=3.1.0 - Template rendering
+### Core (Lambda-deployed):
+- boto3, aioboto3 - AWS SDK
+- duckdb - Local/Lambda SQL engine
+- fastapi, uvicorn[standard], mangum, python-multipart, jinja2 - Web framework
+- pydantic, pydantic-settings - Data validation
+- pyjwt[crypto], cedarpy, itsdangerous - Auth (Cognito + Cedar)
+- httpx, rich, typer, croniter, structlog - Utilities
+
+### Investigation extras (`pip install "secdashboards[investigation]"`):
+- polars, pyarrow - Data processing (graph enrichment, parquet)
+- plotly - Timeline visualization
+- pyvis - Graph visualization
+- gremlinpython - Neptune client
+- networkx - Graph analysis
 
 ## Test Status
 
-### Unit Tests (697 total - all passing)
+### Unit Tests (756 total - all passing)
 ```bash
 uv run pytest tests/ -v
 ```
@@ -543,6 +570,8 @@ All 14 originally tracked improvements are done:
 
 ## Potential Next Steps
 
+- Deploy Neptune Serverless stack and wire investigation graph to live data
+- Rebuild Lambda package with slim core deps (~30-40MB target vs previous 160MB)
 - Create `scripts/build_lambda.sh` to automate Lambda packaging (`uv pip install --target` + source copy)
 - Enable passkey auth once custom domain is configured (WebAuthn RP ID needs custom domain, not `.amazoncognito.com`)
 - Add per-route Cedar enforcement (currently global allow/deny + `/auth/authorize` endpoint)
