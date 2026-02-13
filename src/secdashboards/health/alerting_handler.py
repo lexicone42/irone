@@ -58,11 +58,13 @@ def _build_notification_manager() -> NotificationManager:
 
 def run_query(query: str, timeout: int = 60) -> list:
     """Execute Athena query and return results."""
-    response = athena.start_query_execution(
-        QueryString=query,
-        QueryExecutionContext={"Database": SECURITY_LAKE_DB},
-        ResultConfiguration={"OutputLocation": ATHENA_OUTPUT},
-    )
+    kwargs: dict = {
+        "QueryString": query,
+        "QueryExecutionContext": {"Database": SECURITY_LAKE_DB},
+    }
+    if ATHENA_OUTPUT:
+        kwargs["ResultConfiguration"] = {"OutputLocation": ATHENA_OUTPUT}
+    response = athena.start_query_execution(**kwargs)
     query_id = response["QueryExecutionId"]
 
     start = time.time()

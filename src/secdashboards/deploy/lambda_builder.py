@@ -59,11 +59,13 @@ def build_notification_manager() -> NotificationManager:
 
 def execute_query(athena, query: str, database: str, output_location: str) -> list[dict]:
     """Execute Athena query and return results."""
-    response = athena.start_query_execution(
-        QueryString=query,
-        QueryExecutionContext={"Database": database},
-        ResultConfiguration={"OutputLocation": output_location},
-    )
+    kwargs = {
+        "QueryString": query,
+        "QueryExecutionContext": {"Database": database},
+    }
+    if output_location:
+        kwargs["ResultConfiguration"] = {"OutputLocation": output_location}
+    response = athena.start_query_execution(**kwargs)
 
     query_execution_id = response["QueryExecutionId"]
 
@@ -101,7 +103,7 @@ def handler(event, context):
 
     # Configuration from environment
     database = os.environ.get("ATHENA_DATABASE", "amazon_security_lake_glue_db_us_east_1")
-    output_location = os.environ.get("ATHENA_OUTPUT_LOCATION", "s3://aws-athena-query-results/")
+    output_location = os.environ.get("ATHENA_OUTPUT_LOCATION", "")
 
     # Calculate time window
     end_time = datetime.now(UTC)
@@ -476,11 +478,13 @@ def execute_athena_query(
     athena_client, query: str, database: str, output_location: str
 ) -> list[dict]:
     """Execute Athena query and return results."""
-    response = athena_client.start_query_execution(
-        QueryString=query,
-        QueryExecutionContext={"Database": database},
-        ResultConfiguration={"OutputLocation": output_location},
-    )
+    kwargs = {
+        "QueryString": query,
+        "QueryExecutionContext": {"Database": database},
+    }
+    if output_location:
+        kwargs["ResultConfiguration"] = {"OutputLocation": output_location}
+    response = athena_client.start_query_execution(**kwargs)
     query_execution_id = response["QueryExecutionId"]
 
     # Wait for completion
@@ -540,7 +544,7 @@ def handler(event, context):
 
     # Configuration from environment
     database = os.environ.get("ATHENA_DATABASE", "amazon_security_lake_glue_db_us_west_2")
-    output_location = os.environ.get("ATHENA_OUTPUT_LOCATION", "s3://aws-athena-query-results/")
+    output_location = os.environ.get("ATHENA_OUTPUT_LOCATION", "")
 
     # Get target from event or default to both
     target = event.get("target", "both")
