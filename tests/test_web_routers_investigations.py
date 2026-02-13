@@ -345,3 +345,93 @@ class TestTimelineRoutes:
         # Check in-memory timeline_tags updated
         inv = client_with_investigation.app.state.secdash.investigations
         assert inv["inv-test1"]["timeline_tags"]["evt-1"] == "suspicious"
+
+
+class TestArtifactCaching:
+    """Tests for graph/timeline HTML artifact caching."""
+
+    def test_graph_html_caches_on_render(self, app_with_store) -> None:
+        """graph.html stores rendered HTML in artifacts on first render."""
+        # Create an investigation with a node
+        app_with_store.state.secdash.investigations["inv-cache"] = {
+            "name": "Cache Test",
+            "graph": SecurityGraph(),
+            "created_at": datetime(2024, 6, 1, tzinfo=UTC).isoformat(),
+            "timeline_tags": {},
+        }
+        client = TestClient(app_with_store)
+
+        with patch("secdashboards.graph.visualization.GraphVisualizer") as mock_cls:
+            mock_viz = MagicMock()
+            mock_viz.to_html.return_value = "<html>rendered-graph</html>"
+            mock_cls.return_value = mock_viz
+
+            # First request renders and caches
+            resp = client.get("/investigations/inv-cache/graph.html")
+            assert resp.status_code == 200
+            assert "rendered-graph" in resp.text
+            mock_viz.to_html.assert_called_once()
+
+        store = app_with_store.state.secdash.investigation_store
+        cached = store.load_artifact("inv-cache", "graph_html")
+        assert cached is not None
+        assert "rendered-graph" in cached
+
+    def test_graph_html_serves_from_cache(self, app_with_store) -> None:
+        """Second request serves from cache without re-rendering."""
+        app_with_store.state.secdash.investigations["inv-cache2"] = {
+            "name": "Cache Test 2",
+            "graph": SecurityGraph(),
+            "created_at": datetime(2024, 6, 1, tzinfo=UTC).isoformat(),
+            "timeline_tags": {},
+        }
+        store = app_with_store.state.secdash.investigation_store
+        store.save_artifact("inv-cache2", "graph_html", "<html>cached-graph</html>")
+
+        client = TestClient(app_with_store)
+        # This should NOT call GraphVisualizer — it's served from cache
+        resp = client.get("/investigations/inv-cache2/graph.html")
+        assert resp.status_code == 200
+        assert "cached-graph" in resp.text
+
+    def test_enrich_invalidates_cache(self, app_with_store) -> None:
+        """Successful enrichment clears cached artifacts."""
+        graph = SecurityGraph()
+        app_with_store.state.secdash.investigations["inv-inv"] = {
+            "name": "Invalidate Test",
+            "graph": graph,
+            "created_at": datetime(2024, 6, 1, tzinfo=UTC).isoformat(),
+            "timeline_tags": {},
+        }
+        store = app_with_store.state.secdash.investigation_store
+        store.save_investigation("inv-inv", "Invalidate Test", graph)
+        store.save_artifact("inv-inv", "graph_html", "<html>stale</html>")
+        store.save_artifact("inv-inv", "timeline_html", "<html>stale</html>")
+
+        # Mock successful enrichment (needs Security Lake)
+        mock_builder = MagicMock()
+        mock_builder.build_from_identifiers.return_value = SecurityGraph()
+
+        with (
+            patch("secdashboards.connectors.security_lake.SecurityLakeConnector"),
+            patch("secdashboards.graph.builder.GraphBuilder", return_value=mock_builder),
+            patch.object(
+                app_with_store.state.secdash.catalog,
+                "list_sources",
+                return_value=[MagicMock(name="sl")],
+            ),
+            patch.object(
+                app_with_store.state.secdash.catalog,
+                "get_connector",
+                return_value=MagicMock(),
+            ),
+        ):
+            client = TestClient(app_with_store)
+            client.post(
+                "/investigations/inv-inv/enrich",
+                data={"users": "admin", "ips": ""},
+            )
+
+        # Artifacts should be cleared after successful enrich
+        assert store.load_artifact("inv-inv", "graph_html") is None
+        assert store.load_artifact("inv-inv", "timeline_html") is None

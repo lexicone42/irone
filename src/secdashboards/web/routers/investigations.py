@@ -138,6 +138,12 @@ def investigation_graph_html(
     if not inv:
         return HTMLResponse("<p>Investigation not found.</p>", status_code=404)
 
+    # Serve from artifact cache if available
+    if state.investigation_store:
+        cached = state.investigation_store.load_artifact(inv_id, "graph_html")
+        if cached:
+            return HTMLResponse(cached)
+
     from secdashboards.graph.visualization import GraphVisualizer
 
     viz = GraphVisualizer(
@@ -145,6 +151,11 @@ def investigation_graph_html(
         font_color="#c9d1d9",
     )
     html = viz.to_html(inv["graph"])
+
+    # Cache rendered HTML
+    if state.investigation_store:
+        state.investigation_store.save_artifact(inv_id, "graph_html", html)
+
     return HTMLResponse(html)
 
 
@@ -157,6 +168,12 @@ def investigation_timeline_html(
     inv = state.investigations.get(inv_id)
     if not inv:
         return HTMLResponse("<p>Investigation not found.</p>", status_code=404)
+
+    # Serve from artifact cache if available
+    if state.investigation_store:
+        cached = state.investigation_store.load_artifact(inv_id, "timeline_html")
+        if cached:
+            return HTMLResponse(cached)
 
     graph = inv["graph"]
     if graph.node_count() == 0:
