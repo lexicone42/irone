@@ -339,7 +339,7 @@ class SecurityLakeConnector(AthenaConnector):
             last_time_raw = df["latest_time"][0] if len(df) > 0 else None
 
             last_time = None
-            if isinstance(last_time_raw, str):
+            if isinstance(last_time_raw, str) and last_time_raw:
                 # Parse ISO format string, handling 'Z' suffix
                 last_time = datetime.fromisoformat(last_time_raw.replace("Z", "+00:00"))
                 # Ensure timezone awareness - assume UTC if naive

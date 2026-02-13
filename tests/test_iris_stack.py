@@ -67,7 +67,7 @@ class TestHealthCheckerLambda:
                         {
                             "SECDASH_SECURITY_LAKE_DB": Match.any_value(),
                             "SECDASH_HEALTH_CACHE_TABLE": Match.any_value(),
-                            "SECDASH_USE_DIRECT_QUERY": "true",
+                            "SECDASH_USE_DIRECT_QUERY": "false",
                         }
                     )
                 }
@@ -106,11 +106,53 @@ class TestHealthCheckerLambda:
                                 {
                                     "Action": Match.array_with(
                                         [
+                                            "glue:GetCatalog",
+                                            "glue:GetDatabase",
+                                            "glue:GetDatabases",
                                             "glue:GetTable",
                                             "glue:GetTables",
-                                            "glue:GetDatabase",
                                         ]
                                     ),
+                                    "Effect": "Allow",
+                                }
+                            )
+                        ]
+                    )
+                }
+            },
+        )
+
+    def test_lambda_has_lakeformation_policy(self) -> None:
+        template = _synth()
+        template.has_resource_properties(
+            "AWS::IAM::Policy",
+            {
+                "PolicyDocument": {
+                    "Statement": Match.array_with(
+                        [
+                            Match.object_like(
+                                {
+                                    "Action": "lakeformation:GetDataAccess",
+                                    "Effect": "Allow",
+                                }
+                            )
+                        ]
+                    )
+                }
+            },
+        )
+
+    def test_lambda_has_athena_policy(self) -> None:
+        template = _synth()
+        template.has_resource_properties(
+            "AWS::IAM::Policy",
+            {
+                "PolicyDocument": {
+                    "Statement": Match.array_with(
+                        [
+                            Match.object_like(
+                                {
+                                    "Action": Match.array_with(["athena:StartQueryExecution"]),
                                     "Effect": "Allow",
                                 }
                             )

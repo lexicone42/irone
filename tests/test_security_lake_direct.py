@@ -373,6 +373,9 @@ class TestParseTimestamp:
     def test_unsupported_type_returns_none(self) -> None:
         assert SecurityLakeDirectConnector._parse_timestamp(12345) is None
 
+    def test_empty_string_returns_none(self) -> None:
+        assert SecurityLakeDirectConnector._parse_timestamp("") is None
+
 
 class TestGetSchema:
     """Schema retrieval tests."""

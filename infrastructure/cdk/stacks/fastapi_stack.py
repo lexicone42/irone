@@ -141,11 +141,13 @@ class FastAPIStack(Stack):
             )
         )
 
-        # Glue catalog read access (for Athena)
+        # Glue catalog read access (for Athena + DuckDB Iceberg REST endpoint)
         handler.add_to_role_policy(
             iam.PolicyStatement(
                 actions=[
+                    "glue:GetCatalog",
                     "glue:GetDatabase",
+                    "glue:GetDatabases",
                     "glue:GetTable",
                     "glue:GetTables",
                     "glue:GetPartitions",
@@ -157,7 +159,7 @@ class FastAPIStack(Stack):
         # S3 read access for Security Lake data + Athena results
         handler.add_to_role_policy(
             iam.PolicyStatement(
-                actions=["s3:GetObject", "s3:ListBucket", "s3:GetBucketLocation"],
+                actions=["s3:GetObject", "s3:PutObject", "s3:ListBucket", "s3:GetBucketLocation"],
                 resources=[
                     "arn:aws:s3:::aws-athena-query-results-*",
                     "arn:aws:s3:::aws-athena-query-results-*/*",
@@ -174,6 +176,14 @@ class FastAPIStack(Stack):
         handler.add_to_role_policy(
             iam.PolicyStatement(
                 actions=["securitylake:GetDataLakeSources"],
+                resources=["*"],
+            )
+        )
+
+        # Lake Formation data access (required for Athena to read LF-protected tables)
+        handler.add_to_role_policy(
+            iam.PolicyStatement(
+                actions=["lakeformation:GetDataAccess"],
                 resources=["*"],
             )
         )

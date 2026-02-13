@@ -113,7 +113,7 @@ class IrisStack(Stack):
                 "SECDASH_SECURITY_LAKE_DB": security_lake_db,
                 "SECDASH_ATHENA_OUTPUT": athena_output,
                 "SECDASH_HEALTH_CACHE_TABLE": health_cache_table.table_name,
-                "SECDASH_USE_DIRECT_QUERY": "true",
+                "SECDASH_USE_DIRECT_QUERY": "false",
             },
         )
 
@@ -121,12 +121,15 @@ class IrisStack(Stack):
         health_cache_table.grant_write_data(health_checker)
 
         # Grant Glue + S3 access for DuckDB Iceberg queries
+        # glue:GetCatalog is required for the Glue Iceberg REST endpoint
         health_checker.add_to_role_policy(
             iam.PolicyStatement(
                 actions=[
+                    "glue:GetCatalog",
+                    "glue:GetDatabase",
+                    "glue:GetDatabases",
                     "glue:GetTable",
                     "glue:GetTables",
-                    "glue:GetDatabase",
                 ],
                 resources=["*"],
             )
@@ -137,6 +140,8 @@ class IrisStack(Stack):
                 resources=[
                     "arn:aws:s3:::amazon-security-lake-*",
                     "arn:aws:s3:::amazon-security-lake-*/*",
+                    "arn:aws:s3:::aws-security-data-lake-*",
+                    "arn:aws:s3:::aws-security-data-lake-*/*",
                 ],
             )
         )
@@ -147,7 +152,7 @@ class IrisStack(Stack):
                 resources=["*"],
             )
         )
-        # Athena fallback
+        # Athena: query execution + results bucket + Lake Formation data access
         health_checker.add_to_role_policy(
             iam.PolicyStatement(
                 actions=[
@@ -155,6 +160,21 @@ class IrisStack(Stack):
                     "athena:GetQueryExecution",
                     "athena:GetQueryResults",
                 ],
+                resources=["*"],
+            )
+        )
+        health_checker.add_to_role_policy(
+            iam.PolicyStatement(
+                actions=["s3:GetObject", "s3:PutObject", "s3:ListBucket", "s3:GetBucketLocation"],
+                resources=[
+                    f"arn:aws:s3:::aws-athena-query-results-{self.account}-{self.region}",
+                    f"arn:aws:s3:::aws-athena-query-results-{self.account}-{self.region}/*",
+                ],
+            )
+        )
+        health_checker.add_to_role_policy(
+            iam.PolicyStatement(
+                actions=["lakeformation:GetDataAccess"],
                 resources=["*"],
             )
         )

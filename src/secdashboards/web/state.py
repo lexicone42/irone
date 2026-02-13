@@ -33,7 +33,7 @@ _SECURITY_LAKE_TABLES: list[tuple[str, str, str]] = [
     ("vpc-flow", "vpc_flow_2_0", "VPC Flow Logs"),
     ("route53", "route53_2_0", "Route53 DNS resolver logs"),
     ("security-hub", "sh_findings_2_0", "Security Hub findings"),
-    ("lambda-execution", "lambda_2_0", "Lambda execution logs"),
+    ("lambda-execution", "lambda_execution_2_0", "Lambda execution logs"),
 ]
 
 

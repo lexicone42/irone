@@ -7,8 +7,9 @@ Expected latency: <1s per query (vs 5-30s through Athena).
 
 Requirements:
     - DuckDB >= 1.1.0 (Iceberg extension with Glue endpoint support)
-    - IAM permissions: glue:GetTable, glue:GetTables, glue:GetDatabase,
-      s3:GetObject, s3:ListBucket on the Security Lake bucket
+    - IAM permissions: glue:GetCatalog, glue:GetDatabase, glue:GetDatabases,
+      glue:GetTable, glue:GetTables, s3:GetObject, s3:ListBucket
+      (glue:GetCatalog is required for the Glue Iceberg REST endpoint)
     - Lake Formation grants (same as Athena)
 """
 
@@ -284,7 +285,7 @@ class SecurityLakeDirectConnector(DataConnector):
             if raw.tzinfo is None:
                 return raw.replace(tzinfo=UTC)
             return raw
-        if isinstance(raw, str):
+        if isinstance(raw, str) and raw:
             parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
             if parsed.tzinfo is None:
                 return parsed.replace(tzinfo=UTC)

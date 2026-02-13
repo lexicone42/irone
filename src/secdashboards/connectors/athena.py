@@ -144,7 +144,7 @@ class AthenaConnector(DataConnector):
                 last_time = df["latest_time"][0]
 
             # Parse last_time if it's a string
-            if isinstance(last_time, str):
+            if isinstance(last_time, str) and last_time:
                 last_time = datetime.fromisoformat(last_time.replace("Z", "+00:00"))
 
             # Determine health based on freshness
