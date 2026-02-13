@@ -148,6 +148,82 @@ def investigation_graph_html(
     return HTMLResponse(html)
 
 
+@router.get("/{inv_id}/timeline.html", response_class=HTMLResponse)
+def investigation_timeline_html(
+    inv_id: str,
+    state: AppState = Depends(get_state),
+) -> HTMLResponse:
+    """Render timeline visualization as standalone HTML for iframe embedding."""
+    inv = state.investigations.get(inv_id)
+    if not inv:
+        return HTMLResponse("<p>Investigation not found.</p>", status_code=404)
+
+    graph = inv["graph"]
+    if graph.node_count() == 0:
+        return HTMLResponse("<p style='color:#8b949e;padding:1rem;'>No events to display.</p>")
+
+    try:
+        from secdashboards.graph.timeline import (
+            TimelineVisualizer,
+            extract_timeline_from_graph,
+        )
+
+        timeline = extract_timeline_from_graph(graph)
+        if not timeline.events:
+            return HTMLResponse(
+                "<p style='color:#8b949e;padding:1rem;'>" "No timestamped events in graph.</p>"
+            )
+
+        viz = TimelineVisualizer(height="400px")
+        body = viz.to_html(timeline)
+        html = (
+            "<!DOCTYPE html><html><head>"
+            '<meta charset="utf-8">'
+            "<style>body{margin:0;background:#0d1117;}</style>"
+            "</head><body>" + body + "</body></html>"
+        )
+
+        # Cache the rendered HTML if store is available
+        if state.investigation_store:
+            state.investigation_store.save_artifact(inv_id, "timeline_html", html)
+
+        return HTMLResponse(html)
+    except ImportError:
+        return HTMLResponse(
+            "<p style='color:#8b949e;padding:1rem;'>"
+            "Timeline visualization requires plotly. "
+            "Install with: pip install 'secdashboards[investigation]'</p>"
+        )
+
+
+@router.post("/{inv_id}/timeline/tag", response_class=HTMLResponse)
+def tag_timeline_event(
+    inv_id: str,
+    state: AppState = Depends(get_state),
+    event_id: str = Form(""),
+    tag: str = Form(""),
+    notes: str = Form(""),
+) -> HTMLResponse:
+    """Tag a timeline event (HTMX endpoint)."""
+    inv = state.investigations.get(inv_id)
+    if not inv:
+        return HTMLResponse("<p>Investigation not found.</p>", status_code=404)
+
+    if not event_id or not tag:
+        return HTMLResponse("<p>Missing event_id or tag.</p>", status_code=400)
+
+    # Update in-memory timeline_tags
+    inv.setdefault("timeline_tags", {})[event_id] = tag
+
+    # Persist tag to store
+    if state.investigation_store:
+        state.investigation_store.tag_event(inv_id, event_id, tag, notes)
+        # Invalidate cached timeline HTML
+        state.investigation_store.delete_artifacts(inv_id)
+
+    return HTMLResponse(f'<span style="color:#58a6ff;">Tagged {event_id} as {tag}</span>')
+
+
 @router.post("/{inv_id}/enrich", response_class=HTMLResponse)
 def enrich_investigation(
     request: Request,

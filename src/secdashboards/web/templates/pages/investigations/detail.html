@@ -34,6 +34,18 @@
     {% endif %}
 </div>
 
+{# Timeline visualization iframe #}
+<div class="card">
+    <div class="card-header">Timeline</div>
+    {% if summary.get("total_nodes", summary.get("node_count", 0)) > 0 %}
+    <iframe src="/investigations/{{ inv_id }}/timeline.html"
+            style="width: 100%; height: 420px; border: 1px solid var(--border); border-radius: 4px;">
+    </iframe>
+    {% else %}
+    <p style="color: var(--text-muted);">No events to display. Enrich the investigation to add data.</p>
+    {% endif %}
+</div>
+
 {# Enrichment form #}
 <div class="card">
     <div class="card-header">Enrich Investigation</div>
