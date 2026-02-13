@@ -54,6 +54,7 @@ from secdashboards.graph.models import (
     SecurityFindingNode,
     SecurityGraph,
 )
+from secdashboards.graph.persistence import InvestigationStore
 from secdashboards.graph.queries import GremlinQueries, OpenCypherQueries
 from secdashboards.graph.timeline import (
     EventTag,
@@ -90,6 +91,8 @@ __all__ = [
     # Visualization
     "GraphVisualizer",
     "create_investigation_visualization",
+    # Persistence
+    "InvestigationStore",
     # Neptune
     "NeptuneConnector",
     "GremlinQueries",
