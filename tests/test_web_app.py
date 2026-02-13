@@ -66,6 +66,64 @@ class TestAppState:
         state.duckdb.close()
 
 
+class TestSecurityLakeAutoRegistration:
+    """Tests for auto-registering Security Lake sources from env config."""
+
+    def test_auto_register_when_db_set_no_catalog(self) -> None:
+        config = WebConfig(
+            duckdb_path=":memory:", security_lake_db="amazon_security_lake_glue_db_us_west_2"
+        )
+        state = create_app_state(config)
+        sl_sources = state.catalog.list_sources(tag="security-lake")
+        assert len(sl_sources) == 5
+        names = {s.name for s in sl_sources}
+        assert names == {"cloudtrail", "vpc-flow", "route53", "security-hub", "lambda-execution"}
+        state.duckdb.close()
+
+    def test_auto_register_uses_correct_region(self) -> None:
+        config = WebConfig(
+            duckdb_path=":memory:",
+            security_lake_db="amazon_security_lake_glue_db_eu_west_1",
+            region="eu-west-1",
+        )
+        state = create_app_state(config)
+        ct = state.catalog.get_source("cloudtrail")
+        assert ct is not None
+        assert "eu_west_1" in ct.table
+        assert ct.region == "eu-west-1"
+        state.duckdb.close()
+
+    def test_no_auto_register_when_db_not_set(self) -> None:
+        config = WebConfig(duckdb_path=":memory:", security_lake_db="")
+        state = create_app_state(config)
+        sl_sources = state.catalog.list_sources(tag="security-lake")
+        assert len(sl_sources) == 0
+        state.duckdb.close()
+
+    def test_no_auto_register_when_catalog_has_sl(self, tmp_path) -> None:
+        catalog_file = tmp_path / "catalog.yaml"
+        catalog_file.write_text(
+            "sources:\n"
+            "  - name: my-cloudtrail\n"
+            "    type: security_lake\n"
+            "    database: my_db\n"
+            "    table: my_table\n"
+            "    region: us-west-2\n"
+            "    tags: [security-lake]\n"
+        )
+        config = WebConfig(
+            duckdb_path=":memory:",
+            security_lake_db="amazon_security_lake_glue_db_us_west_2",
+            catalog_path=str(catalog_file),
+        )
+        state = create_app_state(config)
+        sl_sources = state.catalog.list_sources(tag="security-lake")
+        # Should only have the one from the catalog, not the 5 auto-registered ones
+        assert len(sl_sources) == 1
+        assert sl_sources[0].name == "my-cloudtrail"
+        state.duckdb.close()
+
+
 class TestAppCreation:
     """Tests for the FastAPI app factory."""
 
