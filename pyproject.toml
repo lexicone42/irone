@@ -14,30 +14,33 @@ classifiers = [
 ]
 dependencies = [
     "boto3>=1.35.0",
-    "pandas>=2.2.0",
-    "pyarrow>=18.0.0",
-    "polars>=1.0.0",
+    "aioboto3>=13.0.0",
+    "duckdb>=1.1.0",
     "pydantic>=2.10.0",
     "pydantic-settings>=2.6.0",
-    "httpx>=0.28.0",
-    "rich>=13.9.0",
-    "typer>=0.15.0",
-    "jinja2>=3.1.0",
-    "croniter>=5.0.0",
-    "structlog>=24.4.0",
-    "pyvis>=0.3.2",
-    "gremlinpython>=3.7.0",
-    "networkx>=3.2",
-    "plotly>=5.24.0",
-    "duckdb>=1.1.0",
     "fastapi>=0.115.0",
     "uvicorn[standard]>=0.32.0",
     "mangum>=0.19.0",
     "python-multipart>=0.0.22",
+    "jinja2>=3.1.0",
     "pyjwt[crypto]>=2.10.0",
     "cedarpy>=4.8.0",
     "itsdangerous>=2.2.0",
-    "aioboto3>=13.0.0",
+    "httpx>=0.28.0",
+    "rich>=13.9.0",
+    "typer>=0.15.0",
+    "croniter>=5.0.0",
+    "structlog>=24.4.0",
+]
+
+[project.optional-dependencies]
+investigation = [
+    "polars>=1.0.0",
+    "pyarrow>=18.0.0",
+    "plotly>=5.24.0",
+    "pyvis>=0.3.2",
+    "gremlinpython>=3.7.0",
+    "networkx>=3.2",
 ]
 
 [project.scripts]
@@ -49,6 +52,7 @@ Issues = "https://github.com/lexicone42/secdashboards/issues"
 
 [dependency-groups]
 dev = [
+    "secdashboards[investigation]",
     "pytest>=8.3.0",
     "pytest-asyncio>=0.24.0",
     "ruff>=0.9.0",
