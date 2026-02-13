@@ -25,7 +25,7 @@ class TestDashboardRoutes:
 
     def test_dashboard_has_nav(self, client: TestClient) -> None:
         response = client.get("/")
-        assert "secdash_" in response.text
+        assert "iris_" in response.text
         assert "Health Monitor" in response.text
 
     def test_dashboard_shows_source_count(self, client: TestClient) -> None:

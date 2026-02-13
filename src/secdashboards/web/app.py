@@ -82,7 +82,7 @@ def create_app(config: WebConfig | None = None) -> FastAPI:
     config = config or WebConfig()
 
     app = FastAPI(
-        title="secdashboards",
+        title="iris",
         description="Security Data Lake Analytics",
         version="0.1.0",
         lifespan=_lifespan,

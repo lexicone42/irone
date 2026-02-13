@@ -130,7 +130,7 @@ class TestAppCreation:
     def test_create_app_returns_fastapi(self) -> None:
         config = WebConfig(duckdb_path=":memory:")
         app = create_app(config)
-        assert app.title == "secdashboards"
+        assert app.title == "iris"
 
     def test_health_endpoint(self) -> None:
         config = WebConfig(duckdb_path=":memory:")
