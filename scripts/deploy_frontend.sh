@@ -18,16 +18,23 @@ aws s3 sync "$FRONTEND_DIR" "s3://$BUCKET/" \
     --cache-control "public, max-age=3600" \
     --exclude "*.map"
 
-# Set longer cache for immutable assets
-echo "==> Setting cache headers for assets/"
+# JS files change without filename hashing — use short cache + revalidation
+echo "==> Setting cache headers for JS assets"
 aws s3 sync "$FRONTEND_DIR/assets/" "s3://$BUCKET/assets/" \
-    --cache-control "public, max-age=86400, immutable"
+    --exclude "*" --include "*.js" \
+    --cache-control "public, max-age=300, must-revalidate"
+
+# CSS and JSON are more stable
+echo "==> Setting cache headers for CSS/JSON assets"
+aws s3 sync "$FRONTEND_DIR/assets/" "s3://$BUCKET/assets/" \
+    --exclude "*" --include "*.css" --include "*.json" \
+    --cache-control "public, max-age=86400"
 
 if [[ -n "$DIST_ID" ]]; then
     echo "==> Invalidating CloudFront distribution $DIST_ID"
     aws cloudfront create-invalidation \
         --distribution-id "$DIST_ID" \
-        --paths "/*.html" "/assets/app.js" "/assets/manifest.json"
+        --paths "/*.html" "/assets/*"
     echo "==> Invalidation submitted."
 else
     echo "==> No DISTRIBUTION_ID provided, skipping CloudFront invalidation."

@@ -5,6 +5,11 @@ const API = "/api";
 // ─── Shared helpers ──────────────────────────────────────────────
 
 async function apiFetch(path, opts = {}) {
+    // Ensure auth is initialized before any API call
+    await auth.init();
+    if (auth.isRedirecting()) return {};
+    if (auth.isAuthEnabled() && !auth.isAuthenticated()) return {};
+
     const headers = {
         "Content-Type": "application/json",
         ...auth.getAuthHeaders(),
@@ -22,7 +27,7 @@ async function apiFetch(path, opts = {}) {
         };
         const retry = await fetch(`${API}${path}`, { ...opts, headers: retryHeaders });
         if (retry.status === 401) {
-            window.location.href = "/login.html";
+            window.location.href = "/auth/login";
             throw new Error("Session expired");
         }
         if (!retry.ok) throw new Error(`API ${retry.status}: ${retry.statusText}`);

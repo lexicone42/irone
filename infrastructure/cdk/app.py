@@ -36,7 +36,7 @@ from stacks import (
     AlertingStack,
     DetectionRulesStack,
     FastAPIStack,
-    HealthDashboardStack,
+    IrisStack,
     SharedAuthStack,
 )
 
@@ -91,22 +91,22 @@ shared_auth = SharedAuthStack(
 )
 
 # =============================================================================
-# Health Dashboard Stack
+# Health Dashboard Stack (RETIRED — replaced by IrisStack)
 # =============================================================================
-# Currently uses its own embedded Cognito User Pool.
-# To use shared pool instead, pass user_pool_id from shared_auth.
-HealthDashboardStack(
-    app,
-    "secdash-health",
-    env=env,
-    domain_name=domain_name,
-    hosted_zone_id=hosted_zone_id,
-    certificate_arn=certificate_arn,
-    allowed_email=admin_email,
-    security_lake_db=security_lake_db,
-    athena_output=athena_output,
-    description="Security Dashboards - Health Monitor with Cognito Passkey Auth",
-)
+# Destroyed 2026-02-13. The iris edge-first architecture replaces this stack.
+# Kept commented out for reference; delete once IrisStack is stable.
+# HealthDashboardStack(
+#     app,
+#     "secdash-health",
+#     env=env,
+#     domain_name=domain_name,
+#     hosted_zone_id=hosted_zone_id,
+#     certificate_arn=certificate_arn,
+#     allowed_email=admin_email,
+#     security_lake_db=security_lake_db,
+#     athena_output=athena_output,
+#     description="Security Dashboards - Health Monitor with Cognito Passkey Auth",
+# )
 
 # =============================================================================
 # Real-Time Alerting Stack
@@ -167,6 +167,33 @@ FastAPIStack(
     cognito_domain=f"secdash-auth-{account}.auth.{region}.amazoncognito.com",
     session_secret_key=os.environ.get("SECDASH_SESSION_SECRET_KEY", "change-me-in-production"),
     description="Security Dashboards - FastAPI Web Dashboard",
+)
+
+# =============================================================================
+# Iris Edge-First Stack (CloudFront + S3 + Health Checker + DynamoDB cache)
+# =============================================================================
+# Existing API Gateway ID for the secdash-web Lambda
+iris_api_gateway_id = os.environ.get("IRIS_API_GATEWAY_ID", "udy3l282oh")
+iris_certificate_arn = os.environ.get(
+    "IRIS_CERTIFICATE_ARN",
+    f"arn:aws:acm:us-east-1:{account}:certificate/5a84cf7f-eee1-4b5e-96e8-0347014ff674",
+)
+
+IrisStack(
+    app,
+    "secdash-iris",
+    env=env,
+    domain_name="iris.lexicone.com",
+    hosted_zone_id=hosted_zone_id,
+    certificate_arn=iris_certificate_arn,
+    cognito_user_pool_id=shared_auth.user_pool.user_pool_id,
+    cognito_client_id=shared_auth.web_client.user_pool_client_id,
+    security_lake_db=security_lake_db,
+    athena_output=athena_output,
+    api_gateway_id=iris_api_gateway_id,
+    lambda_package_dir=lambda_package_dir,
+    check_interval_minutes=15,
+    description="Iris - Edge-first security dashboard (CloudFront + S3 + Health Checker)",
 )
 
 app.synth()

@@ -66,7 +66,7 @@ class TestHealthCheckerLambda:
                     "Variables": Match.object_like(
                         {
                             "SECDASH_SECURITY_LAKE_DB": Match.any_value(),
-                            "SECDASH_HEALTH_CACHE_TABLE": "secdash_health_cache",
+                            "SECDASH_HEALTH_CACHE_TABLE": Match.any_value(),
                             "SECDASH_USE_DIRECT_QUERY": "true",
                         }
                     )

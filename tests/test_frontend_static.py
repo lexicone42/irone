@@ -223,29 +223,26 @@ class TestAuthIntegration:
 
 
 class TestAuthJS:
-    """Verify auth.js has required PKCE and token management functions."""
+    """Verify auth.js has required session-based auth functions."""
 
     @pytest.fixture
     def auth_js(self) -> str:
         return (ASSETS_DIR / "auth.js").read_text()
 
-    def test_pkce_code_challenge(self, auth_js: str) -> None:
-        assert "code_challenge" in auth_js
-        assert "S256" in auth_js
+    def test_session_check(self, auth_js: str) -> None:
+        assert "/auth/me" in auth_js
+        assert "/auth/login" in auth_js
 
-    def test_token_exchange(self, auth_js: str) -> None:
-        assert "authorization_code" in auth_js
-        assert "code_verifier" in auth_js
+    def test_auth_config_fetch(self, auth_js: str) -> None:
+        assert "/api/auth/config" in auth_js
+        assert "auth_enabled" in auth_js
 
-    def test_refresh_token_support(self, auth_js: str) -> None:
-        assert "refresh_token" in auth_js
-
-    def test_session_storage_for_tokens(self, auth_js: str) -> None:
+    def test_session_storage_cleanup(self, auth_js: str) -> None:
         assert "sessionStorage" in auth_js
         assert "iris_auth" in auth_js
 
-    def test_bearer_header_injection(self, auth_js: str) -> None:
-        assert "Bearer" in auth_js
+    def test_logout_redirect(self, auth_js: str) -> None:
+        assert "/auth/logout" in auth_js
         assert "getAuthHeaders" in auth_js
 
     @pytest.mark.parametrize(
@@ -257,6 +254,7 @@ class TestAuthJS:
             "logout",
             "getAuthHeaders",
             "isAuthenticated",
+            "isRedirecting",
             "getUser",
             "isAuthEnabled",
         ],
