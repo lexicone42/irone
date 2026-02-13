@@ -71,6 +71,7 @@ class IrisStack(Stack):
         security_lake_db: str = "amazon_security_lake_glue_db_us_west_2",
         athena_output: str = "s3://aws-athena-query-results-651804262336-us-west-2/",
         api_gateway_id: str = "",
+        lambda_package_dir: str = "/tmp/secdash-lambda",
         check_interval_minutes: int = 15,
         **kwargs: Any,
     ) -> None:
@@ -105,20 +106,7 @@ class IrisStack(Stack):
             function_name="secdash-health-checker",
             runtime=lambda_.Runtime.PYTHON_3_13,
             handler="secdashboards.health.scheduled_checker.handler",
-            code=lambda_.Code.from_asset(
-                ".",
-                exclude=[
-                    "*.pyc",
-                    "__pycache__",
-                    ".git",
-                    "tests",
-                    "infrastructure",
-                    "notebooks",
-                    "reports",
-                    "*.png",
-                    "*.jpg",
-                ],
-            ),
+            code=lambda_.Code.from_asset(lambda_package_dir),
             memory_size=1024,
             timeout=Duration.minutes(5),
             environment={
@@ -244,7 +232,6 @@ class IrisStack(Stack):
         if api_gateway_id:
             api_origin = origins.HttpOrigin(
                 f"{api_gateway_id}.execute-api.{self.region}.amazonaws.com",
-                origin_path="/prod",
             )
             additional_behaviors["/api/*"] = cloudfront.BehaviorOptions(
                 origin=api_origin,

@@ -8,6 +8,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import RedirectResponse
 
 from secdashboards.web.auth.cognito import exchange_code_for_tokens
+from secdashboards.web.config import WebConfig
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +29,8 @@ async def oauth_callback(request: Request):
         return RedirectResponse("/?error=Missing+authorization+code")
 
     try:
-        redirect_uri = str(request.url_for("oauth_callback"))
+        config: WebConfig = request.app.state.secdash.config
+        redirect_uri = config.cognito_redirect_uri or str(request.url_for("oauth_callback"))
         token_response = await exchange_code_for_tokens(code, redirect_uri)
 
         request.state.session["tokens"] = {

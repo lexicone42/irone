@@ -2400,8 +2400,10 @@ cdk = [
     { name = "constructs" },
 ]
 dev = [
+    { name = "aws-cdk-lib" },
     { name = "boto3-stubs", extra = ["athena", "essential", "events", "glue", "lambda", "neptune", "s3", "securitylake"] },
     { name = "cfn-lint" },
+    { name = "constructs" },
     { name = "cryptography" },
     { name = "hypothesis" },
     { name = "moto" },
@@ -2454,8 +2456,10 @@ cdk = [
     { name = "constructs", specifier = ">=10.0.0" },
 ]
 dev = [
+    { name = "aws-cdk-lib", specifier = ">=2.238.0" },
     { name = "boto3-stubs", extras = ["essential", "athena", "s3", "lambda", "events", "glue", "securitylake", "neptune"], specifier = ">=1.35.0" },
     { name = "cfn-lint", specifier = ">=1.43.3" },
+    { name = "constructs", specifier = ">=10.4.5" },
     { name = "cryptography", specifier = ">=44.0.0" },
     { name = "hypothesis", specifier = ">=6.100.0" },
     { name = "moto", specifier = ">=5.1.20" },

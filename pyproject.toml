@@ -63,6 +63,8 @@ dev = [
     "cfn-lint>=1.43.3",
     "hypothesis>=6.100.0",
     "cryptography>=44.0.0",
+    "aws-cdk-lib>=2.238.0",
+    "constructs>=10.4.5",
 ]
 docs = [
     "mkdocs-material>=9.5.0",

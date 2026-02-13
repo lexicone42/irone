@@ -4,6 +4,7 @@ from .alerting import AlertingStack
 from .detection_rules import DetectionRulesStack
 from .fastapi_stack import FastAPIStack
 from .health_dashboard import HealthDashboardStack
+from .iris_stack import IrisStack
 from .shared_auth import SharedAuthStack
 
 __all__ = [
@@ -11,5 +12,6 @@ __all__ = [
     "DetectionRulesStack",
     "FastAPIStack",
     "HealthDashboardStack",
+    "IrisStack",
     "SharedAuthStack",
 ]
