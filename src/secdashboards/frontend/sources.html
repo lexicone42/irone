@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sources — iris</title>
+    <link rel="stylesheet" href="/assets/terminal.css">
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+    <script src="/assets/app.js"></script>
+</head>
+<body>
+    <div class="layout" x-data="navApp()">
+        <nav class="sidebar">
+            <div class="nav-brand">&gt; iris_</div>
+
+            <div class="nav-section">Overview</div>
+            <a href="/" class="nav-link" :class="isActive('/') && 'active'">Dashboard</a>
+
+            <div class="nav-section">Operations</div>
+            <a href="/monitoring.html" class="nav-link" :class="isActive('/monitoring') && 'active'">Health Monitor</a>
+            <a href="/sources.html" class="nav-link" :class="isActive('/sources') && 'active'">Sources</a>
+
+            <div class="nav-section">Detection</div>
+            <a href="/detections.html" class="nav-link" :class="isActive('/detections') && 'active'">Rules & Queries</a>
+        </nav>
+
+        <main class="main-content" x-data="sourcesApp()">
+            <h1>Data Sources</h1>
+
+            <template x-if="loading">
+                <div style="text-align: center; padding: 2rem;">
+                    <span class="spinner"></span> Loading sources...
+                </div>
+            </template>
+
+            <template x-if="error">
+                <div class="alert alert-error" x-text="error"></div>
+            </template>
+
+            <template x-if="!loading && sources.length > 0">
+                <div class="card">
+                    <div class="card-header">
+                        Registered Sources (<span x-text="sources.length"></span>)
+                    </div>
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>Name</th>
+                                <th>Type</th>
+                                <th>Region</th>
+                                <th>Tags</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <template x-for="src in sources" :key="src.name">
+                                <tr>
+                                    <td x-text="src.name"></td>
+                                    <td><span class="badge badge-ok" x-text="src.type"></span></td>
+                                    <td x-text="src.region"></td>
+                                    <td x-text="(src.tags || []).join(', ')"></td>
+                                </tr>
+                            </template>
+                        </tbody>
+                    </table>
+                </div>
+            </template>
+        </main>
+    </div>
+</body>
+</html>

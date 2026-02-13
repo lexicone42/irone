@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Detection Rules — iris</title>
+    <link rel="stylesheet" href="/assets/terminal.css">
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+    <script src="/assets/app.js"></script>
+</head>
+<body>
+    <div class="layout" x-data="navApp()">
+        <nav class="sidebar">
+            <div class="nav-brand">&gt; iris_</div>
+
+            <div class="nav-section">Overview</div>
+            <a href="/" class="nav-link" :class="isActive('/') && 'active'">Dashboard</a>
+
+            <div class="nav-section">Operations</div>
+            <a href="/monitoring.html" class="nav-link" :class="isActive('/monitoring') && 'active'">Health Monitor</a>
+            <a href="/sources.html" class="nav-link" :class="isActive('/sources') && 'active'">Sources</a>
+
+            <div class="nav-section">Detection</div>
+            <a href="/detections.html" class="nav-link" :class="isActive('/detections') && 'active'">Rules & Queries</a>
+        </nav>
+
+        <main class="main-content" x-data="detectionsApp()">
+            <h1>Detection Rules</h1>
+
+            <!-- Rules Section -->
+            <div class="card">
+                <div class="card-header">
+                    Registered Rules
+                    <template x-if="!loading">
+                        <span x-text="'(' + rules.length + ')'"></span>
+                    </template>
+                </div>
+
+                <template x-if="loading">
+                    <div style="text-align: center; padding: 1rem;">
+                        <span class="spinner"></span> Loading rules...
+                    </div>
+                </template>
+
+                <template x-if="error">
+                    <div class="alert alert-error" x-text="error"></div>
+                </template>
+
+                <template x-if="!loading && rules.length === 0 && !error">
+                    <p style="color: var(--text-muted);">No rules registered. Load rules from a rules directory.</p>
+                </template>
+
+                <template x-if="!loading && rules.length > 0">
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>Name</th>
+                                <th>Severity</th>
+                                <th>Tags</th>
+                                <th>Enabled</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <template x-for="rule in rules" :key="rule.id">
+                                <tr>
+                                    <td x-text="rule.name"></td>
+                                    <td>
+                                        <span class="badge" :class="severityClass(rule.severity)"
+                                              x-text="rule.severity"></span>
+                                    </td>
+                                    <td x-text="(rule.tags || []).join(', ')"></td>
+                                    <td>
+                                        <span :class="rule.enabled ? 'status-ok' : 'status-error'"
+                                              x-text="rule.enabled ? 'yes' : 'no'"></span>
+                                    </td>
+                                </tr>
+                            </template>
+                        </tbody>
+                    </table>
+                </template>
+            </div>
+
+            <!-- Query Explorer Section -->
+            <div class="card">
+                <div class="card-header">Query Explorer (DuckDB)</div>
+                <div style="margin-bottom: 0.75rem;">
+                    <textarea x-model="sql" rows="6"
+                              style="width: 100%; font-size: 0.8rem;"
+                              placeholder="SELECT * FROM information_schema.tables;"></textarea>
+                </div>
+                <button class="btn btn-primary" @click="runQuery()" :disabled="querying">
+                    <template x-if="!querying"><span>Run Query</span></template>
+                    <template x-if="querying"><span><span class="spinner"></span> Executing...</span></template>
+                </button>
+
+                <template x-if="queryError">
+                    <div class="alert alert-error" style="margin-top: 1rem;" x-text="queryError"></div>
+                </template>
+
+                <template x-if="queryResult">
+                    <div style="margin-top: 1rem;">
+                        <p style="color: var(--text-secondary); margin-bottom: 0.5rem;"
+                           x-text="queryResult.row_count + ' row(s) returned'"></p>
+                        <div style="overflow-x: auto;">
+                            <table class="data-table">
+                                <thead>
+                                    <tr>
+                                        <template x-for="col in queryResult.columns" :key="col">
+                                            <th x-text="col"></th>
+                                        </template>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <template x-for="(row, i) in queryResult.rows" :key="i">
+                                        <tr>
+                                            <template x-for="col in queryResult.columns" :key="col">
+                                                <td x-text="row[col] != null ? String(row[col]) : '—'"></td>
+                                            </template>
+                                        </tr>
+                                    </template>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </template>
+            </div>
+        </main>
+    </div>
+</body>
+</html>

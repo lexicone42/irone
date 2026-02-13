@@ -60,8 +60,9 @@ output/
 site/
 *.pdf
 *.html
-# But track Jinja2 templates
+# But track Jinja2 templates and static frontend
 !src/secdashboards/web/templates/**/*.html
+!src/secdashboards/frontend/**/*.html
 
 # Log files
 *.log
