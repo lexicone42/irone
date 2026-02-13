@@ -9,6 +9,7 @@ from secdashboards.connectors.log_etl import (
     LogETLPipeline,
     OCSFTransformer,
 )
+from secdashboards.connectors.result import QueryResult
 from secdashboards.connectors.security_lake import OCSFEventClass, SecurityLakeConnector
 
 __all__ = [
@@ -23,4 +24,5 @@ __all__ = [
     "LogETLPipeline",
     "OCSFTransformer",
     "CloudWatchLogExporter",
+    "QueryResult",
 ]
