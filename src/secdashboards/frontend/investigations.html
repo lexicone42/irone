@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Investigations — iris</title>
+    <link rel="stylesheet" href="/assets/terminal.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/cytoscape/3.30.4/cytoscape.min.js"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+    <script src="/assets/auth.js"></script>
+    <script src="/assets/app.js"></script>
+</head>
+<body>
+    <div class="layout" x-data="navApp()">
+        <nav class="sidebar">
+            <div class="nav-brand">&gt; iris_</div>
+
+            <div class="nav-section">Overview</div>
+            <a href="/" class="nav-link" :class="isActive('/') && 'active'">Dashboard</a>
+
+            <div class="nav-section">Operations</div>
+            <a href="/monitoring.html" class="nav-link" :class="isActive('/monitoring') && 'active'">Health Monitor</a>
+            <a href="/sources.html" class="nav-link" :class="isActive('/sources') && 'active'">Sources</a>
+
+            <div class="nav-section">Detection</div>
+            <a href="/detections.html" class="nav-link" :class="isActive('/detections') && 'active'">Rules & Queries</a>
+
+            <div class="nav-section">Investigation</div>
+            <a href="/investigations.html" class="nav-link" :class="isActive('/investigations') && 'active'">Investigations</a>
+
+            <template x-if="authEnabled && userEmail">
+                <div style="margin-top: auto; padding-top: 1rem; border-top: 1px solid var(--border);">
+                    <div style="color: var(--text-muted); font-size: 0.75rem; padding: 0.25rem 0.75rem;" x-text="userEmail"></div>
+                    <a href="#" class="nav-link" @click.prevent="doLogout()">Sign Out</a>
+                </div>
+            </template>
+        </nav>
+
+        <main class="main-content" x-data="investigationsApp()">
+
+            <!-- ─── List View ──────────────────────────────── -->
+            <template x-if="!activeInv">
+                <div>
+                    <h1>Investigations</h1>
+
+                    <template x-if="error">
+                        <div class="alert alert-error" x-text="error"></div>
+                    </template>
+
+                    <!-- Create Form -->
+                    <div class="card">
+                        <div class="card-header">New Investigation</div>
+                        <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 0.75rem; margin-bottom: 0.75rem;">
+                            <div>
+                                <label style="color: var(--text-muted); font-size: 0.75rem;">Name</label>
+                                <input type="text" x-model="newName" placeholder="e.g. Suspicious login"
+                                       style="width: 100%;">
+                            </div>
+                            <div>
+                                <label style="color: var(--text-muted); font-size: 0.75rem;">Users (comma-separated)</label>
+                                <input type="text" x-model="newUsers" placeholder="e.g. admin@example.com"
+                                       style="width: 100%;">
+                            </div>
+                            <div>
+                                <label style="color: var(--text-muted); font-size: 0.75rem;">IPs (comma-separated)</label>
+                                <input type="text" x-model="newIps" placeholder="e.g. 198.51.100.1"
+                                       style="width: 100%;">
+                            </div>
+                        </div>
+                        <button class="btn btn-primary" @click="create()" :disabled="creating">
+                            <template x-if="!creating"><span>Create Investigation</span></template>
+                            <template x-if="creating"><span><span class="spinner"></span> Creating...</span></template>
+                        </button>
+                    </div>
+
+                    <!-- List -->
+                    <template x-if="loading">
+                        <div style="text-align: center; padding: 2rem;">
+                            <span class="spinner"></span> Loading...
+                        </div>
+                    </template>
+
+                    <template x-if="!loading && investigations.length === 0">
+                        <div class="card">
+                            <p style="color: var(--text-muted);">No investigations yet. Create one above.</p>
+                        </div>
+                    </template>
+
+                    <template x-if="!loading && investigations.length > 0">
+                        <div class="card">
+                            <div class="card-header">
+                                Active Investigations (<span x-text="investigations.length"></span>)
+                            </div>
+                            <table class="data-table">
+                                <thead>
+                                    <tr>
+                                        <th>Name</th>
+                                        <th>Nodes</th>
+                                        <th>Edges</th>
+                                        <th>Created</th>
+                                        <th></th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <template x-for="inv in investigations" :key="inv.id">
+                                        <tr style="cursor: pointer;" @click="openDetail(inv.id)">
+                                            <td x-text="inv.name"></td>
+                                            <td x-text="inv.node_count"></td>
+                                            <td x-text="inv.edge_count"></td>
+                                            <td x-text="timeAgo(inv.created_at)"></td>
+                                            <td>
+                                                <button class="btn" style="padding: 0.2rem 0.5rem; font-size: 0.75rem;"
+                                                        @click.stop="deleteInv(inv.id)">Delete</button>
+                                            </td>
+                                        </tr>
+                                    </template>
+                                </tbody>
+                            </table>
+                        </div>
+                    </template>
+                </div>
+            </template>
+
+            <!-- ─── Detail View ────────────────────────────── -->
+            <template x-if="activeInv">
+                <div>
+                    <div style="display: flex; align-items: center; gap: 1rem; margin-bottom: 1rem;">
+                        <a href="#" @click.prevent="backToList()" style="color: var(--green);">&larr; Back</a>
+                        <h1 style="margin: 0;" x-text="activeInv.name"></h1>
+                        <span class="badge badge-ok" x-text="'ID: ' + activeInv.id" style="font-size: 0.7rem;"></span>
+                    </div>
+
+                    <template x-if="error">
+                        <div class="alert alert-error" x-text="error"></div>
+                    </template>
+
+                    <!-- Summary Cards -->
+                    <template x-if="activeInv.summary">
+                        <div class="grid grid-4" style="margin-bottom: 1rem;">
+                            <div class="card" style="text-align: center;">
+                                <div class="stat-label">Nodes</div>
+                                <div class="stat-value" x-text="activeInv.summary.total_nodes"></div>
+                            </div>
+                            <div class="card" style="text-align: center;">
+                                <div class="stat-label">Edges</div>
+                                <div class="stat-value" x-text="activeInv.summary.total_edges"></div>
+                            </div>
+                            <div class="card" style="text-align: center;">
+                                <div class="stat-label">Node Types</div>
+                                <div class="stat-value" x-text="Object.keys(activeInv.summary.nodes_by_type || {}).length"></div>
+                            </div>
+                            <div class="card" style="text-align: center;">
+                                <div class="stat-label">Created</div>
+                                <div class="stat-value" style="font-size: 1rem;" x-text="timeAgo(activeInv.created_at)"></div>
+                            </div>
+                        </div>
+                    </template>
+
+                    <template x-if="detailLoading">
+                        <div style="text-align: center; padding: 2rem;">
+                            <span class="spinner"></span> Loading graph...
+                        </div>
+                    </template>
+
+                    <!-- Graph Container -->
+                    <div class="card" x-show="!detailLoading && graphData">
+                        <div class="card-header">
+                            Investigation Graph
+                            <span style="float: right; font-size: 0.75rem; color: var(--text-muted);">
+                                Click nodes to inspect. Scroll to zoom. Drag to pan.
+                            </span>
+                        </div>
+                        <div id="cy-graph" style="height: 500px; background: #0d1117; border-radius: 4px;"></div>
+
+                        <!-- Legend -->
+                        <div style="display: flex; flex-wrap: wrap; gap: 1rem; padding: 0.75rem 0; font-size: 0.75rem; color: var(--text-muted);">
+                            <span><span style="color: #FF6B6B;">&#9679;</span> Principal</span>
+                            <span><span style="color: #4ECDC4;">&#9670;</span> IP Address</span>
+                            <span><span style="color: #45B7D1;">&#9632;</span> Resource</span>
+                            <span><span style="color: #96CEB4;">&#9650;</span> API Operation</span>
+                            <span><span style="color: #FF4757;">&#9733;</span> Finding</span>
+                            <span><span style="color: #A8A8A8;">&#9679;</span> Event</span>
+                        </div>
+                    </div>
+
+                    <!-- Selected Node Details -->
+                    <template x-if="selectedNode">
+                        <div class="card">
+                            <div class="card-header">
+                                Node: <span x-text="selectedNode.label"></span>
+                                <span class="badge badge-ok" x-text="selectedNode.node_type" style="margin-left: 0.5rem;"></span>
+                            </div>
+                            <table class="data-table">
+                                <tbody>
+                                    <tr>
+                                        <td style="color: var(--text-muted);">ID</td>
+                                        <td x-text="selectedNode.id" style="font-family: monospace; font-size: 0.8rem;"></td>
+                                    </tr>
+                                    <tr>
+                                        <td style="color: var(--text-muted);">Events</td>
+                                        <td x-text="selectedNode.event_count"></td>
+                                    </tr>
+                                    <template x-if="selectedNode.first_seen">
+                                        <tr>
+                                            <td style="color: var(--text-muted);">First Seen</td>
+                                            <td x-text="selectedNode.first_seen"></td>
+                                        </tr>
+                                    </template>
+                                    <template x-if="selectedNode.last_seen">
+                                        <tr>
+                                            <td style="color: var(--text-muted);">Last Seen</td>
+                                            <td x-text="selectedNode.last_seen"></td>
+                                        </tr>
+                                    </template>
+                                </tbody>
+                            </table>
+                        </div>
+                    </template>
+                </div>
+            </template>
+        </main>
+    </div>
+</body>
+</html>

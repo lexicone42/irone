@@ -25,6 +25,7 @@ class TestFrontendFilesExist:
             "sources.html",
             "login.html",
             "callback.html",
+            "investigations.html",
         ],
     )
     def test_html_pages_exist(self, filename: str) -> None:
@@ -43,7 +44,7 @@ class TestHTMLStructure:
 
     @pytest.mark.parametrize(
         "filename",
-        ["index.html", "monitoring.html", "detections.html", "sources.html"],
+        ["index.html", "monitoring.html", "detections.html", "sources.html", "investigations.html"],
     )
     def test_pages_reference_terminal_css(self, filename: str) -> None:
         content = (FRONTEND_DIR / filename).read_text()
@@ -51,7 +52,7 @@ class TestHTMLStructure:
 
     @pytest.mark.parametrize(
         "filename",
-        ["index.html", "monitoring.html", "detections.html", "sources.html"],
+        ["index.html", "monitoring.html", "detections.html", "sources.html", "investigations.html"],
     )
     def test_pages_reference_app_js(self, filename: str) -> None:
         content = (FRONTEND_DIR / filename).read_text()
@@ -59,7 +60,7 @@ class TestHTMLStructure:
 
     @pytest.mark.parametrize(
         "filename",
-        ["index.html", "monitoring.html", "detections.html", "sources.html"],
+        ["index.html", "monitoring.html", "detections.html", "sources.html", "investigations.html"],
     )
     def test_pages_reference_alpine(self, filename: str) -> None:
         content = (FRONTEND_DIR / filename).read_text()
@@ -67,7 +68,7 @@ class TestHTMLStructure:
 
     @pytest.mark.parametrize(
         "filename",
-        ["index.html", "monitoring.html", "detections.html", "sources.html"],
+        ["index.html", "monitoring.html", "detections.html", "sources.html", "investigations.html"],
     )
     def test_pages_have_iris_brand(self, filename: str) -> None:
         content = (FRONTEND_DIR / filename).read_text()
@@ -75,7 +76,7 @@ class TestHTMLStructure:
 
     @pytest.mark.parametrize(
         "filename",
-        ["index.html", "monitoring.html", "detections.html", "sources.html"],
+        ["index.html", "monitoring.html", "detections.html", "sources.html", "investigations.html"],
     )
     def test_pages_have_nav_sidebar(self, filename: str) -> None:
         content = (FRONTEND_DIR / filename).read_text()
@@ -89,6 +90,7 @@ class TestHTMLStructure:
             ("monitoring.html", "healthMonitor()"),
             ("detections.html", "detectionsApp()"),
             ("sources.html", "sourcesApp()"),
+            ("investigations.html", "investigationsApp()"),
         ],
     )
     def test_pages_use_correct_alpine_component(self, filename: str, component: str) -> None:
@@ -110,6 +112,7 @@ class TestAppJS:
             "healthMonitor",
             "detectionsApp",
             "sourcesApp",
+            "investigationsApp",
             "navApp",
         ],
     )
@@ -123,6 +126,7 @@ class TestAppJS:
             "healthMonitor",
             "detectionsApp",
             "sourcesApp",
+            "investigationsApp",
             "navApp",
         ],
     )
@@ -159,7 +163,7 @@ class TestAuthIntegration:
 
     @pytest.mark.parametrize(
         "filename",
-        ["index.html", "monitoring.html", "detections.html", "sources.html"],
+        ["index.html", "monitoring.html", "detections.html", "sources.html", "investigations.html"],
     )
     def test_app_pages_include_auth_js(self, filename: str) -> None:
         content = (FRONTEND_DIR / filename).read_text()
@@ -167,7 +171,7 @@ class TestAuthIntegration:
 
     @pytest.mark.parametrize(
         "filename",
-        ["index.html", "monitoring.html", "detections.html", "sources.html"],
+        ["index.html", "monitoring.html", "detections.html", "sources.html", "investigations.html"],
     )
     def test_app_pages_have_logout_link(self, filename: str) -> None:
         content = (FRONTEND_DIR / filename).read_text()
@@ -175,7 +179,7 @@ class TestAuthIntegration:
 
     @pytest.mark.parametrize(
         "filename",
-        ["index.html", "monitoring.html", "detections.html", "sources.html"],
+        ["index.html", "monitoring.html", "detections.html", "sources.html", "investigations.html"],
     )
     def test_app_pages_show_user_email(self, filename: str) -> None:
         content = (FRONTEND_DIR / filename).read_text()

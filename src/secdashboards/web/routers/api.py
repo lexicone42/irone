@@ -6,7 +6,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from typing import Any
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from secdashboards.connectors.base import HealthCheckResult
@@ -278,3 +278,254 @@ def auth_config(
         "cognito_region": config.cognito_region,
         "redirect_uri": config.cognito_redirect_uri,
     }
+
+
+# ─── Investigations ──────────────────────────────────────────────
+
+
+class CreateInvestigationRequest(BaseModel):
+    """Request body for creating an investigation."""
+
+    name: str = ""
+    users: list[str] = []
+    ips: list[str] = []
+
+
+class TagEventRequest(BaseModel):
+    """Request body for tagging a timeline event."""
+
+    event_id: str
+    tag: str
+    notes: str = ""
+
+
+class EnrichRequest(BaseModel):
+    """Request body for enriching an investigation."""
+
+    users: list[str] = []
+    ips: list[str] = []
+
+
+@router.get("/investigations")
+def list_investigations(
+    state: AppState = Depends(get_state),
+) -> list[dict[str, Any]]:
+    """List all investigations with summary stats."""
+    result = []
+    for inv_id, data in state.investigations.items():
+        graph = data["graph"]
+        result.append(
+            {
+                "id": inv_id,
+                "name": data.get("name", inv_id),
+                "node_count": graph.node_count(),
+                "edge_count": graph.edge_count(),
+                "created_at": data.get("created_at", ""),
+            }
+        )
+    return result
+
+
+@router.post("/investigations")
+def create_investigation_api(
+    body: CreateInvestigationRequest,
+    state: AppState = Depends(get_state),
+) -> dict[str, Any]:
+    """Create a new investigation from user/IP identifiers."""
+    import uuid
+    from datetime import UTC
+
+    inv_id = f"inv-{uuid.uuid4().hex[:8]}"
+
+    try:
+        from secdashboards.connectors.security_lake import SecurityLakeConnector
+        from secdashboards.graph.builder import GraphBuilder
+
+        sl_sources = state.catalog.list_sources(tag="security-lake")
+        sl_connector = state.catalog.get_connector(sl_sources[0].name)
+        if not isinstance(sl_connector, SecurityLakeConnector):
+            raise TypeError("Expected SecurityLakeConnector")
+        builder = GraphBuilder(security_lake=sl_connector)
+        graph = builder.build_from_identifiers(
+            users=body.users or None,
+            ips=body.ips or None,
+        )
+    except Exception:
+        from secdashboards.graph.models import SecurityGraph
+
+        graph = SecurityGraph()
+
+    created_at = datetime.now(UTC).isoformat()
+    state.investigations[inv_id] = {
+        "name": body.name or inv_id,
+        "graph": graph,
+        "created_at": created_at,
+        "timeline_tags": {},
+    }
+
+    if state.investigation_store:
+        state.investigation_store.save_investigation(
+            inv_id, body.name or inv_id, graph, created_at=created_at
+        )
+
+    return {
+        "id": inv_id,
+        "name": body.name or inv_id,
+        "created_at": created_at,
+        "summary": graph.summary(),
+    }
+
+
+@router.get("/investigations/{inv_id}")
+def get_investigation(
+    inv_id: str,
+    state: AppState = Depends(get_state),
+) -> dict[str, Any]:
+    """Get investigation detail with summary."""
+    inv = state.investigations.get(inv_id)
+    if not inv:
+        raise HTTPException(status_code=404, detail=f"Investigation {inv_id} not found")
+
+    graph = inv["graph"]
+    return {
+        "id": inv_id,
+        "name": inv.get("name", inv_id),
+        "created_at": inv.get("created_at", ""),
+        "summary": graph.summary(),
+        "timeline_tags": inv.get("timeline_tags", {}),
+    }
+
+
+@router.get("/investigations/{inv_id}/graph")
+def get_investigation_graph(
+    inv_id: str,
+    state: AppState = Depends(get_state),
+) -> dict[str, Any]:
+    """Get graph data in Cytoscape.js format.
+
+    Returns nodes and edges formatted for direct consumption
+    by Cytoscape.js ``cy.add(elements)``.
+    """
+    inv = state.investigations.get(inv_id)
+    if not inv:
+        raise HTTPException(status_code=404, detail=f"Investigation {inv_id} not found")
+
+    graph = inv["graph"]
+
+    # Convert to Cytoscape.js elements format
+    cy_nodes = []
+    for node in graph.nodes.values():
+        cy_nodes.append(
+            {
+                "group": "nodes",
+                "data": {
+                    "id": node.id,
+                    "label": node.label,
+                    "node_type": node.node_type.value,
+                    "event_count": node.event_count,
+                    "first_seen": node.first_seen.isoformat() if node.first_seen else None,
+                    "last_seen": node.last_seen.isoformat() if node.last_seen else None,
+                    **node.properties,
+                },
+            }
+        )
+
+    cy_edges = []
+    for edge in graph.edges:
+        cy_edges.append(
+            {
+                "group": "edges",
+                "data": {
+                    "id": edge.id,
+                    "source": edge.source_id,
+                    "target": edge.target_id,
+                    "edge_type": edge.edge_type.value,
+                    "weight": edge.weight,
+                    "event_count": edge.event_count,
+                },
+            }
+        )
+
+    return {
+        "elements": cy_nodes + cy_edges,
+        "summary": graph.summary(),
+    }
+
+
+@router.post("/investigations/{inv_id}/enrich")
+def enrich_investigation_api(
+    inv_id: str,
+    body: EnrichRequest,
+    state: AppState = Depends(get_state),
+) -> dict[str, Any]:
+    """Enrich an investigation with additional users/IPs. Returns updated graph."""
+    inv = state.investigations.get(inv_id)
+    if not inv:
+        raise HTTPException(status_code=404, detail=f"Investigation {inv_id} not found")
+
+    try:
+        from secdashboards.connectors.security_lake import SecurityLakeConnector
+        from secdashboards.graph.builder import GraphBuilder
+
+        sl_sources = state.catalog.list_sources(tag="security-lake")
+        sl_connector = state.catalog.get_connector(sl_sources[0].name)
+        if not isinstance(sl_connector, SecurityLakeConnector):
+            raise TypeError("Expected SecurityLakeConnector")
+        builder = GraphBuilder(security_lake=sl_connector)
+        new_graph = builder.build_from_identifiers(
+            users=body.users or None,
+            ips=body.ips or None,
+        )
+        graph = inv["graph"]
+        for node in new_graph.nodes.values():
+            graph.add_node(node)
+        for edge in new_graph.edges:
+            graph.add_edge(edge)
+
+        if state.investigation_store:
+            state.investigation_store.save_graph(inv_id, graph)
+            state.investigation_store.delete_artifacts(inv_id)
+
+        return {
+            "summary": graph.summary(),
+            "added_nodes": new_graph.node_count(),
+            "added_edges": new_graph.edge_count(),
+        }
+    except Exception as exc:
+        return {"error": str(exc), "summary": inv["graph"].summary()}
+
+
+@router.post("/investigations/{inv_id}/timeline/tag")
+def tag_timeline_event_api(
+    inv_id: str,
+    body: TagEventRequest,
+    state: AppState = Depends(get_state),
+) -> dict[str, Any]:
+    """Tag a timeline event."""
+    inv = state.investigations.get(inv_id)
+    if not inv:
+        raise HTTPException(status_code=404, detail=f"Investigation {inv_id} not found")
+
+    inv.setdefault("timeline_tags", {})[body.event_id] = body.tag
+
+    if state.investigation_store:
+        state.investigation_store.tag_event(inv_id, body.event_id, body.tag, body.notes)
+        state.investigation_store.delete_artifacts(inv_id)
+
+    return {"event_id": body.event_id, "tag": body.tag}
+
+
+@router.delete("/investigations/{inv_id}")
+def delete_investigation_api(
+    inv_id: str,
+    state: AppState = Depends(get_state),
+) -> dict[str, Any]:
+    """Delete an investigation."""
+    if inv_id not in state.investigations:
+        raise HTTPException(status_code=404, detail=f"Investigation {inv_id} not found")
+
+    state.investigations.pop(inv_id, None)
+    if state.investigation_store:
+        state.investigation_store.delete_investigation(inv_id)
+
+    return {"deleted": inv_id}

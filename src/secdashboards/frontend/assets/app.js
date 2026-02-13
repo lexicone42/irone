@@ -204,6 +204,198 @@ function sourcesApp() {
     };
 }
 
+// ─── Investigations ──────────────────────────────────────────────
+
+// Node type → Cytoscape.js style (matches server-side visualization.py)
+const NODE_STYLES = {
+    Principal:       { color: "#FF6B6B", shape: "ellipse" },
+    IPAddress:       { color: "#4ECDC4", shape: "diamond" },
+    Resource:        { color: "#45B7D1", shape: "rectangle" },
+    APIOperation:    { color: "#96CEB4", shape: "triangle" },
+    SecurityFinding: { color: "#FF4757", shape: "star" },
+    Event:           { color: "#A8A8A8", shape: "ellipse" },
+};
+
+const EDGE_STYLES = {
+    AUTHENTICATED_FROM: "#FF6B6B",
+    CALLED_API:         "#96CEB4",
+    ACCESSED_RESOURCE:  "#45B7D1",
+    ORIGINATED_FROM:    "#4ECDC4",
+    RELATED_TO:         "#888888",
+    TRIGGERED_BY:       "#FF4757",
+    PERFORMED_BY:       "#FF6B6B",
+    TARGETED:           "#45B7D1",
+};
+
+function investigationsApp() {
+    return {
+        investigations: [],
+        loading: true,
+        error: null,
+
+        // Create form
+        newName: "",
+        newUsers: "",
+        newIps: "",
+        creating: false,
+
+        // Detail view
+        activeInv: null,
+        detailLoading: false,
+        graphData: null,
+        cy: null,
+
+        async init() {
+            await this.loadList();
+        },
+
+        async loadList() {
+            this.loading = true;
+            try {
+                this.investigations = await apiFetch("/investigations");
+            } catch (e) {
+                this.error = e.message;
+            } finally {
+                this.loading = false;
+            }
+        },
+
+        async create() {
+            if (!this.newUsers.trim() && !this.newIps.trim()) return;
+            this.creating = true;
+            this.error = null;
+            try {
+                const users = this.newUsers.split(",").map((s) => s.trim()).filter(Boolean);
+                const ips = this.newIps.split(",").map((s) => s.trim()).filter(Boolean);
+                const inv = await apiFetch("/investigations", {
+                    method: "POST",
+                    body: JSON.stringify({ name: this.newName, users, ips }),
+                });
+                this.newName = "";
+                this.newUsers = "";
+                this.newIps = "";
+                await this.loadList();
+                await this.openDetail(inv.id);
+            } catch (e) {
+                this.error = e.message;
+            } finally {
+                this.creating = false;
+            }
+        },
+
+        async openDetail(invId) {
+            this.detailLoading = true;
+            this.error = null;
+            try {
+                this.activeInv = await apiFetch(`/investigations/${invId}`);
+                const graphResp = await apiFetch(`/investigations/${invId}/graph`);
+                this.graphData = graphResp;
+                this.$nextTick(() => this.renderGraph(graphResp.elements));
+            } catch (e) {
+                this.error = e.message;
+            } finally {
+                this.detailLoading = false;
+            }
+        },
+
+        renderGraph(elements) {
+            if (this.cy) {
+                this.cy.destroy();
+                this.cy = null;
+            }
+
+            const container = document.getElementById("cy-graph");
+            if (!container || !elements || elements.length === 0) return;
+
+            /* global cytoscape */
+            this.cy = cytoscape({
+                container,
+                elements,
+                style: [
+                    {
+                        selector: "node",
+                        style: {
+                            label: "data(label)",
+                            "text-valign": "bottom",
+                            "text-halign": "center",
+                            "font-size": "10px",
+                            color: "#c9d1d9",
+                            "text-outline-color": "#0d1117",
+                            "text-outline-width": 1,
+                            "background-color": (ele) => {
+                                const s = NODE_STYLES[ele.data("node_type")];
+                                return s ? s.color : "#888";
+                            },
+                            shape: (ele) => {
+                                const s = NODE_STYLES[ele.data("node_type")];
+                                return s ? s.shape : "ellipse";
+                            },
+                            width: (ele) => Math.max(20, Math.min(60, 15 + ele.data("event_count") * 3)),
+                            height: (ele) => Math.max(20, Math.min(60, 15 + ele.data("event_count") * 3)),
+                        },
+                    },
+                    {
+                        selector: "edge",
+                        style: {
+                            width: 2,
+                            "line-color": (ele) => EDGE_STYLES[ele.data("edge_type")] || "#888",
+                            "target-arrow-color": (ele) => EDGE_STYLES[ele.data("edge_type")] || "#888",
+                            "target-arrow-shape": "triangle",
+                            "curve-style": "bezier",
+                            opacity: 0.7,
+                        },
+                    },
+                    {
+                        selector: "node:selected",
+                        style: {
+                            "border-width": 3,
+                            "border-color": "#00ff9c",
+                        },
+                    },
+                ],
+                layout: { name: "cose", animate: false, nodeDimensionsIncludeLabels: true },
+                wheelSensitivity: 0.3,
+            });
+
+            // Click handler: show node details
+            this.cy.on("tap", "node", (evt) => {
+                const data = evt.target.data();
+                this.selectedNode = data;
+            });
+        },
+
+        selectedNode: null,
+
+        async deleteInv(invId) {
+            try {
+                await apiFetch(`/investigations/${invId}`, { method: "DELETE" });
+                this.activeInv = null;
+                this.graphData = null;
+                this.selectedNode = null;
+                if (this.cy) {
+                    this.cy.destroy();
+                    this.cy = null;
+                }
+                await this.loadList();
+            } catch (e) {
+                this.error = e.message;
+            }
+        },
+
+        backToList() {
+            this.activeInv = null;
+            this.graphData = null;
+            this.selectedNode = null;
+            if (this.cy) {
+                this.cy.destroy();
+                this.cy = null;
+            }
+        },
+
+        timeAgo,
+    };
+}
+
 // ─── Navigation ──────────────────────────────────────────────────
 
 function navApp() {
@@ -242,5 +434,6 @@ document.addEventListener("alpine:init", () => {
     Alpine.data("healthMonitor", healthMonitor);
     Alpine.data("detectionsApp", detectionsApp);
     Alpine.data("sourcesApp", sourcesApp);
+    Alpine.data("investigationsApp", investigationsApp);
     Alpine.data("navApp", navApp);
 });
