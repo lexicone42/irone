@@ -14,11 +14,6 @@ def test_csrf_required_on_session(auth_client, valid_id_token, valid_access_toke
     assert "CSRF" in resp.json()["detail"]["error"]
 
 
-def test_csrf_required_on_logout(auth_session):
-    resp = auth_session.post("/auth/logout")
-    assert resp.status_code == 403
-
-
 def test_csrf_required_on_refresh(auth_session):
     resp = auth_session.post("/auth/refresh")
     assert resp.status_code == 403

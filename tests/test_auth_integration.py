@@ -110,8 +110,8 @@ def test_full_login_flow(full_client, valid_id_token, valid_access_token, jwks_r
     assert resp.json()["authorized"] is True
 
     # Step 5: Logout
-    resp = full_client.post("/auth/logout", headers={"X-L42-CSRF": "1"})
-    assert resp.status_code == 200
+    resp = full_client.get("/auth/logout", follow_redirects=False)
+    assert resp.status_code == 302
 
     # Step 6: Verify logged out
     resp = full_client.get("/", headers={"accept": "text/html"}, follow_redirects=False)
