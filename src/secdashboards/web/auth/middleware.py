@@ -15,7 +15,9 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 EXEMPT_PREFIXES = (
     "/auth/",
     "/api/health",
+    "/api/auth/",
     "/static/",
+    "/assets/",
     "/health",
 )
 

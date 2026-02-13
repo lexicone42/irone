@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard — iris</title>
+    <link rel="stylesheet" href="/assets/terminal.css">
+    <link rel="manifest" href="/assets/manifest.json">
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+    <script src="/assets/auth.js"></script>
+    <script src="/assets/app.js"></script>
+</head>
+<body>
+    <div class="layout" x-data="navApp()">
+        <nav class="sidebar">
+            <div class="nav-brand">&gt; iris_</div>
+
+            <div class="nav-section">Overview</div>
+            <a href="/" class="nav-link" :class="isActive('/') && 'active'">Dashboard</a>
+
+            <div class="nav-section">Operations</div>
+            <a href="/monitoring.html" class="nav-link" :class="isActive('/monitoring') && 'active'">Health Monitor</a>
+            <a href="/sources.html" class="nav-link" :class="isActive('/sources') && 'active'">Sources</a>
+
+            <div class="nav-section">Detection</div>
+            <a href="/detections.html" class="nav-link" :class="isActive('/detections') && 'active'">Rules & Queries</a>
+
+            <div class="nav-section">Investigation</div>
+            <a href="/investigations.html" class="nav-link" :class="isActive('/investigations') && 'active'">Investigations</a>
+
+            <template x-if="authEnabled && userEmail">
+                <div style="margin-top: auto; padding-top: 1rem; border-top: 1px solid var(--border);">
+                    <div style="color: var(--text-muted); font-size: 0.75rem; padding: 0.25rem 0.75rem;" x-text="userEmail"></div>
+                    <a href="#" class="nav-link" @click.prevent="doLogout()">Sign Out</a>
+                </div>
+            </template>
+        </nav>
+
+        <main class="main-content" x-data="dashboardApp()">
+            <h1>Dashboard</h1>
+
+            <template x-if="loading">
+                <div style="text-align: center; padding: 2rem;">
+                    <span class="spinner"></span> Loading...
+                </div>
+            </template>
+
+            <template x-if="error">
+                <div class="alert alert-error" x-text="error"></div>
+            </template>
+
+            <template x-if="!loading && data">
+                <div>
+                    <div class="grid grid-3">
+                        <div class="card">
+                            <div class="stat-label">Data Sources</div>
+                            <div class="stat-value" x-text="data.source_count"></div>
+                        </div>
+                        <div class="card">
+                            <div class="stat-label">Detection Rules</div>
+                            <div class="stat-value" x-text="data.rule_count"></div>
+                        </div>
+                        <div class="card">
+                            <div class="stat-label">Region</div>
+                            <div class="stat-value" style="font-size: 1.2rem;" x-text="data.region"></div>
+                        </div>
+                    </div>
+
+                    <template x-if="data.health.available">
+                        <div class="grid grid-3">
+                            <div class="card">
+                                <div class="stat-label">Sources Healthy</div>
+                                <div class="stat-value status-ok" x-text="data.health.healthy"></div>
+                            </div>
+                            <div class="card">
+                                <div class="stat-label">Sources Unhealthy</div>
+                                <div class="stat-value" :class="data.health.unhealthy > 0 ? 'status-error' : 'status-ok'" x-text="data.health.unhealthy"></div>
+                            </div>
+                            <div class="card">
+                                <div class="stat-label">Investigations</div>
+                                <div class="stat-value" x-text="data.investigation_count"></div>
+                            </div>
+                        </div>
+                    </template>
+                </div>
+            </template>
+        </main>
+    </div>
+</body>
+</html>

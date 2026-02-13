@@ -35,8 +35,8 @@ CACHE_BUCKET = os.environ.get("CACHE_BUCKET", "")
 if not SECURITY_LAKE_DB:
     SECURITY_LAKE_DB = f"amazon_security_lake_glue_db_{REGION.replace('-', '_')}"
 if not ATHENA_OUTPUT:
-    # This will fail if not set, but gives a clear error
-    ATHENA_OUTPUT = "s3://ATHENA_OUTPUT_NOT_SET/"
+    # Empty string = omit ResultConfiguration, letting the workgroup default apply
+    pass
 
 
 def get_athena_client() -> Any:
@@ -153,6 +153,17 @@ def collect_and_cache() -> dict[str, Any]:
     return data
 
 
+def _start_query_kwargs(query: str) -> dict[str, Any]:
+    """Build kwargs for start_query_execution, omitting ResultConfiguration when empty."""
+    kwargs: dict[str, Any] = {
+        "QueryString": query,
+        "QueryExecutionContext": {"Database": SECURITY_LAKE_DB},
+    }
+    if ATHENA_OUTPUT:
+        kwargs["ResultConfiguration"] = {"OutputLocation": ATHENA_OUTPUT}
+    return kwargs
+
+
 def execute_athena_query(query: str, timeout: int = 60) -> list[dict[str, Any]]:
     """Execute an Athena query and return results.
 
@@ -162,11 +173,7 @@ def execute_athena_query(query: str, timeout: int = 60) -> list[dict[str, Any]]:
 
     athena = get_athena_client()
 
-    response = athena.start_query_execution(
-        QueryString=query,
-        QueryExecutionContext={"Database": SECURITY_LAKE_DB},
-        ResultConfiguration={"OutputLocation": ATHENA_OUTPUT},
-    )
+    response = athena.start_query_execution(**_start_query_kwargs(query))
     query_id = response["QueryExecutionId"]
 
     # Fast poll for completion (0.3s interval)
@@ -199,11 +206,7 @@ def execute_athena_query(query: str, timeout: int = 60) -> list[dict[str, Any]]:
 def start_athena_query(query: str) -> str:
     """Start an Athena query and return the execution ID (non-blocking)."""
     athena = get_athena_client()
-    response = athena.start_query_execution(
-        QueryString=query,
-        QueryExecutionContext={"Database": SECURITY_LAKE_DB},
-        ResultConfiguration={"OutputLocation": ATHENA_OUTPUT},
-    )
+    response = athena.start_query_execution(**_start_query_kwargs(query))
     return response["QueryExecutionId"]
 
 

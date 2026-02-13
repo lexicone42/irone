@@ -14,12 +14,17 @@ class WebConfig(BaseSettings):
 
     # AWS settings
     region: str = "us-west-2"
+    account_id: str = ""
     security_lake_db: str = ""
     athena_output: str = ""
+    use_direct_query: bool = True
 
     # DuckDB settings
     duckdb_path: str = ":memory:"
     investigations_db_path: str = ""  # empty = no persistence (in-memory only)
+
+    # Health cache (DynamoDB table name — empty = no caching)
+    health_cache_table: str = ""
 
     # Application paths
     rules_dir: str = ""

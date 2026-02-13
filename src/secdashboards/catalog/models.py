@@ -10,6 +10,7 @@ class DataSourceType(StrEnum):
     """Types of data sources supported."""
 
     SECURITY_LAKE = "security_lake"
+    SECURITY_LAKE_DIRECT = "security_lake_direct"
     ATHENA = "athena"
     S3 = "s3"
     CLOUDWATCH_LOGS = "cloudwatch_logs"

@@ -1,0 +1,10 @@
+{
+    "name": "iris — Security Dashboard",
+    "short_name": "iris",
+    "description": "Security Lake monitoring and investigation platform",
+    "start_url": "/",
+    "display": "standalone",
+    "background_color": "#0a0e14",
+    "theme_color": "#00ff9c",
+    "icons": []
+}

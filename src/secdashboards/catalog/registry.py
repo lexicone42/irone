@@ -29,8 +29,10 @@ class DataCatalog:
         from secdashboards.connectors.cloudwatch_logs import CloudWatchLogsConnector
         from secdashboards.connectors.duckdb import DuckDBConnector
         from secdashboards.connectors.security_lake import SecurityLakeConnector
+        from secdashboards.connectors.security_lake_direct import SecurityLakeDirectConnector
 
         self._connectors[DataSourceType.SECURITY_LAKE] = SecurityLakeConnector
+        self._connectors[DataSourceType.SECURITY_LAKE_DIRECT] = SecurityLakeDirectConnector
         self._connectors[DataSourceType.ATHENA] = AthenaConnector
         self._connectors[DataSourceType.CLOUDWATCH_LOGS] = CloudWatchLogsConnector
         self._connectors[DataSourceType.DUCKDB] = DuckDBConnector

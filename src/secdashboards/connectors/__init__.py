@@ -11,6 +11,7 @@ from secdashboards.connectors.log_etl import (
 )
 from secdashboards.connectors.result import QueryResult
 from secdashboards.connectors.security_lake import OCSFEventClass, SecurityLakeConnector
+from secdashboards.connectors.security_lake_direct import SecurityLakeDirectConnector
 
 __all__ = [
     "DataConnector",
@@ -18,6 +19,7 @@ __all__ = [
     "AthenaConnector",
     "DuckDBConnector",
     "SecurityLakeConnector",
+    "SecurityLakeDirectConnector",
     "OCSFEventClass",
     "CloudWatchLogsConnector",
     "LogSourceType",

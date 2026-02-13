@@ -27,21 +27,21 @@ class AthenaConnector(DataConnector):
         self._athena = boto3.client("athena", region_name=source.region)
         self._s3 = boto3.client("s3", region_name=source.region)
 
-        # Output location for query results
-        self._output_location = source.connector_config.get(
-            "output_location", f"s3://aws-athena-query-results-{source.region}/"
-        )
+        # Output location for query results (empty = use workgroup default)
+        self._output_location = source.connector_config.get("output_location", "")
         self._workgroup = source.connector_config.get("workgroup", "primary")
 
     def query(self, sql: str) -> QueryResult:
         """Execute a SQL query and return results as a QueryResult."""
         # Start query execution
-        response = self._athena.start_query_execution(
-            QueryString=sql,
-            QueryExecutionContext={"Database": self.source.database or "default"},
-            ResultConfiguration={"OutputLocation": self._output_location},
-            WorkGroup=self._workgroup,
-        )
+        kwargs: dict[str, Any] = {
+            "QueryString": sql,
+            "QueryExecutionContext": {"Database": self.source.database or "default"},
+            "WorkGroup": self._workgroup,
+        }
+        if self._output_location:
+            kwargs["ResultConfiguration"] = {"OutputLocation": self._output_location}
+        response = self._athena.start_query_execution(**kwargs)
 
         query_execution_id = response["QueryExecutionId"]
 
