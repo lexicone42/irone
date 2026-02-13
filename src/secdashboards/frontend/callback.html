@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Authenticating — iris</title>
+    <link rel="stylesheet" href="/assets/terminal.css">
+    <script src="/assets/auth.js"></script>
+</head>
+<body>
+    <div style="display: flex; align-items: center; justify-content: center; min-height: 100vh;">
+        <div class="card" style="max-width: 400px; text-align: center;">
+            <div id="status">
+                <span class="spinner"></span> Completing authentication...
+            </div>
+            <div id="error" style="display: none;" class="alert alert-error"></div>
+        </div>
+    </div>
+
+    <script>
+        (async () => {
+            const params = new URLSearchParams(window.location.search);
+            const code = params.get("code");
+            const error = params.get("error");
+            const errorDesc = params.get("error_description");
+
+            const statusEl = document.getElementById("status");
+            const errorEl = document.getElementById("error");
+
+            if (error) {
+                statusEl.style.display = "none";
+                errorEl.style.display = "block";
+                errorEl.textContent = errorDesc || error;
+                setTimeout(() => { window.location.href = "/login.html"; }, 3000);
+                return;
+            }
+
+            if (!code) {
+                statusEl.style.display = "none";
+                errorEl.style.display = "block";
+                errorEl.textContent = "Missing authorization code.";
+                setTimeout(() => { window.location.href = "/login.html"; }, 2000);
+                return;
+            }
+
+            try {
+                await auth.handleCallback(code);
+                window.location.href = "/";
+            } catch (e) {
+                statusEl.style.display = "none";
+                errorEl.style.display = "block";
+                errorEl.textContent = "Authentication failed: " + e.message;
+                setTimeout(() => { window.location.href = "/login.html"; }, 3000);
+            }
+        })();
+    </script>
+</body>
+</html>

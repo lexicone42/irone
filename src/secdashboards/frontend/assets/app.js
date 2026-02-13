@@ -5,10 +5,30 @@ const API = "/api";
 // ─── Shared helpers ──────────────────────────────────────────────
 
 async function apiFetch(path, opts = {}) {
-    const resp = await fetch(`${API}${path}`, {
-        headers: { "Content-Type": "application/json" },
-        ...opts,
-    });
+    const headers = {
+        "Content-Type": "application/json",
+        ...auth.getAuthHeaders(),
+        ...(opts.headers || {}),
+    };
+    const resp = await fetch(`${API}${path}`, { ...opts, headers });
+
+    if (resp.status === 401 && auth.isAuthEnabled()) {
+        // Try token refresh, then retry once
+        await auth.refreshTokens();
+        const retryHeaders = {
+            "Content-Type": "application/json",
+            ...auth.getAuthHeaders(),
+            ...(opts.headers || {}),
+        };
+        const retry = await fetch(`${API}${path}`, { ...opts, headers: retryHeaders });
+        if (retry.status === 401) {
+            window.location.href = "/login.html";
+            throw new Error("Session expired");
+        }
+        if (!retry.ok) throw new Error(`API ${retry.status}: ${retry.statusText}`);
+        return retry.json();
+    }
+
     if (!resp.ok) throw new Error(`API ${resp.status}: ${resp.statusText}`);
     return resp.json();
 }
@@ -189,11 +209,28 @@ function sourcesApp() {
 function navApp() {
     return {
         currentPath: window.location.pathname,
+        userEmail: null,
+        authEnabled: false,
+
+        async init() {
+            // Initialize auth (redirects to login if needed)
+            await auth.init();
+
+            this.authEnabled = auth.isAuthEnabled();
+            const user = auth.getUser();
+            if (user) {
+                this.userEmail = user.email || user.sub || "User";
+            }
+        },
 
         isActive(path) {
             if (path === "/" && this.currentPath === "/") return true;
             if (path !== "/" && this.currentPath.startsWith(path)) return true;
             return false;
+        },
+
+        async doLogout() {
+            await auth.logout();
         },
     };
 }

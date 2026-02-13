@@ -207,3 +207,42 @@ class TestDashboardSummary:
         assert data["health"]["total"] == 2
         assert data["health"]["healthy"] == 1
         assert data["health"]["unhealthy"] == 1
+
+
+class TestAuthConfig:
+    """Tests for GET /api/auth/config."""
+
+    def test_default_auth_disabled(self, client) -> None:
+        resp = client.get("/api/auth/config")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["auth_enabled"] is False
+        assert data["cognito_domain"] == ""
+        assert data["cognito_client_id"] == ""
+
+    def test_auth_enabled_returns_config(self) -> None:
+        config = WebConfig(
+            duckdb_path=":memory:",
+            auth_enabled=True,
+            cognito_domain="iris.auth.us-west-2.amazoncognito.com",
+            cognito_client_id="test-client-id-123",
+            cognito_region="us-west-2",
+            cognito_redirect_uri="https://iris.lexicone.com/callback.html",
+        )
+        app = create_app(config)
+        client = TestClient(app)
+        resp = client.get("/api/auth/config")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["auth_enabled"] is True
+        assert data["cognito_domain"] == "iris.auth.us-west-2.amazoncognito.com"
+        assert data["cognito_client_id"] == "test-client-id-123"
+        assert data["cognito_region"] == "us-west-2"
+        assert data["redirect_uri"] == "https://iris.lexicone.com/callback.html"
+
+    def test_no_secret_exposed(self, client) -> None:
+        """Ensure client_secret is NOT returned by the config endpoint."""
+        resp = client.get("/api/auth/config")
+        data = resp.json()
+        assert "cognito_client_secret" not in data
+        assert "secret" not in str(data).lower()

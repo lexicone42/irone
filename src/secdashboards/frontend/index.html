@@ -7,6 +7,7 @@
     <link rel="stylesheet" href="/assets/terminal.css">
     <link rel="manifest" href="/assets/manifest.json">
     <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+    <script src="/assets/auth.js"></script>
     <script src="/assets/app.js"></script>
 </head>
 <body>
@@ -23,6 +24,13 @@
 
             <div class="nav-section">Detection</div>
             <a href="/detections.html" class="nav-link" :class="isActive('/detections') && 'active'">Rules & Queries</a>
+
+            <template x-if="authEnabled && userEmail">
+                <div style="margin-top: auto; padding-top: 1rem; border-top: 1px solid var(--border);">
+                    <div style="color: var(--text-muted); font-size: 0.75rem; padding: 0.25rem 0.75rem;" x-text="userEmail"></div>
+                    <a href="#" class="nav-link" @click.prevent="doLogout()">Sign Out</a>
+                </div>
+            </template>
         </nav>
 
         <main class="main-content" x-data="dashboardApp()">

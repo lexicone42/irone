@@ -259,3 +259,22 @@ def dashboard_summary(
         "investigation_count": len(state.investigations),
         "health": health_summary,
     }
+
+
+@router.get("/auth/config")
+def auth_config(
+    state: AppState = Depends(get_state),
+) -> dict[str, Any]:
+    """Public auth configuration for the client-side PKCE flow.
+
+    Returns Cognito domain, client ID, and redirect URI so the static
+    frontend can initiate the OIDC flow without hardcoding secrets.
+    """
+    config = state.config
+    return {
+        "auth_enabled": config.auth_enabled,
+        "cognito_domain": config.cognito_domain,
+        "cognito_client_id": config.cognito_client_id,
+        "cognito_region": config.cognito_region,
+        "redirect_uri": config.cognito_redirect_uri,
+    }

@@ -1,8 +1,8 @@
-"""Tests for the static frontend files (Phase 3).
+"""Tests for the static frontend files (Phases 3-4).
 
 Validates that all required frontend files exist, that HTML pages reference
-the correct assets and API endpoints, and that the Alpine.js app.js defines
-all required components.
+the correct assets and API endpoints, that the Alpine.js app.js defines
+all required components, and that auth integration is properly wired.
 """
 
 from pathlib import Path
@@ -18,14 +18,21 @@ class TestFrontendFilesExist:
 
     @pytest.mark.parametrize(
         "filename",
-        ["index.html", "monitoring.html", "detections.html", "sources.html"],
+        [
+            "index.html",
+            "monitoring.html",
+            "detections.html",
+            "sources.html",
+            "login.html",
+            "callback.html",
+        ],
     )
     def test_html_pages_exist(self, filename: str) -> None:
         assert (FRONTEND_DIR / filename).is_file(), f"Missing {filename}"
 
     @pytest.mark.parametrize(
         "filename",
-        ["app.js", "terminal.css", "manifest.json"],
+        ["app.js", "auth.js", "terminal.css", "manifest.json"],
     )
     def test_assets_exist(self, filename: str) -> None:
         assert (ASSETS_DIR / filename).is_file(), f"Missing assets/{filename}"
@@ -145,3 +152,86 @@ class TestManifest:
         assert data["short_name"] == "iris"
         assert data["start_url"] == "/"
         assert data["display"] == "standalone"
+
+
+class TestAuthIntegration:
+    """Verify client-side auth is wired into all pages."""
+
+    @pytest.mark.parametrize(
+        "filename",
+        ["index.html", "monitoring.html", "detections.html", "sources.html"],
+    )
+    def test_app_pages_include_auth_js(self, filename: str) -> None:
+        content = (FRONTEND_DIR / filename).read_text()
+        assert "/assets/auth.js" in content
+
+    @pytest.mark.parametrize(
+        "filename",
+        ["index.html", "monitoring.html", "detections.html", "sources.html"],
+    )
+    def test_app_pages_have_logout_link(self, filename: str) -> None:
+        content = (FRONTEND_DIR / filename).read_text()
+        assert "doLogout()" in content
+
+    @pytest.mark.parametrize(
+        "filename",
+        ["index.html", "monitoring.html", "detections.html", "sources.html"],
+    )
+    def test_app_pages_show_user_email(self, filename: str) -> None:
+        content = (FRONTEND_DIR / filename).read_text()
+        assert "userEmail" in content
+
+    def test_callback_page_handles_code(self) -> None:
+        content = (FRONTEND_DIR / "callback.html").read_text()
+        assert "auth.handleCallback" in content
+
+    def test_login_page_has_sign_in_button(self) -> None:
+        content = (FRONTEND_DIR / "login.html").read_text()
+        assert "Sign In" in content
+
+    def test_login_page_checks_auth_config(self) -> None:
+        content = (FRONTEND_DIR / "login.html").read_text()
+        assert "/api/auth/config" in content
+
+
+class TestAuthJS:
+    """Verify auth.js has required PKCE and token management functions."""
+
+    @pytest.fixture
+    def auth_js(self) -> str:
+        return (ASSETS_DIR / "auth.js").read_text()
+
+    def test_pkce_code_challenge(self, auth_js: str) -> None:
+        assert "code_challenge" in auth_js
+        assert "S256" in auth_js
+
+    def test_token_exchange(self, auth_js: str) -> None:
+        assert "authorization_code" in auth_js
+        assert "code_verifier" in auth_js
+
+    def test_refresh_token_support(self, auth_js: str) -> None:
+        assert "refresh_token" in auth_js
+
+    def test_session_storage_for_tokens(self, auth_js: str) -> None:
+        assert "sessionStorage" in auth_js
+        assert "iris_auth" in auth_js
+
+    def test_bearer_header_injection(self, auth_js: str) -> None:
+        assert "Bearer" in auth_js
+        assert "getAuthHeaders" in auth_js
+
+    @pytest.mark.parametrize(
+        "method",
+        [
+            "init",
+            "handleCallback",
+            "refreshTokens",
+            "logout",
+            "getAuthHeaders",
+            "isAuthenticated",
+            "getUser",
+            "isAuthEnabled",
+        ],
+    )
+    def test_public_api_methods(self, auth_js: str, method: str) -> None:
+        assert method in auth_js

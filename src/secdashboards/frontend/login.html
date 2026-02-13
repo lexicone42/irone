@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sign In — iris</title>
+    <link rel="stylesheet" href="/assets/terminal.css">
+    <script src="/assets/auth.js"></script>
+</head>
+<body>
+    <div style="display: flex; align-items: center; justify-content: center; min-height: 100vh;">
+        <div class="card" style="max-width: 400px; text-align: center;">
+            <div class="nav-brand" style="font-size: 2rem; margin-bottom: 1.5rem;">&gt; iris_</div>
+            <p style="color: var(--text-secondary); margin-bottom: 1.5rem;">
+                Security Lake Monitoring &amp; Investigation
+            </p>
+            <button id="login-btn" class="btn btn-primary" style="width: 100%;">
+                Sign In with SSO
+            </button>
+            <div id="error" style="display: none; margin-top: 1rem;" class="alert alert-error"></div>
+            <p id="no-auth" style="display: none; margin-top: 1rem;">
+                <a href="/" style="color: var(--green);">Continue without auth →</a>
+            </p>
+        </div>
+    </div>
+
+    <script>
+        const loginBtn = document.getElementById("login-btn");
+        const errorEl = document.getElementById("error");
+        const noAuthEl = document.getElementById("no-auth");
+
+        // Check URL for error params
+        const params = new URLSearchParams(window.location.search);
+        const urlError = params.get("error");
+        if (urlError) {
+            errorEl.style.display = "block";
+            errorEl.textContent = decodeURIComponent(urlError);
+        }
+
+        loginBtn.addEventListener("click", async () => {
+            loginBtn.disabled = true;
+            loginBtn.textContent = "Redirecting...";
+            try {
+                // auth.init() will redirect to Cognito if auth is enabled
+                await auth.init();
+                // If we're still here, auth is disabled
+                window.location.href = "/";
+            } catch (e) {
+                loginBtn.disabled = false;
+                loginBtn.textContent = "Sign In with SSO";
+                errorEl.style.display = "block";
+                errorEl.textContent = e.message;
+            }
+        });
+
+        // Check if auth is even enabled
+        (async () => {
+            try {
+                const resp = await fetch("/api/auth/config");
+                const config = await resp.json();
+                if (!config.auth_enabled) {
+                    noAuthEl.style.display = "block";
+                    loginBtn.style.display = "none";
+                }
+            } catch {
+                // Can't reach API — show login button anyway
+            }
+        })();
+    </script>
+</body>
+</html>
