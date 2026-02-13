@@ -11,17 +11,15 @@ import contextlib
 import time
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import boto3
 import structlog
-
-if TYPE_CHECKING:
-    import polars as pl
 from botocore.exceptions import ClientError
 
 from secdashboards.catalog.models import DataSource
 from secdashboards.connectors.base import DataConnector, HealthCheckResult
+from secdashboards.connectors.result import QueryResult
 
 logger = structlog.get_logger()
 
@@ -151,7 +149,7 @@ class CloudWatchLogsConnector(DataConnector):
 
         return fnmatch.fnmatch(name, pattern)
 
-    def query(self, sql: str) -> pl.DataFrame:
+    def query(self, sql: str) -> QueryResult:
         """Execute a CloudWatch Logs Insights query.
 
         Note: This method accepts Logs Insights query syntax, not SQL.
@@ -166,7 +164,7 @@ class CloudWatchLogsConnector(DataConnector):
         end: datetime | None = None,
         log_groups: list[str] | None = None,
         timeout: int | None = None,
-    ) -> pl.DataFrame:
+    ) -> QueryResult:
         """Execute a CloudWatch Logs Insights query.
 
         Args:
@@ -177,10 +175,8 @@ class CloudWatchLogsConnector(DataConnector):
             timeout: Query timeout in seconds
 
         Returns:
-            Query results as a Polars DataFrame
+            Query results as a QueryResult
         """
-        import polars as pl
-
         end = end or datetime.now(UTC)
         start = start or (end - timedelta(hours=1))
         groups = log_groups or self._log_groups
@@ -188,7 +184,7 @@ class CloudWatchLogsConnector(DataConnector):
 
         if not groups:
             logger.warning("no_log_groups_configured")
-            return pl.DataFrame()
+            return QueryResult.empty()
 
         try:
             # Start the query
@@ -218,10 +214,8 @@ class CloudWatchLogsConnector(DataConnector):
         self,
         query_id: str,
         timeout: int,
-    ) -> pl.DataFrame:
+    ) -> QueryResult:
         """Wait for a Logs Insights query to complete."""
-        import polars as pl
-
         start_time = time.time()
 
         while time.time() - start_time < timeout:
@@ -232,7 +226,7 @@ class CloudWatchLogsConnector(DataConnector):
                 return self._parse_results(response.get("results", []))
             elif status in ("Failed", "Cancelled", "Timeout"):
                 logger.error("query_failed", query_id=query_id, status=status)
-                return pl.DataFrame()
+                return QueryResult.empty()
 
             # Exponential backoff
             elapsed = time.time() - start_time
@@ -244,14 +238,12 @@ class CloudWatchLogsConnector(DataConnector):
         with contextlib.suppress(ClientError):
             self._client.stop_query(queryId=query_id)
 
-        return pl.DataFrame()
+        return QueryResult.empty()
 
-    def _parse_results(self, results: list[list[dict[str, str]]]) -> pl.DataFrame:
-        """Parse Logs Insights results into a Polars DataFrame."""
-        import polars as pl
-
+    def _parse_results(self, results: list[list[dict[str, str]]]) -> QueryResult:
+        """Parse Logs Insights results into a QueryResult."""
         if not results:
-            return pl.DataFrame()
+            return QueryResult.empty()
 
         # Convert results to row dictionaries
         rows = []
@@ -263,7 +255,7 @@ class CloudWatchLogsConnector(DataConnector):
                     row[field.get("field", "unknown")] = field.get("value")
             rows.append(row)
 
-        return pl.DataFrame(rows)
+        return QueryResult.from_dicts(rows)
 
     def get_schema(self) -> dict[str, str]:
         """Get schema information for the log groups.
@@ -421,7 +413,7 @@ class CloudWatchLogsConnector(DataConnector):
         function_name: str | None = None,
         hours: int = 24,
         limit: int = 100,
-    ) -> pl.DataFrame:
+    ) -> QueryResult:
         """Query Lambda function errors and exceptions.
 
         Args:
@@ -450,7 +442,7 @@ class CloudWatchLogsConnector(DataConnector):
         self,
         hours: int = 24,
         limit: int = 100,
-    ) -> pl.DataFrame:
+    ) -> QueryResult:
         """Query Lambda cold start events."""
         query = f"""
         fields @timestamp, @logStream
@@ -467,7 +459,7 @@ class CloudWatchLogsConnector(DataConnector):
     def query_lambda_performance(
         self,
         hours: int = 24,
-    ) -> pl.DataFrame:
+    ) -> QueryResult:
         """Query Lambda performance metrics from logs."""
         query = """
         filter @type = "REPORT"
@@ -490,7 +482,7 @@ class CloudWatchLogsConnector(DataConnector):
         namespace: str | None = None,
         hours: int = 24,
         limit: int = 100,
-    ) -> pl.DataFrame:
+    ) -> QueryResult:
         """Query EKS pod errors and crash loops."""
         query = f"""
         fields @timestamp, @message, kubernetes.pod_name, kubernetes.namespace_name
@@ -512,7 +504,7 @@ class CloudWatchLogsConnector(DataConnector):
     def query_eks_pod_restarts(
         self,
         hours: int = 24,
-    ) -> pl.DataFrame:
+    ) -> QueryResult:
         """Query EKS pod restart patterns."""
         query = """
         fields kubernetes.pod_name, kubernetes.namespace_name
@@ -532,7 +524,7 @@ class CloudWatchLogsConnector(DataConnector):
         status_code: int | None = None,
         client_ip: str | None = None,
         limit: int = 1000,
-    ) -> pl.DataFrame:
+    ) -> QueryResult:
         """Query ALB access logs."""
         filters = []
         if status_code:
@@ -557,7 +549,7 @@ class CloudWatchLogsConnector(DataConnector):
     def query_alb_error_summary(
         self,
         hours: int = 24,
-    ) -> pl.DataFrame:
+    ) -> QueryResult:
         """Query ALB error rate summary."""
         query = """
         stats
@@ -579,7 +571,7 @@ class CloudWatchLogsConnector(DataConnector):
         hours: int = 24,
         action: str | None = None,
         limit: int = 100,
-    ) -> pl.DataFrame:
+    ) -> QueryResult:
         """Query Cloudflare WAF events from streamed logs."""
         filters = []
         if action:
@@ -602,7 +594,7 @@ class CloudWatchLogsConnector(DataConnector):
     def query_cloudflare_security_summary(
         self,
         hours: int = 24,
-    ) -> pl.DataFrame:
+    ) -> QueryResult:
         """Query Cloudflare security event summary."""
         query = """
         stats
@@ -623,7 +615,7 @@ class CloudWatchLogsConnector(DataConnector):
         self,
         hours: int = 24,
         limit: int = 20,
-    ) -> pl.DataFrame:
+    ) -> QueryResult:
         """Query top threat sources from Cloudflare logs."""
         query = f"""
         filter WAFAction in ["block", "challenge", "managed_challenge"]
@@ -640,7 +632,7 @@ class CloudWatchLogsConnector(DataConnector):
         self,
         hours: int = 24,
         limit: int = 100,
-    ) -> pl.DataFrame:
+    ) -> QueryResult:
         """Query API Gateway access log errors."""
         query = f"""
         fields @timestamp, @message
@@ -658,7 +650,7 @@ class CloudWatchLogsConnector(DataConnector):
         pattern: str,
         hours: int = 24,
         limit: int = 100,
-    ) -> pl.DataFrame:
+    ) -> QueryResult:
         """Query logs matching a custom pattern.
 
         Args:
@@ -686,7 +678,7 @@ class CloudWatchLogsConnector(DataConnector):
         start: datetime | None = None,
         end: datetime | None = None,
         timeout: int | None = None,
-    ) -> list[pl.DataFrame]:
+    ) -> list[QueryResult]:
         """Execute multiple queries concurrently.
 
         Args:
@@ -702,7 +694,7 @@ class CloudWatchLogsConnector(DataConnector):
         start = start or (end - timedelta(hours=1))
         timeout = timeout or self.DEFAULT_TIMEOUT
 
-        async def run_query(query: str, groups: list[str]) -> pl.DataFrame:
+        async def run_query(query: str, groups: list[str]) -> QueryResult:
             # Run in thread pool since boto3 is synchronous
             loop = asyncio.get_event_loop()
             return await loop.run_in_executor(
@@ -712,7 +704,7 @@ class CloudWatchLogsConnector(DataConnector):
         # Limit concurrent queries
         semaphore = asyncio.Semaphore(self.MAX_CONCURRENT_QUERIES)
 
-        async def bounded_query(query: str, groups: list[str]) -> pl.DataFrame:
+        async def bounded_query(query: str, groups: list[str]) -> QueryResult:
             async with semaphore:
                 return await run_query(query, groups)
 

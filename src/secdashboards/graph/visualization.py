@@ -4,9 +4,13 @@ This module provides the GraphVisualizer class for creating interactive
 HTML visualizations of security investigation graphs.
 """
 
-from pathlib import Path
+from __future__ import annotations
 
-from pyvis.network import Network
+from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pyvis.network import Network
 
 from secdashboards.graph.models import EdgeType, GraphEdge, GraphNode, NodeType, SecurityGraph
 
@@ -109,6 +113,8 @@ class GraphVisualizer:
         Returns:
             A configured pyvis Network
         """
+        from pyvis.network import Network
+
         net = Network(
             height=self.height,
             width=self.width,

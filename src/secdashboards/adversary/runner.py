@@ -10,16 +10,14 @@ import logging
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from pydantic import BaseModel, Field
-
-if TYPE_CHECKING:
-    import polars as pl
 
 from secdashboards.adversary.events import OCSFEventGenerator, SyntheticEvent
 from secdashboards.adversary.network import NetworkEmulator
 from secdashboards.adversary.scenarios import AttackScenario, ScenarioRunner
+from secdashboards.connectors.result import QueryResult
 from secdashboards.detections.rule import DetectionResult, DetectionRule
 
 logger = logging.getLogger(__name__)
@@ -166,7 +164,7 @@ class AdversaryTestRunner:
     def generate_test_events(
         self,
         scenario: AttackScenario,
-    ) -> tuple[list[SyntheticEvent], pl.DataFrame]:
+    ) -> tuple[list[SyntheticEvent], QueryResult]:
         """Generate synthetic events for a scenario.
 
         Returns:
@@ -183,7 +181,7 @@ class AdversaryTestRunner:
     def test_rule_against_events(
         self,
         rule: DetectionRule,
-        events_df: pl.DataFrame,
+        events_df: QueryResult,
     ) -> DetectionResult:
         """Test a detection rule against a DataFrame of events."""
         return rule.evaluate(events_df)

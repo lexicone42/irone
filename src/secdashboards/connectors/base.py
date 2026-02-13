@@ -4,12 +4,10 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from secdashboards.catalog.models import DataSource
-
-if TYPE_CHECKING:
-    import polars as pl
+from secdashboards.connectors.result import QueryResult
 
 
 class DataConnector(ABC):
@@ -19,8 +17,8 @@ class DataConnector(ABC):
         self.source = source
 
     @abstractmethod
-    def query(self, sql: str) -> pl.DataFrame:
-        """Execute a SQL query and return results as a Polars DataFrame."""
+    def query(self, sql: str) -> QueryResult:
+        """Execute a SQL query and return results as a QueryResult."""
         ...
 
     @abstractmethod
@@ -40,7 +38,7 @@ class DataConnector(ABC):
         end: datetime,
         columns: list[str] | None = None,
         additional_filters: str | None = None,
-    ) -> pl.DataFrame:
+    ) -> QueryResult:
         """Query data within a time range."""
         cols = ", ".join(columns) if columns else "*"
         table = f'"{self.source.database}"."{self.source.table}"'
@@ -62,7 +60,7 @@ class DataConnector(ABC):
         time_column: str,
         minutes: int = 60,
         columns: list[str] | None = None,
-    ) -> pl.DataFrame:
+    ) -> QueryResult:
         """Get data from the last N minutes."""
         end = datetime.now(UTC)
         start = end - timedelta(minutes=minutes)

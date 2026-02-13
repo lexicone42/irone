@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
+import contextlib
+import csv
+import io
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import httpx
 import structlog
 
-if TYPE_CHECKING:
-    import polars as pl
+from secdashboards.connectors.result import QueryResult
 
 logger = structlog.get_logger()
 
@@ -38,25 +40,34 @@ class URLAnalyzer:
         url: str,
         format: str = "json",
         headers: dict[str, str] | None = None,
-    ) -> pl.DataFrame:
-        """Fetch data from a URL and return as a Polars DataFrame."""
-        import polars as pl
+    ) -> QueryResult:
+        """Fetch data from a URL and return as a QueryResult.
 
+        For JSON and CSV formats, uses stdlib (zero heavy deps).
+        Parquet requires polars (investigation only — lazy import).
+        """
         response = self.client.get(url, headers=headers)
         response.raise_for_status()
 
         if format == "json":
             data = response.json()
             if isinstance(data, list):
-                return pl.DataFrame(data)
+                return QueryResult.from_dicts(data)
             elif isinstance(data, dict) and "data" in data:
-                return pl.DataFrame(data["data"])
+                return QueryResult.from_dicts(data["data"])
             else:
-                return pl.DataFrame([data])
+                return QueryResult.from_dicts([data])
         elif format == "csv":
-            return pl.read_csv(response.content)
+            reader = csv.DictReader(io.StringIO(response.text))
+            rows = list(reader)
+            if not rows:
+                return QueryResult.empty()
+            return QueryResult(columns=list(reader.fieldnames or []), rows=rows)
         elif format == "parquet":
-            return pl.read_parquet(response.content)
+            import polars as pl
+
+            df = pl.read_parquet(response.content)
+            return QueryResult.from_polars(df)
         else:
             raise ValueError(f"Unsupported format: {format}")
 
@@ -131,8 +142,6 @@ class URLAnalyzer:
         expected_freshness_minutes: int = 60,
     ) -> dict[str, Any]:
         """Analyze data freshness from a URL endpoint."""
-        import polars as pl
-
         result: dict[str, Any] = {
             "url": url,
             "checked_at": datetime.now(UTC).isoformat(),
@@ -147,28 +156,31 @@ class URLAnalyzer:
                 result["error"] = f"Time field '{time_field}' not found in data"
                 return result
 
-            # Parse time field
-            time_col = df[time_field]
-            if time_col.dtype == pl.Utf8:
-                time_col = time_col.str.to_datetime()
-
-            latest_time = time_col.max()
-            earliest_time = time_col.min()
+            # Parse time values from the column
+            time_values = df[time_field].to_list()
+            parsed_times: list[datetime] = []
+            for val in time_values:
+                if val is None:
+                    continue
+                if isinstance(val, datetime):
+                    parsed_times.append(val)
+                elif isinstance(val, str):
+                    with contextlib.suppress(ValueError, TypeError):
+                        parsed_times.append(datetime.fromisoformat(val.replace("Z", "+00:00")))
 
             result["record_count"] = len(df)
-            result["latest_time"] = str(latest_time) if latest_time else None
-            result["earliest_time"] = str(earliest_time) if earliest_time else None
 
-            if latest_time:
-                # Handle timezone-naive comparison
-                if isinstance(latest_time, datetime):
-                    latest_naive = latest_time.replace(tzinfo=None)
-                    age_minutes = (
-                        datetime.now(UTC).replace(tzinfo=None) - latest_naive
-                    ).total_seconds() / 60
-                else:
-                    # Fallback for non-datetime types
-                    age_minutes = 0.0
+            if parsed_times:
+                latest_time = max(parsed_times)
+                earliest_time = min(parsed_times)
+                result["latest_time"] = str(latest_time)
+                result["earliest_time"] = str(earliest_time)
+
+                # Calculate age
+                latest_naive = latest_time.replace(tzinfo=None)
+                age_minutes = (
+                    datetime.now(UTC).replace(tzinfo=None) - latest_naive
+                ).total_seconds() / 60
                 result["data_age_minutes"] = age_minutes
                 result["expected_freshness_minutes"] = expected_freshness_minutes
                 result["healthy"] = age_minutes <= expected_freshness_minutes

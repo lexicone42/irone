@@ -12,10 +12,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
-from typing import TYPE_CHECKING, Any
-
-if TYPE_CHECKING:
-    import polars as pl
+from typing import Any
 
 from secdashboards.adversary.events import (
     EventStatus,
@@ -23,6 +20,7 @@ from secdashboards.adversary.events import (
     SyntheticEvent,
 )
 from secdashboards.adversary.network import NetworkEmulator, PacketResult
+from secdashboards.connectors.result import QueryResult
 
 logger = logging.getLogger(__name__)
 
@@ -181,7 +179,7 @@ class ScenarioRunner:
     def events_to_dataframe(
         self,
         events: list[SyntheticEvent],
-    ) -> pl.DataFrame:
+    ) -> QueryResult:
         """Convert scenario events to a DataFrame for testing."""
         return self.event_generator.events_to_dataframe(events)
 

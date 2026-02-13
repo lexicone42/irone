@@ -10,6 +10,7 @@ from hypothesis import strategies as st
 from secdashboards.catalog.models import DataSource, DataSourceType
 from secdashboards.catalog.registry import DataCatalog
 from secdashboards.connectors.duckdb import DuckDBConnector
+from secdashboards.connectors.result import QueryResult
 
 
 def _make_source(**overrides: object) -> DataSource:
@@ -29,8 +30,9 @@ class TestDuckDBConnector:
     def test_query_simple(self) -> None:
         conn = DuckDBConnector(_make_source())
         df = conn.query("SELECT 1 AS x, 'hello' AS y")
-        assert isinstance(df, pl.DataFrame)
-        assert df.shape == (1, 2)
+        assert isinstance(df, QueryResult)
+        assert len(df) == 1
+        assert len(df.columns) == 2
         assert df["x"][0] == 1
         assert df["y"][0] == "hello"
         conn.close()

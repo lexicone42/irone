@@ -7,9 +7,9 @@ visualization, and query generation.
 from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock
 
-import polars as pl
 import pytest
 
+from secdashboards.connectors.result import QueryResult
 from secdashboards.detections.rule import DetectionResult, Severity
 from secdashboards.graph.builder import GraphBuilder
 from secdashboards.graph.models import (
@@ -497,7 +497,7 @@ class TestGraphBuilder:
         """Create a mock Security Lake connector."""
         mock = MagicMock()
         # Return empty DataFrames by default
-        mock.query_by_event_class.return_value = pl.DataFrame()
+        mock.query_by_event_class.return_value = QueryResult.empty()
         return mock
 
     @pytest.fixture
@@ -829,7 +829,7 @@ class TestGraphIntegration:
         """Test a full workflow from detection to visualization."""
         # Create a mock connector
         mock_connector = MagicMock()
-        mock_connector.query_by_event_class.return_value = pl.DataFrame()
+        mock_connector.query_by_event_class.return_value = QueryResult.empty()
 
         # Create a detection result
         result = DetectionResult(

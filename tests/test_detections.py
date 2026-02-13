@@ -3,10 +3,10 @@
 from datetime import datetime
 from unittest.mock import MagicMock
 
-import polars as pl
 import pytest
 
 from secdashboards.catalog.registry import DataCatalog
+from secdashboards.connectors.result import QueryResult
 from secdashboards.detections.rule import (
     DetectionMetadata,
     DetectionResult,
@@ -105,7 +105,13 @@ class TestSQLDetectionRule:
         )
 
         # DataFrame with 3 rows should trigger (threshold=2)
-        df = pl.DataFrame({"col1": [1, 2, 3], "col2": ["a", "b", "c"]})
+        df = QueryResult.from_dicts(
+            [
+                {"col1": 1, "col2": "a"},
+                {"col1": 2, "col2": "b"},
+                {"col1": 3, "col2": "c"},
+            ]
+        )
         result = rule.evaluate(df)
 
         assert result.triggered is True
@@ -122,7 +128,7 @@ class TestSQLDetectionRule:
         )
 
         # DataFrame with 2 rows should not trigger (threshold=5)
-        df = pl.DataFrame({"col1": [1, 2]})
+        df = QueryResult.from_dicts([{"col1": 1}, {"col1": 2}])
         result = rule.evaluate(df)
 
         assert result.triggered is False
@@ -137,7 +143,7 @@ class TestSQLDetectionRule:
             threshold=1,
         )
 
-        df = pl.DataFrame({"col1": []})
+        df = QueryResult(columns=["col1"], rows=[])
         result = rule.evaluate(df)
 
         assert result.triggered is False
@@ -263,7 +269,9 @@ class TestDetectionRunnerLifecycle:
         runner.register_rule(rule)
 
         mock_connector = MagicMock()
-        mock_connector.query.return_value = pl.DataFrame({"user": ["root"], "ip": ["1.2.3.4"]})
+        mock_connector.query.return_value = QueryResult.from_dicts(
+            [{"user": "root", "ip": "1.2.3.4"}]
+        )
 
         result = runner.run_rule("test-run", mock_connector)
 
@@ -281,7 +289,9 @@ class TestDetectionRunnerLifecycle:
         runner.register_rule(rule)
 
         mock_connector = MagicMock()
-        mock_connector.query.return_value = pl.DataFrame({"col": [1, 2, 3]})
+        mock_connector.query.return_value = QueryResult.from_dicts(
+            [{"col": 1}, {"col": 2}, {"col": 3}]
+        )
 
         result = runner.run_rule("high-thresh", mock_connector)
 
@@ -293,7 +303,7 @@ class TestDetectionRunnerLifecycle:
         runner.register_rule(_make_rule("rule-b", "Rule B"))
 
         mock_connector = MagicMock()
-        mock_connector.query.return_value = pl.DataFrame({"event": ["login"]})
+        mock_connector.query.return_value = QueryResult.from_dicts([{"event": "login"}])
 
         results = runner.run_all(mock_connector, lookback_minutes=60)
 
@@ -333,7 +343,7 @@ class TestDetectionRunnerLifecycle:
 
         # Run
         mock_connector = MagicMock()
-        mock_connector.query.return_value = pl.DataFrame({"col": []})
+        mock_connector.query.return_value = QueryResult(columns=["col"], rows=[])
         result = runner.run_rule("lifecycle-test", mock_connector)
         assert result.rule_id == "lifecycle-test"
 

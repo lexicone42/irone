@@ -3,7 +3,6 @@
 from datetime import UTC, datetime
 from unittest.mock import MagicMock, patch
 
-import polars as pl
 import pytest
 
 from secdashboards.catalog.models import DataSource, DataSourceType
@@ -20,6 +19,7 @@ from secdashboards.connectors.log_etl import (
     OCSFClass,
     OCSFSeverity,
 )
+from secdashboards.connectors.result import QueryResult
 
 
 class TestCloudWatchLogsConnector:
@@ -543,13 +543,13 @@ class TestDualTargetDetectionRule:
         )
 
         # Below threshold
-        df_low = pl.DataFrame({"count": [1, 2, 3]})
+        df_low = QueryResult.from_dicts([{"count": 1}, {"count": 2}, {"count": 3}])
         result_low = rule.evaluate(df_low)
         assert result_low.triggered is False
         assert result_low.match_count == 3
 
         # At/above threshold
-        df_high = pl.DataFrame({"count": list(range(10))})
+        df_high = QueryResult.from_dicts([{"count": i} for i in range(10)])
         result_high = rule.evaluate(df_high)
         assert result_high.triggered is True
         assert result_high.match_count == 10

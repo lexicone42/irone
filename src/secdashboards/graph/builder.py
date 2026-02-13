@@ -26,10 +26,10 @@ from secdashboards.graph.models import (
 )
 
 if TYPE_CHECKING:
-    import polars as pl
-
     from secdashboards.detections.rule import DetectionResult
     from secdashboards.graph.connector import NeptuneConnector
+
+from secdashboards.connectors.result import QueryResult
 
 logger = structlog.get_logger()
 
@@ -455,7 +455,7 @@ class GraphBuilder:
 
     def _process_dataframe(
         self,
-        df: pl.DataFrame,
+        df: QueryResult,
         include_events: bool,
     ) -> None:
         """Process a DataFrame of events and add to the graph.
