@@ -23,6 +23,7 @@ class AppState:
     runner: DetectionRunner
     duckdb: DuckDBConnector
     investigation_store: InvestigationStore | None = None
+    health_cache: Any = None  # HealthCacheClient (optional, avoids hard dep)
     investigations: dict[str, Any] = field(default_factory=dict)
     operations: dict[str, dict[str, Any]] = field(default_factory=dict)
 
@@ -36,18 +37,61 @@ _SECURITY_LAKE_TABLES: list[tuple[str, str, str]] = [
 ]
 
 
+def _resolve_account_id(config: WebConfig) -> str:
+    """Resolve AWS account ID from config or STS.
+
+    Returns empty string if auto-detection fails (e.g. no credentials).
+    """
+    if config.account_id:
+        return config.account_id
+    try:
+        import boto3
+
+        sts = boto3.client("sts", region_name=config.region)
+        return sts.get_caller_identity()["Account"]
+    except Exception:
+        return ""
+
+
 def _register_default_security_lake_sources(catalog: DataCatalog, config: WebConfig) -> None:
-    """Auto-register well-known Security Lake tables when no catalog file provides them."""
+    """Auto-register well-known Security Lake tables when no catalog file provides them.
+
+    When ``use_direct_query`` is True and an account ID is available, sources
+    are registered with the ``security_lake_direct`` type (DuckDB+Iceberg).
+    Otherwise falls back to the Athena-based ``security_lake`` type.
+    """
     region_underscore = config.region.replace("-", "_")
+
+    # Determine connector type and config
+    use_direct = config.use_direct_query
+    account_id = ""
+    if use_direct:
+        account_id = _resolve_account_id(config)
+        if not account_id:
+            use_direct = False  # Fall back to Athena if no account ID
+
+    if use_direct:
+        source_type = DataSourceType.SECURITY_LAKE_DIRECT
+        connector_config: dict[str, str] = {"account_id": account_id}
+    else:
+        source_type = DataSourceType.SECURITY_LAKE
+        connector_config = {}
+        if config.athena_output:
+            connector_config["output_location"] = config.athena_output
+
     for name, table_suffix, description in _SECURITY_LAKE_TABLES:
         table = f"amazon_security_lake_table_{region_underscore}_{table_suffix}"
-        catalog.create_security_lake_source(
+        source = DataSource(
             name=name,
+            type=source_type,
             database=config.security_lake_db,
             table=table,
             region=config.region,
             description=description,
+            tags=["security-lake", "ocsf"],
+            connector_config=connector_config,
         )
+        catalog.add_source(source)
 
 
 def create_app_state(config: WebConfig | None = None) -> AppState:
@@ -90,12 +134,23 @@ def create_app_state(config: WebConfig | None = None) -> AppState:
     if config.investigations_db_path:
         inv_store = InvestigationStore(db_path=config.investigations_db_path)
 
+    # Health cache (optional — empty table name = no caching)
+    health_cache = None
+    if config.health_cache_table:
+        from secdashboards.health.cache import HealthCacheClient
+
+        health_cache = HealthCacheClient(
+            table_name=config.health_cache_table,
+            region_name=config.region,
+        )
+
     return AppState(
         config=config,
         catalog=catalog,
         runner=runner,
         duckdb=duckdb_conn,
         investigation_store=inv_store,
+        health_cache=health_cache,
     )
 
 
