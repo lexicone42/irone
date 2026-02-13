@@ -27,6 +27,29 @@ class AppState:
     operations: dict[str, dict[str, Any]] = field(default_factory=dict)
 
 
+_SECURITY_LAKE_TABLES: list[tuple[str, str, str]] = [
+    ("cloudtrail", "cloud_trail_mgmt_2_0", "CloudTrail management events"),
+    ("vpc-flow", "vpc_flow_2_0", "VPC Flow Logs"),
+    ("route53", "route53_2_0", "Route53 DNS resolver logs"),
+    ("security-hub", "sh_findings_2_0", "Security Hub findings"),
+    ("lambda-execution", "lambda_2_0", "Lambda execution logs"),
+]
+
+
+def _register_default_security_lake_sources(catalog: DataCatalog, config: WebConfig) -> None:
+    """Auto-register well-known Security Lake tables when no catalog file provides them."""
+    region_underscore = config.region.replace("-", "_")
+    for name, table_suffix, description in _SECURITY_LAKE_TABLES:
+        table = f"amazon_security_lake_table_{region_underscore}_{table_suffix}"
+        catalog.create_security_lake_source(
+            name=name,
+            database=config.security_lake_db,
+            table=table,
+            region=config.region,
+            description=description,
+        )
+
+
 def create_app_state(config: WebConfig | None = None) -> AppState:
     """Build application state from config.
 
@@ -50,6 +73,10 @@ def create_app_state(config: WebConfig | None = None) -> AppState:
     catalog.add_source(duckdb_source)
     duckdb_conn = catalog.get_connector("duckdb-local")
     assert isinstance(duckdb_conn, DuckDBConnector)
+
+    # Auto-register Security Lake sources when DB is configured but no catalog provides them
+    if config.security_lake_db and not catalog.list_sources(tag="security-lake"):
+        _register_default_security_lake_sources(catalog, config)
 
     # Build detection runner and load rules
     runner = DetectionRunner(catalog)
