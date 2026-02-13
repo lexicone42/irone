@@ -5,16 +5,14 @@ from __future__ import annotations
 import time
 from datetime import UTC, datetime, timedelta
 from enum import IntEnum
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import structlog
-
-if TYPE_CHECKING:
-    import polars as pl
 
 from secdashboards.catalog.models import DataSource
 from secdashboards.connectors.athena import AthenaConnector
 from secdashboards.connectors.base import HealthCheckResult
+from secdashboards.connectors.result import QueryResult
 from secdashboards.connectors.sql_utils import (
     SQLSanitizationError,
     quote_table,
@@ -114,7 +112,7 @@ class SecurityLakeConnector(AthenaConnector):
         end: datetime | None = None,
         limit: int = 1000,
         additional_filters: str | None = None,
-    ) -> pl.DataFrame:
+    ) -> QueryResult:
         """Query events by OCSF event class ID.
 
         SECURITY NOTE: The additional_filters parameter accepts raw SQL.
@@ -169,7 +167,7 @@ class SecurityLakeConnector(AthenaConnector):
         end: datetime | None = None,
         status: str | None = None,
         limit: int = 1000,
-    ) -> pl.DataFrame:
+    ) -> QueryResult:
         """Query authentication events."""
         filters = None
         if status:
@@ -192,7 +190,7 @@ class SecurityLakeConnector(AthenaConnector):
         service: str | None = None,
         operation: str | None = None,
         limit: int = 1000,
-    ) -> pl.DataFrame:
+    ) -> QueryResult:
         """Query API activity events (CloudTrail)."""
         filters = []
         if service:
@@ -222,9 +220,8 @@ class SecurityLakeConnector(AthenaConnector):
         dst_ip: str | None = None,
         dst_port: int | None = None,
         limit: int = 1000,
-    ) -> pl.DataFrame:
+    ) -> QueryResult:
         """Query network activity events."""
-        import polars as pl
 
         filters = []
         if src_ip:
@@ -234,7 +231,7 @@ class SecurityLakeConnector(AthenaConnector):
                 filters.append(f""""src_endpoint"."ip" = '{safe_ip}'""")
             except SQLSanitizationError:
                 logger.warning("invalid_source_ip_format", ip=src_ip)
-                return pl.DataFrame()
+                return QueryResult.empty()
         if dst_ip:
             try:
                 # Validate IP address format to prevent injection
@@ -242,7 +239,7 @@ class SecurityLakeConnector(AthenaConnector):
                 filters.append(f""""dst_endpoint"."ip" = '{safe_ip}'""")
             except SQLSanitizationError:
                 logger.warning("invalid_dest_ip_format", ip=dst_ip)
-                return pl.DataFrame()
+                return QueryResult.empty()
         if dst_port is not None:
             # Validate port is an integer to prevent injection
             safe_port = sanitize_int(dst_port)
@@ -250,7 +247,7 @@ class SecurityLakeConnector(AthenaConnector):
                 filters.append(f""""dst_endpoint"."port" = {safe_port}""")
             else:
                 logger.warning("invalid_port_range", port=dst_port)
-                return pl.DataFrame()
+                return QueryResult.empty()
 
         additional = " AND ".join(filters) if filters else None
 
@@ -268,7 +265,7 @@ class SecurityLakeConnector(AthenaConnector):
         end: datetime | None = None,
         severity: str | None = None,
         limit: int = 1000,
-    ) -> pl.DataFrame:
+    ) -> QueryResult:
         """Query security findings."""
         filters = None
         if severity:
@@ -288,7 +285,7 @@ class SecurityLakeConnector(AthenaConnector):
         self,
         start: datetime | None = None,
         end: datetime | None = None,
-    ) -> pl.DataFrame:
+    ) -> QueryResult:
         """Get a summary of events by class."""
         end = end or datetime.now(UTC)
         start = start or (end - timedelta(hours=24))
@@ -394,7 +391,7 @@ class SecurityLakeConnector(AthenaConnector):
         action: str | None = None,
         direction: str | None = None,
         limit: int = 1000,
-    ) -> pl.DataFrame:
+    ) -> QueryResult:
         """Query VPC Flow Log events from Security Lake.
 
         VPC Flow logs in OCSF format use class_uid 4001 (Network Activity).
@@ -409,7 +406,6 @@ class SecurityLakeConnector(AthenaConnector):
             direction: Filter by traffic direction ('Inbound' or 'Outbound')
             limit: Maximum number of records to return
         """
-        import polars as pl
 
         filters = []
 
@@ -419,7 +415,7 @@ class SecurityLakeConnector(AthenaConnector):
                 filters.append(f""""src_endpoint"."ip" = '{safe_ip}'""")
             except SQLSanitizationError:
                 logger.warning("invalid_source_ip_format", ip=src_ip)
-                return pl.DataFrame()
+                return QueryResult.empty()
 
         if dst_ip:
             try:
@@ -427,7 +423,7 @@ class SecurityLakeConnector(AthenaConnector):
                 filters.append(f""""dst_endpoint"."ip" = '{safe_ip}'""")
             except SQLSanitizationError:
                 logger.warning("invalid_dest_ip_format", ip=dst_ip)
-                return pl.DataFrame()
+                return QueryResult.empty()
 
         if dst_port is not None:
             safe_port = sanitize_int(dst_port)
@@ -435,7 +431,7 @@ class SecurityLakeConnector(AthenaConnector):
                 filters.append(f""""dst_endpoint"."port" = {safe_port}""")
             else:
                 logger.warning("invalid_port_range", port=dst_port)
-                return pl.DataFrame()
+                return QueryResult.empty()
 
         if action:
             safe_action = sanitize_string(action)
@@ -460,7 +456,7 @@ class SecurityLakeConnector(AthenaConnector):
         start: datetime | None = None,
         end: datetime | None = None,
         group_by: str = "src_ip",
-    ) -> pl.DataFrame:
+    ) -> QueryResult:
         """Get a summary of VPC Flow traffic.
 
         Args:
@@ -516,7 +512,7 @@ class SecurityLakeConnector(AthenaConnector):
         query_type: str | None = None,
         response_code: str | None = None,
         limit: int = 1000,
-    ) -> pl.DataFrame:
+    ) -> QueryResult:
         """Query Route53 DNS resolver logs from Security Lake.
 
         DNS logs in OCSF format use class_uid 4003 (DNS Activity).
@@ -559,7 +555,7 @@ class SecurityLakeConnector(AthenaConnector):
         start: datetime | None = None,
         end: datetime | None = None,
         limit: int = 100,
-    ) -> pl.DataFrame:
+    ) -> QueryResult:
         """Query DNS logs for potentially suspicious patterns.
 
         Detects:
@@ -616,7 +612,7 @@ class SecurityLakeConnector(AthenaConnector):
         function_name: str | None = None,
         status: str | None = None,
         limit: int = 1000,
-    ) -> pl.DataFrame:
+    ) -> QueryResult:
         """Query Lambda execution logs from Security Lake.
 
         Lambda execution logs in OCSF format use class_uid 6002 (Application Lifecycle).
@@ -651,7 +647,7 @@ class SecurityLakeConnector(AthenaConnector):
     def get_data_source_health_summary(
         self,
         hours: int = 24,
-    ) -> pl.DataFrame:
+    ) -> QueryResult:
         """Get a health summary across all Security Lake data sources.
 
         Returns event counts and freshness for each event class.

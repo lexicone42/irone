@@ -7,13 +7,11 @@ investigation graphs with related events from Security Lake.
 from __future__ import annotations
 
 from datetime import datetime, timedelta
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import structlog
 
-if TYPE_CHECKING:
-    import polars as pl
-
+from secdashboards.connectors.result import QueryResult
 from secdashboards.connectors.security_lake import OCSFEventClass, SecurityLakeConnector
 
 logger = structlog.get_logger()
@@ -121,7 +119,7 @@ class SecurityLakeEnricher:
         end: datetime,
         event_classes: list[OCSFEventClass] | None = None,
         limit: int = 500,
-    ) -> pl.DataFrame:
+    ) -> QueryResult:
         """Get all events for a user within a time window.
 
         Args:
@@ -132,17 +130,15 @@ class SecurityLakeEnricher:
             limit: Maximum events per event class
 
         Returns:
-            DataFrame of events involving the user
+            QueryResult of events involving the user
         """
-        import polars as pl
-
         classes = event_classes or [
             OCSFEventClass.API_ACTIVITY,
             OCSFEventClass.AUTHENTICATION,
             OCSFEventClass.ACCOUNT_CHANGE,
         ]
 
-        all_events: list[pl.DataFrame] = []
+        all_events: list[QueryResult] = []
 
         for event_class in classes:
             try:
@@ -172,9 +168,9 @@ class SecurityLakeEnricher:
                 )
 
         if not all_events:
-            return pl.DataFrame()
+            return QueryResult.empty()
 
-        return pl.concat(all_events, how="diagonal")
+        return QueryResult.concat(all_events)
 
     def enrich_by_ip(
         self,
@@ -183,7 +179,7 @@ class SecurityLakeEnricher:
         end: datetime,
         direction: str = "both",
         limit: int = 500,
-    ) -> pl.DataFrame:
+    ) -> QueryResult:
         """Get all events involving an IP address.
 
         Args:
@@ -194,14 +190,12 @@ class SecurityLakeEnricher:
             limit: Maximum events to return
 
         Returns:
-            DataFrame of events involving the IP
+            QueryResult of events involving the IP
         """
-        import polars as pl
-
         # Validate IP address format to prevent injection
         if not self._validate_ip_address(ip_address):
             logger.warning("invalid_ip_address_format", ip=ip_address)
-            return pl.DataFrame()
+            return QueryResult.empty()
 
         filters: list[str] = []
 
@@ -211,11 +205,11 @@ class SecurityLakeEnricher:
             filters.append(f""""dst_endpoint"."ip" = '{ip_address}'""")
 
         if not filters:
-            return pl.DataFrame()
+            return QueryResult.empty()
 
         filter_clause = " OR ".join(filters)
 
-        all_events: list[pl.DataFrame] = []
+        all_events: list[QueryResult] = []
 
         # Query network activity for IP-based events
         try:
@@ -273,9 +267,9 @@ class SecurityLakeEnricher:
             )
 
         if not all_events:
-            return pl.DataFrame()
+            return QueryResult.empty()
 
-        return pl.concat(all_events, how="diagonal")
+        return QueryResult.concat(all_events)
 
     def enrich_by_service(
         self,
@@ -284,7 +278,7 @@ class SecurityLakeEnricher:
         end: datetime,
         operations: list[str] | None = None,
         limit: int = 500,
-    ) -> pl.DataFrame:
+    ) -> QueryResult:
         """Get API activity for a specific AWS service.
 
         Args:
@@ -295,10 +289,8 @@ class SecurityLakeEnricher:
             limit: Maximum events to return
 
         Returns:
-            DataFrame of API activity for the service
+            QueryResult of API activity for the service
         """
-        import polars as pl
-
         safe_service = self._sanitize_sql_string(service_name)
         filters = [f""""api"."service"."name" = '{safe_service}'"""]
 
@@ -324,7 +316,7 @@ class SecurityLakeEnricher:
                 service=service_name,
                 error=str(e),
             )
-            return pl.DataFrame()
+            return QueryResult.empty()
 
     def enrich_by_operation(
         self,
@@ -333,7 +325,7 @@ class SecurityLakeEnricher:
         end: datetime,
         service: str | None = None,
         limit: int = 500,
-    ) -> pl.DataFrame:
+    ) -> QueryResult:
         """Get events for a specific API operation.
 
         Args:
@@ -344,10 +336,8 @@ class SecurityLakeEnricher:
             limit: Maximum events to return
 
         Returns:
-            DataFrame of API activity for the operation
+            QueryResult of API activity for the operation
         """
-        import polars as pl
-
         safe_op = self._sanitize_sql_string(operation)
         filters = [f""""api"."operation" = '{safe_op}'"""]
 
@@ -371,7 +361,7 @@ class SecurityLakeEnricher:
                 operation=operation,
                 error=str(e),
             )
-            return pl.DataFrame()
+            return QueryResult.empty()
 
     def get_authentication_chain(
         self,
@@ -379,7 +369,7 @@ class SecurityLakeEnricher:
         start: datetime,
         end: datetime,
         limit: int = 1000,
-    ) -> pl.DataFrame:
+    ) -> QueryResult:
         """Get authentication events to trace a user's login chain.
 
         This is useful for understanding how a user authenticated
@@ -392,10 +382,8 @@ class SecurityLakeEnricher:
             limit: Maximum events to return
 
         Returns:
-            DataFrame of authentication events
+            QueryResult of authentication events
         """
-        import polars as pl
-
         safe_user = self._sanitize_sql_string(user_name)
 
         try:
@@ -412,7 +400,7 @@ class SecurityLakeEnricher:
                 user=user_name,
                 error=str(e),
             )
-            return pl.DataFrame()
+            return QueryResult.empty()
 
     def find_related_principals(
         self,
@@ -420,7 +408,7 @@ class SecurityLakeEnricher:
         start: datetime,
         end: datetime,
         limit: int = 500,
-    ) -> pl.DataFrame:
+    ) -> QueryResult:
         """Find all principals that have accessed from a specific IP.
 
         This is useful for understanding which users have used
@@ -434,14 +422,12 @@ class SecurityLakeEnricher:
             limit: Maximum events to return
 
         Returns:
-            DataFrame with principal information
+            QueryResult with principal information
         """
-        import polars as pl
-
         # Validate IP address format
         if not self._validate_ip_address(ip_address):
             logger.warning("invalid_ip_address_format", ip=ip_address)
-            return pl.DataFrame()
+            return QueryResult.empty()
 
         try:
             df = self.connector.query_by_event_class(
@@ -462,13 +448,13 @@ class SecurityLakeEnricher:
             )
 
             if len(df) > 0 and len(api_df) > 0:
-                return pl.concat([df, api_df], how="diagonal")
+                return QueryResult.concat([df, api_df])
             elif len(df) > 0:
                 return df
             elif len(api_df) > 0:
                 return api_df
             else:
-                return pl.DataFrame()
+                return QueryResult.empty()
 
         except Exception as e:
             logger.warning(
@@ -476,7 +462,7 @@ class SecurityLakeEnricher:
                 ip=ip_address,
                 error=str(e),
             )
-            return pl.DataFrame()
+            return QueryResult.empty()
 
     def find_lateral_movement(
         self,
@@ -574,7 +560,7 @@ class SecurityLakeEnricher:
         start: datetime,
         end: datetime,
         limit: int = 500,
-    ) -> pl.DataFrame:
+    ) -> QueryResult:
         """Get access history for a specific AWS resource.
 
         Args:
@@ -584,14 +570,12 @@ class SecurityLakeEnricher:
             limit: Maximum events to return
 
         Returns:
-            DataFrame of access events for the resource
+            QueryResult of access events for the resource
         """
-        import polars as pl
-
         # Validate ARN format
         if not resource_arn.startswith("arn:"):
             logger.warning("invalid_arn_format", arn=resource_arn)
-            return pl.DataFrame()
+            return QueryResult.empty()
 
         # Sanitize the ARN for SQL (also escape % and _ for LIKE)
         safe_arn = self._sanitize_sql_string(resource_arn)
@@ -619,7 +603,7 @@ class SecurityLakeEnricher:
                 arn=resource_arn,
                 error=str(e),
             )
-            return pl.DataFrame()
+            return QueryResult.empty()
 
     def get_dns_queries(
         self,
@@ -628,7 +612,7 @@ class SecurityLakeEnricher:
         domain_pattern: str | None = None,
         src_ip: str | None = None,
         limit: int = 500,
-    ) -> pl.DataFrame:
+    ) -> QueryResult:
         """Get DNS query events.
 
         Args:
@@ -639,10 +623,8 @@ class SecurityLakeEnricher:
             limit: Maximum events to return
 
         Returns:
-            DataFrame of DNS query events
+            QueryResult of DNS query events
         """
-        import polars as pl
-
         filters: list[str] = []
 
         if domain_pattern:
@@ -654,7 +636,7 @@ class SecurityLakeEnricher:
         if src_ip:
             if not self._validate_ip_address(src_ip):
                 logger.warning("invalid_ip_address_format", ip=src_ip)
-                return pl.DataFrame()
+                return QueryResult.empty()
             filters.append(f""""src_endpoint"."ip" = '{src_ip}'""")
 
         filter_clause = " AND ".join(filters) if filters else None
@@ -674,7 +656,7 @@ class SecurityLakeEnricher:
                 src_ip=src_ip,
                 error=str(e),
             )
-            return pl.DataFrame()
+            return QueryResult.empty()
 
     def get_failed_operations(
         self,
@@ -683,7 +665,7 @@ class SecurityLakeEnricher:
         user_name: str | None = None,
         service: str | None = None,
         limit: int = 500,
-    ) -> pl.DataFrame:
+    ) -> QueryResult:
         """Get failed API operations (access denied, errors).
 
         Args:
@@ -694,10 +676,8 @@ class SecurityLakeEnricher:
             limit: Maximum events to return
 
         Returns:
-            DataFrame of failed operations
+            QueryResult of failed operations
         """
-        import polars as pl
-
         filters = ["status = 'Failure'"]
 
         if user_name:
@@ -724,7 +704,7 @@ class SecurityLakeEnricher:
                 service=service,
                 error=str(e),
             )
-            return pl.DataFrame()
+            return QueryResult.empty()
 
     def create_time_window(
         self,

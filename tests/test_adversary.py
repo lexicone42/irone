@@ -4,7 +4,6 @@ import json
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import polars as pl
 import pytest
 
 from secdashboards.adversary.events import (
@@ -42,6 +41,7 @@ from secdashboards.adversary.scenarios import (
     ScenarioStep,
     get_mitre_scenarios,
 )
+from secdashboards.connectors.result import QueryResult
 from secdashboards.connectors.security_lake import OCSFEventClass
 
 
@@ -212,7 +212,7 @@ class TestOCSFEventGenerator:
 
         df = gen.events_to_dataframe(events)
 
-        assert isinstance(df, pl.DataFrame)
+        assert isinstance(df, QueryResult)
         assert len(df) == 2
         assert "class_uid" in df.columns
         assert "actor.user.name" in df.columns
@@ -472,7 +472,7 @@ class TestAdversaryTestRunner:
         events, df = runner.generate_test_events(scenarios["root-account-compromise"])
 
         assert len(events) > 0
-        assert isinstance(df, pl.DataFrame)
+        assert isinstance(df, QueryResult)
         assert len(df) > 0
 
     def test_local_detection_tester(self) -> None:

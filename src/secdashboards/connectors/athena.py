@@ -2,18 +2,17 @@
 
 from __future__ import annotations
 
+import csv
 import io
 import time
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import boto3
 
-if TYPE_CHECKING:
-    import polars as pl
-
 from secdashboards.catalog.models import DataSource
 from secdashboards.connectors.base import DataConnector, HealthCheckResult
+from secdashboards.connectors.result import QueryResult
 from secdashboards.connectors.sql_utils import (
     quote_table,
     sanitize_string,
@@ -34,8 +33,8 @@ class AthenaConnector(DataConnector):
         )
         self._workgroup = source.connector_config.get("workgroup", "primary")
 
-    def query(self, sql: str) -> pl.DataFrame:
-        """Execute a SQL query and return results as a Polars DataFrame."""
+    def query(self, sql: str) -> QueryResult:
+        """Execute a SQL query and return results as a QueryResult."""
         # Start query execution
         response = self._athena.start_query_execution(
             QueryString=sql,
@@ -49,7 +48,7 @@ class AthenaConnector(DataConnector):
         # Wait for query to complete
         self._wait_for_query(query_execution_id)
 
-        # Get results location and read with Polars
+        # Get results location and read with stdlib csv
         result_response = self._athena.get_query_execution(QueryExecutionId=query_execution_id)
         result_location = result_response["QueryExecution"]["ResultConfiguration"]["OutputLocation"]
 
@@ -76,10 +75,8 @@ class AthenaConnector(DataConnector):
 
             time.sleep(1)
 
-    def _read_results(self, s3_location: str) -> pl.DataFrame:
-        """Read query results from S3."""
-        import polars as pl
-
+    def _read_results(self, s3_location: str) -> QueryResult:
+        """Read query results from S3 using stdlib csv."""
         # Parse S3 location
         # Format: s3://bucket/key
         parts = s3_location.replace("s3://", "").split("/", 1)
@@ -88,9 +85,14 @@ class AthenaConnector(DataConnector):
 
         # Download and read CSV
         response = self._s3.get_object(Bucket=bucket, Key=key)
-        csv_content = response["Body"].read()
+        csv_content = response["Body"].read().decode("utf-8")
 
-        return pl.read_csv(io.BytesIO(csv_content))
+        reader = csv.DictReader(io.StringIO(csv_content))
+        rows = list(reader)
+        if not rows:
+            return QueryResult.empty()
+        # fieldnames preserves CSV header order
+        return QueryResult(columns=list(reader.fieldnames or []), rows=rows)
 
     def get_schema(self) -> dict[str, str]:
         """Get the schema of the table."""

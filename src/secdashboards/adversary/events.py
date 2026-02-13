@@ -6,14 +6,12 @@ import json
 import random
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
-from typing import TYPE_CHECKING, Any
+from typing import Any
 from uuid import uuid4
 
 from pydantic import BaseModel, Field
 
-if TYPE_CHECKING:
-    import polars as pl
-
+from secdashboards.connectors.result import QueryResult
 from secdashboards.connectors.security_lake import OCSFEventClass
 
 
@@ -562,13 +560,11 @@ class OCSFEventGenerator:
     def events_to_dataframe(
         self,
         events: list[SyntheticEvent],
-    ) -> pl.DataFrame:
-        """Convert a list of synthetic events to a Polars DataFrame.
+    ) -> QueryResult:
+        """Convert a list of synthetic events to a QueryResult.
 
-        This creates a DataFrame structure compatible with detection rules.
+        This creates a QueryResult structure compatible with detection rules.
         """
-        import polars as pl
-
         records = [e.to_ocsf_dict() for e in events]
 
         # Flatten nested structures for SQL compatibility
@@ -629,4 +625,4 @@ class OCSFEventGenerator:
 
             flattened.append(flat)
 
-        return pl.DataFrame(flattened)
+        return QueryResult.from_dicts(flattened)

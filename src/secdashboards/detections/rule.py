@@ -5,12 +5,11 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from datetime import UTC, datetime
 from enum import StrEnum
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from pydantic import BaseModel, Field
 
-if TYPE_CHECKING:
-    import polars as pl
+from secdashboards.connectors.result import QueryResult
 
 
 class Severity(StrEnum):
@@ -95,7 +94,7 @@ class DetectionRule(ABC):
         ...
 
     @abstractmethod
-    def evaluate(self, df: pl.DataFrame) -> DetectionResult:
+    def evaluate(self, df: QueryResult) -> DetectionResult:
         """Evaluate query results and determine if detection triggered.
 
         Args:
@@ -151,7 +150,7 @@ class SQLDetectionRule(DetectionRule):
             end_time=self._format_timestamp(end),
         )
 
-    def evaluate(self, df: pl.DataFrame) -> DetectionResult:
+    def evaluate(self, df: QueryResult) -> DetectionResult:
         """Evaluate if detection threshold is met."""
         start_time = datetime.now(UTC)
 
@@ -330,7 +329,7 @@ class DualTargetDetectionRule(DetectionRule):
         """Convenience method to get Athena query."""
         return self.get_query_for_target(QueryTarget.ATHENA, start, end)
 
-    def evaluate(self, df: pl.DataFrame) -> DetectionResult:
+    def evaluate(self, df: QueryResult) -> DetectionResult:
         """Evaluate query results and determine if detection triggered."""
         start_time = datetime.now(UTC)
 

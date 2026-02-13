@@ -3,15 +3,13 @@
 from __future__ import annotations
 
 import time
-from typing import TYPE_CHECKING
+from typing import Any
 
 import duckdb
 
-if TYPE_CHECKING:
-    import polars as pl
-
 from secdashboards.catalog.models import DataSource
 from secdashboards.connectors.base import DataConnector, HealthCheckResult
+from secdashboards.connectors.result import QueryResult
 
 
 def _quote_ident(name: str) -> str:
@@ -19,12 +17,19 @@ def _quote_ident(name: str) -> str:
     return '"' + name.replace('"', '""') + '"'
 
 
+def _result_to_query_result(result: Any) -> QueryResult:
+    """Convert a DuckDB result to a QueryResult using fetchall + description."""
+    columns = [desc[0] for desc in result.description]
+    rows = [dict(zip(columns, row, strict=True)) for row in result.fetchall()]
+    return QueryResult(columns=columns, rows=rows)
+
+
 class DuckDBConnector(DataConnector):
     """Connector for DuckDB — local/in-memory SQL engine.
 
     Reads ``db_path`` from ``source.connector_config`` (defaults to ``:memory:``).
-    Supports loading Polars DataFrames, Parquet files (including S3 via httpfs),
-    and standard SQL queries with native Polars/Arrow return.
+    Supports loading DataFrames, Parquet files (including S3 via httpfs),
+    and standard SQL queries.
     """
 
     def __init__(self, source: DataSource) -> None:
@@ -32,10 +37,10 @@ class DuckDBConnector(DataConnector):
         db_path = source.connector_config.get("db_path", ":memory:")
         self._conn = duckdb.connect(db_path)
 
-    def query(self, sql: str) -> pl.DataFrame:
-        """Execute a SQL query and return results as a Polars DataFrame."""
+    def query(self, sql: str) -> QueryResult:
+        """Execute a SQL query and return results as a QueryResult."""
         result = self._conn.execute(sql)
-        return result.pl()
+        return _result_to_query_result(result)
 
     def get_schema(self) -> dict[str, str]:
         """Get the schema of tables in the database.
@@ -50,21 +55,22 @@ class DuckDBConnector(DataConnector):
             WHERE table_schema = ?
               AND table_name = ?
             """
-            df = self._conn.execute(sql, [self.source.database, self.source.table]).pl()
+            result = self._conn.execute(sql, [self.source.database, self.source.table])
         elif self.source.table:
             sql = """
             SELECT column_name, data_type
             FROM information_schema.columns
             WHERE table_name = ?
             """
-            df = self._conn.execute(sql, [self.source.table]).pl()
+            result = self._conn.execute(sql, [self.source.table])
         else:
             sql = """
             SELECT table_name || '.' || column_name AS column_name, data_type
             FROM information_schema.columns
             """
-            df = self._conn.execute(sql).pl()
+            result = self._conn.execute(sql)
 
+        df = _result_to_query_result(result)
         if df.is_empty():
             return {}
         columns = df["column_name"].to_list()
@@ -75,17 +81,15 @@ class DuckDBConnector(DataConnector):
         """Check if the DuckDB connection is healthy."""
         start_time = time.time()
         try:
-            tables_df = self._conn.execute(
+            tables_df = self.query(
                 "SELECT table_name FROM information_schema.tables "
                 "WHERE table_schema NOT IN ('information_schema', 'pg_catalog')"
-            ).pl()
+            )
             table_count = len(tables_df)
 
             total_rows = 0
             for table_name in tables_df["table_name"].to_list():
-                count_df = self._conn.execute(
-                    f"SELECT COUNT(*) AS cnt FROM {_quote_ident(table_name)}"
-                ).pl()
+                count_df = self.query(f"SELECT COUNT(*) AS cnt FROM {_quote_ident(table_name)}")
                 total_rows += int(count_df["cnt"][0])
 
             latency = time.time() - start_time
@@ -119,22 +123,25 @@ class DuckDBConnector(DataConnector):
             f"CREATE OR REPLACE TABLE {quoted} AS SELECT * FROM read_parquet(?)",
             [path],
         )
-        count_df = self._conn.execute(f"SELECT COUNT(*) AS cnt FROM {quoted}").pl()
+        count_df = self.query(f"SELECT COUNT(*) AS cnt FROM {quoted}")
         return int(count_df["cnt"][0])
 
-    def load_dataframe(self, df: pl.DataFrame, table_name: str) -> None:
-        """Register a Polars DataFrame as a DuckDB table."""
-        # DuckDB can scan Polars DataFrames directly via Arrow
+    def load_dataframe(self, df: Any, table_name: str) -> None:
+        """Register a DataFrame as a DuckDB table.
+
+        Accepts polars or pandas DataFrames — DuckDB scans them via Arrow.
+        """
+        # DuckDB can scan Polars/Pandas DataFrames directly via Arrow
         self._conn.execute(
             f"CREATE OR REPLACE TABLE {_quote_ident(table_name)} AS SELECT * FROM df"
         )
 
     def list_tables(self) -> list[str]:
         """List all user tables in the database."""
-        df = self._conn.execute(
+        df = self.query(
             "SELECT table_name FROM information_schema.tables "
             "WHERE table_schema NOT IN ('information_schema', 'pg_catalog')"
-        ).pl()
+        )
         return df["table_name"].to_list()
 
     def close(self) -> None:
