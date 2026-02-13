@@ -99,8 +99,15 @@ class _SharedConnection:
             for ext in ("httpfs", "aws", "avro", "iceberg"):
                 self._conn.execute(f"LOAD {ext};")
 
-            # Configure AWS region
-            self._conn.execute(f"SET s3_region = '{self._region}';")
+            # Configure AWS credentials via SDK default chain (env vars on Lambda,
+            # ~/.aws/credentials locally, instance profile on EC2, etc.)
+            self._conn.execute(
+                "CREATE OR REPLACE SECRET s3_secret ("
+                "    TYPE s3,"
+                "    PROVIDER credential_chain,"
+                f"    REGION '{self._region}'"
+                ");"
+            )
 
             # Attach Glue catalog
             self._conn.execute(

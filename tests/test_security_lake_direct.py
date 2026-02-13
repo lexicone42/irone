@@ -140,9 +140,27 @@ class TestSharedConnection:
         shared.ensure_ready()
 
         execute_calls = [c[0][0] for c in mock_conn.execute.call_args_list]
-        region_calls = [c for c in execute_calls if "s3_region" in c]
-        assert len(region_calls) == 1
-        assert "eu-west-1" in region_calls[0]
+        secret_calls = [c for c in execute_calls if "CREATE" in c and "SECRET" in c]
+        assert len(secret_calls) == 1
+        assert "eu-west-1" in secret_calls[0]
+
+    @patch("secdashboards.connectors.security_lake_direct.duckdb")
+    def test_creates_s3_credential_chain_secret(self, mock_duckdb: MagicMock) -> None:
+        mock_conn = MagicMock()
+        mock_duckdb.connect.return_value = mock_conn
+        shared = _SharedConnection.get("123", "us-west-2", "sl")
+
+        shared.ensure_ready()
+
+        execute_calls = [c[0][0] for c in mock_conn.execute.call_args_list]
+        secret_calls = [c for c in execute_calls if "CREATE" in c and "SECRET" in c]
+        assert len(secret_calls) == 1
+        assert "TYPE s3" in secret_calls[0]
+        assert "credential_chain" in secret_calls[0]
+        # Secret must be created before ATTACH (catalog needs S3 access)
+        secret_idx = next(i for i, c in enumerate(execute_calls) if "SECRET" in c)
+        attach_idx = next(i for i, c in enumerate(execute_calls) if "ATTACH" in c)
+        assert secret_idx < attach_idx
 
 
 class TestSecurityLakeDirectConnector:
