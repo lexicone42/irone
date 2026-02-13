@@ -19,6 +19,7 @@ class WebConfig(BaseSettings):
 
     # DuckDB settings
     duckdb_path: str = ":memory:"
+    investigations_db_path: str = ""  # empty = no persistence (in-memory only)
 
     # Application paths
     rules_dir: str = ""
