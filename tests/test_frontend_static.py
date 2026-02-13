@@ -144,6 +144,30 @@ class TestAppJS:
     def test_api_endpoints_referenced(self, app_js: str, endpoint: str) -> None:
         assert endpoint in app_js
 
+    def test_duckdb_wasm_integration(self, app_js: str) -> None:
+        """Verify DuckDB-WASM local query support in detectionsApp."""
+        assert "initWasm" in app_js
+        assert "runLocalQuery" in app_js
+        assert "loadResultsIntoWasm" in app_js
+        assert "wasmReady" in app_js
+
+    def test_investigations_endpoints_referenced(self, app_js: str) -> None:
+        assert "/investigations" in app_js
+
+
+class TestDetectionsDuckDBWasm:
+    """Verify detections page includes DuckDB-WASM."""
+
+    def test_duckdb_wasm_script_tag(self) -> None:
+        content = (FRONTEND_DIR / "detections.html").read_text()
+        assert "duckdb-wasm" in content
+
+    def test_local_query_section(self) -> None:
+        content = (FRONTEND_DIR / "detections.html").read_text()
+        assert "Local Query" in content
+        assert "runLocalQuery()" in content
+        assert "wasmReady" in content
+
 
 class TestManifest:
     """Verify PWA manifest."""

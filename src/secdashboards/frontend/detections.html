@@ -6,6 +6,7 @@
     <title>Detection Rules — iris</title>
     <link rel="stylesheet" href="/assets/terminal.css">
     <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@1.29.0/dist/duckdb-browser-blocking.js"></script>
     <script src="/assets/auth.js"></script>
     <script src="/assets/app.js"></script>
 </head>
@@ -132,6 +133,81 @@
                                 </tbody>
                             </table>
                         </div>
+                    </div>
+                </template>
+            </div>
+
+            <!-- Local Query (DuckDB-WASM) Section -->
+            <div class="card">
+                <div class="card-header">
+                    Local Query (DuckDB-WASM)
+                    <template x-if="wasmReady">
+                        <span class="badge badge-ok" style="margin-left: 0.5rem;">ready</span>
+                    </template>
+                    <template x-if="!wasmReady && !wasmError">
+                        <span style="color: var(--text-muted); margin-left: 0.5rem;">
+                            <span class="spinner"></span> loading...
+                        </span>
+                    </template>
+                </div>
+
+                <template x-if="wasmError">
+                    <div class="alert alert-error" x-text="wasmError"></div>
+                </template>
+
+                <template x-if="wasmReady">
+                    <div>
+                        <p style="color: var(--text-muted); font-size: 0.8rem; margin-bottom: 0.75rem;">
+                            Query cached results locally with SQL. Server results are loaded
+                            as <code>results</code> table.
+                        </p>
+                        <div style="margin-bottom: 0.75rem;">
+                            <textarea x-model="localSql" rows="4"
+                                      style="width: 100%; font-size: 0.8rem;"
+                                      placeholder="SELECT * FROM results LIMIT 10;"></textarea>
+                        </div>
+                        <button class="btn btn-primary" @click="runLocalQuery()"
+                                :disabled="localQuerying">
+                            <template x-if="!localQuerying"><span>Run Local</span></template>
+                            <template x-if="localQuerying">
+                                <span><span class="spinner"></span> Querying...</span>
+                            </template>
+                        </button>
+
+                        <template x-if="localError">
+                            <div class="alert alert-error" style="margin-top: 1rem;"
+                                 x-text="localError"></div>
+                        </template>
+
+                        <template x-if="localResult">
+                            <div style="margin-top: 1rem;">
+                                <p style="color: var(--text-secondary); margin-bottom: 0.5rem;"
+                                   x-text="localResult.row_count + ' row(s)'"></p>
+                                <div style="overflow-x: auto;">
+                                    <table class="data-table">
+                                        <thead>
+                                            <tr>
+                                                <template x-for="col in localResult.columns"
+                                                          :key="col">
+                                                    <th x-text="col"></th>
+                                                </template>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            <template x-for="(row, i) in localResult.rows"
+                                                      :key="i">
+                                                <tr>
+                                                    <template x-for="col in localResult.columns"
+                                                              :key="col">
+                                                        <td x-text="row[col] != null ? String(row[col]) : '—'"></td>
+                                                    </template>
+                                                </tr>
+                                            </template>
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </template>
                     </div>
                 </template>
             </div>

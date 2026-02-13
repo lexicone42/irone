@@ -139,11 +139,21 @@ function detectionsApp() {
         loading: true,
         error: null,
 
-        // Query explorer state
+        // Server query explorer state
         sql: "",
         queryResult: null,
         querying: false,
         queryError: null,
+
+        // DuckDB-WASM local query state
+        wasmReady: false,
+        wasmError: null,
+        wasmDb: null,
+        wasmConn: null,
+        localSql: "",
+        localResult: null,
+        localQuerying: false,
+        localError: null,
 
         async init() {
             try {
@@ -152,6 +162,28 @@ function detectionsApp() {
                 this.error = e.message;
             } finally {
                 this.loading = false;
+            }
+            // Initialize DuckDB-WASM in background (non-blocking)
+            this.initWasm();
+        },
+
+        async initWasm() {
+            try {
+                /* global duckdb */
+                if (typeof duckdb === "undefined") {
+                    this.wasmError = "DuckDB-WASM not loaded";
+                    return;
+                }
+                const JSDELIVR_BUNDLES = duckdb.getJsDelivrBundles();
+                const bundle = await duckdb.selectBundle(JSDELIVR_BUNDLES);
+                const worker = new Worker(bundle.mainWorker);
+                const logger = new duckdb.ConsoleLogger();
+                this.wasmDb = new duckdb.AsyncDuckDB(logger, worker);
+                await this.wasmDb.instantiate(bundle.mainModule, bundle.pthreadWorker);
+                this.wasmConn = await this.wasmDb.connect();
+                this.wasmReady = true;
+            } catch (e) {
+                this.wasmError = "Failed to load DuckDB-WASM: " + e.message;
             }
         },
 
@@ -168,11 +200,45 @@ function detectionsApp() {
                 if (this.queryResult.error) {
                     this.queryError = this.queryResult.error;
                     this.queryResult = null;
+                } else if (this.wasmReady && this.queryResult.rows.length > 0) {
+                    // Auto-load server results into DuckDB-WASM as "results" table
+                    await this.loadResultsIntoWasm(this.queryResult);
                 }
             } catch (e) {
                 this.queryError = e.message;
             } finally {
                 this.querying = false;
+            }
+        },
+
+        async loadResultsIntoWasm(result) {
+            if (!this.wasmConn || !result.rows || result.rows.length === 0) return;
+            try {
+                const json = JSON.stringify(result.rows);
+                await this.wasmDb.registerFileText("results.json", json);
+                await this.wasmConn.query("DROP TABLE IF EXISTS results");
+                await this.wasmConn.query(
+                    "CREATE TABLE results AS SELECT * FROM read_json_auto('results.json')"
+                );
+            } catch {
+                // Non-critical — local query just won't work for this result set
+            }
+        },
+
+        async runLocalQuery() {
+            if (!this.localSql.trim() || !this.wasmConn) return;
+            this.localQuerying = true;
+            this.localError = null;
+            this.localResult = null;
+            try {
+                const arrow = await this.wasmConn.query(this.localSql);
+                const rows = arrow.toArray().map((r) => r.toJSON());
+                const columns = arrow.schema.fields.map((f) => f.name);
+                this.localResult = { columns, rows, row_count: rows.length };
+            } catch (e) {
+                this.localError = e.message;
+            } finally {
+                this.localQuerying = false;
             }
         },
 
