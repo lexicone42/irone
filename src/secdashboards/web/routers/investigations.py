@@ -73,12 +73,19 @@ def create_investigation(
 
     from datetime import UTC, datetime
 
+    created_at = datetime.now(UTC).isoformat()
     state.investigations[inv_id] = {
         "name": name or inv_id,
         "graph": graph,
-        "created_at": datetime.now(UTC).isoformat(),
+        "created_at": created_at,
         "timeline_tags": {},
     }
+
+    # Write-through to DuckDB if persistence is configured
+    if state.investigation_store:
+        state.investigation_store.save_investigation(
+            inv_id, name or inv_id, graph, created_at=created_at
+        )
 
     return templates.TemplateResponse(
         request,
@@ -175,6 +182,12 @@ def enrich_investigation(
             graph.add_node(node)
         for edge in new_graph.edges:
             graph.add_edge(edge)
+
+        # Write-through updated graph + invalidate cached artifacts
+        if state.investigation_store:
+            state.investigation_store.save_graph(inv_id, graph)
+            state.investigation_store.delete_artifacts(inv_id)
+
         summary = graph.summary()
         error = None
     except Exception as exc:
@@ -242,3 +255,32 @@ def export_investigation(
         "nodes": {k: v.model_dump() for k, v in graph.nodes.items()},
         "edges": [e.model_dump() for e in graph.edges],
     }
+
+
+@router.delete("/{inv_id}", response_class=HTMLResponse)
+def delete_investigation(
+    request: Request,
+    inv_id: str,
+    state: AppState = Depends(get_state),
+) -> HTMLResponse:
+    """Delete an investigation."""
+    state.investigations.pop(inv_id, None)
+    if state.investigation_store:
+        state.investigation_store.delete_investigation(inv_id)
+
+    templates: Jinja2Templates = request.app.state.templates
+    inv_list: list[dict[str, Any]] = []
+    for iid, data in state.investigations.items():
+        graph = data["graph"]
+        inv_list.append(
+            {
+                "id": iid,
+                "name": data.get("name", iid),
+                "node_count": graph.node_count(),
+                "edge_count": graph.edge_count(),
+                "created_at": data.get("created_at", ""),
+            }
+        )
+    return templates.TemplateResponse(
+        request, "pages/investigations/index.html", {"investigations": inv_list}
+    )

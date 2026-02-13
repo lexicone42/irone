@@ -6,6 +6,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from secdashboards.graph.models import SecurityGraph
+from secdashboards.graph.persistence import InvestigationStore
 from secdashboards.web.app import create_app
 from secdashboards.web.config import WebConfig
 
@@ -13,6 +14,13 @@ from secdashboards.web.config import WebConfig
 @pytest.fixture
 def app():
     config = WebConfig(duckdb_path=":memory:")
+    return create_app(config)
+
+
+@pytest.fixture
+def app_with_store():
+    """App with :memory: investigation store for persistence tests."""
+    config = WebConfig(duckdb_path=":memory:", investigations_db_path=":memory:")
     return create_app(config)
 
 
@@ -173,3 +181,55 @@ class TestInvestigationExport:
         assert resp.status_code == 200
         data = resp.json()
         assert "error" in data
+
+
+class TestInvestigationPersistence:
+    """Tests for write-through persistence when investigation_store is configured."""
+
+    def test_create_persists_to_store(self, app_with_store) -> None:
+        client = TestClient(app_with_store)
+        client.post(
+            "/investigations/",
+            data={"name": "Persisted Inv", "users": "", "ips": ""},
+        )
+        store = app_with_store.state.secdash.investigation_store
+        inv_list = store.list_investigations()
+        assert len(inv_list) == 1
+        assert inv_list[0]["name"] == "Persisted Inv"
+
+    def test_create_without_store_still_works(self, app) -> None:
+        """No store configured — create still succeeds (in-memory only)."""
+        client = TestClient(app)
+        resp = client.post(
+            "/investigations/",
+            data={"name": "Memory Only", "users": "", "ips": ""},
+        )
+        assert resp.status_code == 200
+        assert app.state.secdash.investigation_store is None
+
+    def test_delete_removes_from_store(self, app_with_store) -> None:
+        client = TestClient(app_with_store)
+        client.post(
+            "/investigations/",
+            data={"name": "To Delete", "users": "", "ips": ""},
+        )
+        store = app_with_store.state.secdash.investigation_store
+        inv_id = store.list_investigations()[0]["id"]
+
+        resp = client.delete(f"/investigations/{inv_id}")
+        assert resp.status_code == 200
+        assert store.list_investigations() == []
+        assert inv_id not in app_with_store.state.secdash.investigations
+
+    def test_delete_nonexistent_returns_index(self, app_with_store) -> None:
+        client = TestClient(app_with_store)
+        resp = client.delete("/investigations/nonexistent")
+        assert resp.status_code == 200
+
+    def test_store_field_none_when_no_path(self, app) -> None:
+        assert app.state.secdash.investigation_store is None
+
+    def test_store_field_set_when_path_configured(self, app_with_store) -> None:
+        store = app_with_store.state.secdash.investigation_store
+        assert store is not None
+        assert isinstance(store, InvestigationStore)

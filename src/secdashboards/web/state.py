@@ -10,6 +10,7 @@ from secdashboards.catalog.models import DataSource, DataSourceType
 from secdashboards.catalog.registry import DataCatalog
 from secdashboards.connectors.duckdb import DuckDBConnector
 from secdashboards.detections.runner import DetectionRunner
+from secdashboards.graph.persistence import InvestigationStore
 from secdashboards.web.config import WebConfig
 
 
@@ -21,6 +22,7 @@ class AppState:
     catalog: DataCatalog
     runner: DetectionRunner
     duckdb: DuckDBConnector
+    investigation_store: InvestigationStore | None = None
     investigations: dict[str, Any] = field(default_factory=dict)
     operations: dict[str, dict[str, Any]] = field(default_factory=dict)
 
@@ -56,11 +58,17 @@ def create_app_state(config: WebConfig | None = None) -> AppState:
         if rules_path.exists():
             runner.load_rules_from_directory(rules_path)
 
+    # Investigation persistence (optional — empty path = no persistence)
+    inv_store: InvestigationStore | None = None
+    if config.investigations_db_path:
+        inv_store = InvestigationStore(db_path=config.investigations_db_path)
+
     return AppState(
         config=config,
         catalog=catalog,
         runner=runner,
         duckdb=duckdb_conn,
+        investigation_store=inv_store,
     )
 
 

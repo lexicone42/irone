@@ -49,11 +49,24 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
             logger.error("Cedar: FAILED — %s", e)
             logger.error("Authorization endpoint will return 503")
 
+    # Load persisted investigations into memory
+    state = app.state.secdash
+    if state.investigation_store:
+        for inv_meta in state.investigation_store.list_investigations():
+            inv_id = inv_meta["id"]
+            if inv_id not in state.investigations:
+                loaded = state.investigation_store.load_investigation(inv_id)
+                if loaded:
+                    state.investigations[inv_id] = loaded
+        logger.info("Loaded %d persisted investigations", len(state.investigations))
+
     yield
 
-    # Shutdown: close DuckDB connection
+    # Shutdown: close connections
     state = getattr(app.state, "secdash", None)
     if state is not None:
+        if state.investigation_store:
+            state.investigation_store.close()
         state.duckdb.close()
 
 
