@@ -1,11 +1,18 @@
 """Tests for investigation routes — graph investigations, enrichment, analysis."""
 
+from datetime import UTC, datetime
 from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
 
-from secdashboards.graph.models import SecurityGraph
+from secdashboards.graph.models import (
+    EdgeType,
+    GraphEdge,
+    GraphNode,
+    NodeType,
+    SecurityGraph,
+)
 from secdashboards.graph.persistence import InvestigationStore
 from secdashboards.web.app import create_app
 from secdashboards.web.config import WebConfig
@@ -32,8 +39,6 @@ def client(app):
 @pytest.fixture
 def app_with_investigation(app):
     """App with a pre-created investigation."""
-    from datetime import UTC, datetime
-
     graph = SecurityGraph()
     app.state.secdash.investigations["inv-test1"] = {
         "name": "Test Investigation",
@@ -233,3 +238,110 @@ class TestInvestigationPersistence:
         store = app_with_store.state.secdash.investigation_store
         assert store is not None
         assert isinstance(store, InvestigationStore)
+
+
+@pytest.fixture
+def app_with_graph():
+    """App with an investigation containing timestamped graph nodes."""
+    config = WebConfig(duckdb_path=":memory:")
+    app = create_app(config)
+    graph = SecurityGraph()
+    graph.add_node(
+        GraphNode(
+            id="principal:admin",
+            node_type=NodeType.PRINCIPAL,
+            label="admin@test.com",
+            first_seen=datetime(2024, 6, 1, 12, 0, tzinfo=UTC),
+            last_seen=datetime(2024, 6, 1, 13, 0, tzinfo=UTC),
+            event_count=5,
+        )
+    )
+    graph.add_node(
+        GraphNode(
+            id="ip:10.0.0.1",
+            node_type=NodeType.IP_ADDRESS,
+            label="10.0.0.1",
+            first_seen=datetime(2024, 6, 1, 12, 0, tzinfo=UTC),
+            event_count=3,
+        )
+    )
+    graph.add_edge(
+        GraphEdge(
+            id=GraphEdge.create_id(EdgeType.AUTHENTICATED_FROM, "principal:admin", "ip:10.0.0.1"),
+            edge_type=EdgeType.AUTHENTICATED_FROM,
+            source_id="principal:admin",
+            target_id="ip:10.0.0.1",
+            first_seen=datetime(2024, 6, 1, 12, 0, tzinfo=UTC),
+        )
+    )
+    app.state.secdash.investigations["inv-graph"] = {
+        "name": "Graph Investigation",
+        "graph": graph,
+        "created_at": datetime(2024, 6, 1, tzinfo=UTC).isoformat(),
+        "timeline_tags": {},
+    }
+    return app
+
+
+class TestTimelineRoutes:
+    def test_timeline_not_found(self, client) -> None:
+        resp = client.get("/investigations/nonexistent/timeline.html")
+        assert resp.status_code == 404
+
+    def test_timeline_empty_graph(self, client_with_investigation) -> None:
+        """Empty graph returns a message, not an error."""
+        resp = client_with_investigation.get("/investigations/inv-test1/timeline.html")
+        assert resp.status_code == 200
+        assert "No events" in resp.text
+
+    @patch("secdashboards.graph.timeline.TimelineVisualizer")
+    @patch("secdashboards.graph.timeline.extract_timeline_from_graph")
+    def test_timeline_renders(self, mock_extract, mock_viz_cls, app_with_graph) -> None:
+        from secdashboards.graph.timeline import InvestigationTimeline, TimelineEvent
+
+        mock_timeline = InvestigationTimeline(
+            investigation_id="inv-graph",
+            events=[
+                TimelineEvent(
+                    id="evt-1",
+                    timestamp=datetime(2024, 6, 1, 12, 0, tzinfo=UTC),
+                    title="Login",
+                    entity_type="Principal",
+                    entity_id="principal:admin",
+                ),
+            ],
+        )
+        mock_extract.return_value = mock_timeline
+        mock_viz = MagicMock()
+        mock_viz.to_html.return_value = "<div>Timeline Chart</div>"
+        mock_viz_cls.return_value = mock_viz
+
+        client = TestClient(app_with_graph)
+        resp = client.get("/investigations/inv-graph/timeline.html")
+        assert resp.status_code == 200
+        assert "Timeline Chart" in resp.text
+
+    def test_tag_event_not_found(self, client) -> None:
+        resp = client.post(
+            "/investigations/nonexistent/timeline/tag",
+            data={"event_id": "e1", "tag": "suspicious"},
+        )
+        assert resp.status_code == 404
+
+    def test_tag_event_missing_params(self, client_with_investigation) -> None:
+        resp = client_with_investigation.post(
+            "/investigations/inv-test1/timeline/tag",
+            data={"event_id": "", "tag": ""},
+        )
+        assert resp.status_code == 400
+
+    def test_tag_event_success(self, client_with_investigation) -> None:
+        resp = client_with_investigation.post(
+            "/investigations/inv-test1/timeline/tag",
+            data={"event_id": "evt-1", "tag": "suspicious", "notes": "test"},
+        )
+        assert resp.status_code == 200
+        assert "suspicious" in resp.text
+        # Check in-memory timeline_tags updated
+        inv = client_with_investigation.app.state.secdash.investigations
+        assert inv["inv-test1"]["timeline_tags"]["evt-1"] == "suspicious"
