@@ -123,3 +123,8 @@ division-by-zero = "warn"
 exclude = [
     "src/secdashboards/reports/exporters.py",  # playwright is optional
 ]
+
+[tool.pytest.ini_options]
+markers = [
+    "e2e: end-to-end tests against live deployment (require RUN_E2E_TESTS=1)",
+]
