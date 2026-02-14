@@ -61,18 +61,19 @@ class GraphBuilder:
 
     def __init__(
         self,
-        security_lake: SecurityLakeConnector,
+        security_lake: SecurityLakeConnector | None = None,
         neptune: NeptuneConnector | None = None,
     ) -> None:
         """Initialize the graph builder.
 
         Args:
-            security_lake: A configured SecurityLakeConnector for enrichment queries
+            security_lake: Optional SecurityLakeConnector for enrichment queries.
+                If None, graph building works but enrichment is skipped.
             neptune: Optional NeptuneConnector for persisting graphs
         """
         self.security_lake = security_lake
         self.neptune = neptune
-        self.enricher = SecurityLakeEnricher(security_lake)
+        self.enricher = SecurityLakeEnricher(security_lake) if security_lake else None
         self._graph = SecurityGraph()
 
     def build_from_detection(
@@ -412,6 +413,8 @@ class GraphBuilder:
             limit: Maximum events to fetch
             include_events: Whether to include individual event nodes
         """
+        if not self.enricher:
+            return
         try:
             df = self.enricher.enrich_by_user(user, start, end, limit=limit)
             if len(df) > 0:
@@ -441,6 +444,8 @@ class GraphBuilder:
             limit: Maximum events to fetch
             include_events: Whether to include individual event nodes
         """
+        if not self.enricher:
+            return
         try:
             df = self.enricher.enrich_by_ip(ip, start, end, limit=limit)
             if len(df) > 0:
