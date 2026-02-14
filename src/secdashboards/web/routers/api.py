@@ -23,6 +23,23 @@ class QueryRequest(BaseModel):
     sql: str
 
 
+class RunDetectionRequest(BaseModel):
+    """Request body for running a detection rule."""
+
+    source_name: str = ""
+    lookback_minutes: int = 15
+
+
+class CreateFromDetectionRequest(BaseModel):
+    """Request body for creating an investigation from a detection run."""
+
+    rule_id: str
+    name: str = ""
+    source_name: str = ""
+    lookback_minutes: int = 15
+    enrichment_window_minutes: int = 60
+
+
 @router.get("/sources")
 def list_sources(
     state: AppState = Depends(get_state),
@@ -62,6 +79,50 @@ def get_rule(
     if not rule:
         return {"error": f"Rule {rule_id} not found"}
     return rule.to_dict()
+
+
+@router.post("/detections/{rule_id}/run")
+def run_detection(
+    rule_id: str,
+    body: RunDetectionRequest,
+    state: AppState = Depends(get_state),
+) -> dict[str, Any]:
+    """Run a detection rule and return the result.
+
+    If ``source_name`` is empty, uses the first Security Lake source.
+    Returns the detection result including whether it triggered,
+    match count, and sample matches.
+    """
+    rule = state.runner.get_rule(rule_id)
+    if not rule:
+        raise HTTPException(status_code=404, detail=f"Rule {rule_id} not found")
+
+    # Resolve connector
+    try:
+        if body.source_name:
+            connector = state.catalog.get_connector(body.source_name)
+        else:
+            sl_sources = state.catalog.list_sources(tag="security-lake")
+            if not sl_sources:
+                raise ValueError("No Security Lake sources configured")
+            connector = state.catalog.get_connector(sl_sources[0].name)
+    except (ValueError, IndexError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    result = state.runner.run_rule(rule_id, connector, lookback_minutes=body.lookback_minutes)
+
+    return {
+        "rule_id": result.rule_id,
+        "rule_name": result.rule_name,
+        "triggered": result.triggered,
+        "severity": result.severity,
+        "match_count": result.match_count,
+        "matches": result.matches[:20],
+        "message": result.message,
+        "executed_at": result.executed_at.isoformat(),
+        "execution_time_ms": result.execution_time_ms,
+        "error": result.error,
+    }
 
 
 @router.post("/query")
@@ -376,6 +437,122 @@ def create_investigation_api(
     }
 
 
+@router.post("/investigations/from-detection")
+def create_investigation_from_detection(
+    body: CreateFromDetectionRequest,
+    state: AppState = Depends(get_state),
+) -> dict[str, Any]:
+    """Full pipeline: run detection → build graph → create investigation.
+
+    1. Runs the specified detection rule
+    2. If triggered, builds a SecurityGraph via GraphBuilder.build_from_detection
+    3. Extracts timeline from graph
+    4. Saves everything as a new investigation
+
+    Returns the new investigation ID and summary, or error details
+    if the detection didn't trigger.
+    """
+    import uuid
+    from datetime import UTC
+
+    # Step 1: Run the detection
+    rule = state.runner.get_rule(body.rule_id)
+    if not rule:
+        raise HTTPException(status_code=404, detail=f"Rule {body.rule_id} not found")
+
+    try:
+        if body.source_name:
+            connector = state.catalog.get_connector(body.source_name)
+        else:
+            sl_sources = state.catalog.list_sources(tag="security-lake")
+            if not sl_sources:
+                raise ValueError("No Security Lake sources configured")
+            connector = state.catalog.get_connector(sl_sources[0].name)
+    except (ValueError, IndexError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    detection = state.runner.run_rule(
+        body.rule_id, connector, lookback_minutes=body.lookback_minutes
+    )
+
+    if detection.error:
+        return {
+            "created": False,
+            "error": detection.error,
+            "rule_id": body.rule_id,
+            "triggered": False,
+        }
+
+    if not detection.triggered:
+        return {
+            "created": False,
+            "rule_id": body.rule_id,
+            "triggered": False,
+            "message": detection.message or "No matches found",
+            "match_count": 0,
+        }
+
+    # Step 2: Build graph from detection
+    from secdashboards.graph.builder import GraphBuilder
+
+    try:
+        from secdashboards.connectors.security_lake import SecurityLakeConnector
+
+        sl_sources = state.catalog.list_sources(tag="security-lake")
+        sl_connector = state.catalog.get_connector(sl_sources[0].name)
+        if not isinstance(sl_connector, SecurityLakeConnector):
+            raise TypeError("Expected SecurityLakeConnector")
+        builder = GraphBuilder(security_lake=sl_connector)
+    except Exception:
+        builder = GraphBuilder()
+
+    graph = builder.build_from_detection(
+        detection, enrichment_window_minutes=body.enrichment_window_minutes
+    )
+
+    # Step 3: Extract timeline
+    from secdashboards.graph.timeline import extract_timeline_from_graph
+
+    timeline = extract_timeline_from_graph(graph)
+
+    # Step 4: Save investigation
+    inv_id = f"inv-{uuid.uuid4().hex[:8]}"
+    inv_name = body.name or f"{detection.rule_name} - {detection.executed_at:%Y-%m-%d %H:%M}"
+    created_at = datetime.now(UTC).isoformat()
+
+    state.investigations[inv_id] = {
+        "name": inv_name,
+        "graph": graph,
+        "created_at": created_at,
+        "timeline_tags": {},
+        "detection": {
+            "rule_id": detection.rule_id,
+            "rule_name": detection.rule_name,
+            "severity": detection.severity,
+            "match_count": detection.match_count,
+            "triggered_at": detection.executed_at.isoformat(),
+        },
+    }
+
+    if state.investigation_store:
+        state.investigation_store.save_investigation(inv_id, inv_name, graph, created_at=created_at)
+
+    return {
+        "created": True,
+        "id": inv_id,
+        "name": inv_name,
+        "created_at": created_at,
+        "detection": {
+            "rule_id": detection.rule_id,
+            "triggered": True,
+            "match_count": detection.match_count,
+            "severity": detection.severity,
+        },
+        "summary": graph.summary(),
+        "timeline_event_count": len(timeline.events) if timeline else 0,
+    }
+
+
 @router.get("/investigations/{inv_id}")
 def get_investigation(
     inv_id: str,
@@ -450,6 +627,36 @@ def get_investigation_graph(
         "elements": cy_nodes + cy_edges,
         "summary": graph.summary(),
     }
+
+
+@router.get("/investigations/{inv_id}/report")
+def get_investigation_report(
+    inv_id: str,
+    state: AppState = Depends(get_state),
+) -> dict[str, Any]:
+    """Generate a structured report from an investigation.
+
+    Converts the investigation graph to ``InvestigationReportData``
+    using the existing exporter pipeline. Includes timeline data,
+    entity summaries, and detection metadata.
+    """
+    inv = state.investigations.get(inv_id)
+    if not inv:
+        raise HTTPException(status_code=404, detail=f"Investigation {inv_id} not found")
+
+    graph = inv["graph"]
+
+    from secdashboards.graph.timeline import extract_timeline_from_graph
+    from secdashboards.reports.exporters import graph_to_report_data
+
+    timeline = extract_timeline_from_graph(graph)
+    report = graph_to_report_data(
+        graph,
+        investigation_id=inv_id,
+        timeline=timeline,
+    )
+
+    return report.model_dump(mode="json")
 
 
 @router.post("/investigations/{inv_id}/enrich")

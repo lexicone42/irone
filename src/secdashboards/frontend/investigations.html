@@ -156,66 +156,247 @@
                         </div>
                     </template>
 
-                    <template x-if="detailLoading">
-                        <div style="text-align: center; padding: 2rem;">
-                            <span class="spinner"></span> Loading graph...
-                        </div>
-                    </template>
-
-                    <!-- Graph Container -->
-                    <div class="card" x-show="!detailLoading && graphData">
-                        <div class="card-header">
-                            Investigation Graph
-                            <span style="float: right; font-size: 0.75rem; color: var(--text-muted);">
-                                Click nodes to inspect. Scroll to zoom. Drag to pan.
-                            </span>
-                        </div>
-                        <div id="cy-graph" style="height: 500px; background: #0d1117; border-radius: 4px;"></div>
-
-                        <!-- Legend -->
-                        <div style="display: flex; flex-wrap: wrap; gap: 1rem; padding: 0.75rem 0; font-size: 0.75rem; color: var(--text-muted);">
-                            <span><span style="color: #FF6B6B;">&#9679;</span> Principal</span>
-                            <span><span style="color: #4ECDC4;">&#9670;</span> IP Address</span>
-                            <span><span style="color: #45B7D1;">&#9632;</span> Resource</span>
-                            <span><span style="color: #96CEB4;">&#9650;</span> API Operation</span>
-                            <span><span style="color: #FF4757;">&#9733;</span> Finding</span>
-                            <span><span style="color: #A8A8A8;">&#9679;</span> Event</span>
-                        </div>
+                    <!-- Tab Bar -->
+                    <div style="display: flex; gap: 0; margin-bottom: 1rem; border-bottom: 1px solid var(--border);">
+                        <button class="btn" style="border: none; border-radius: 0; border-bottom: 2px solid transparent; padding: 0.5rem 1rem; font-size: 0.85rem;"
+                                :style="detailTab === 'graph' ? 'border-bottom-color: var(--cyan); color: var(--cyan);' : 'color: var(--text-muted);'"
+                                @click="showTab('graph')">Graph</button>
+                        <button class="btn" style="border: none; border-radius: 0; border-bottom: 2px solid transparent; padding: 0.5rem 1rem; font-size: 0.85rem;"
+                                :style="detailTab === 'report' ? 'border-bottom-color: var(--cyan); color: var(--cyan);' : 'color: var(--text-muted);'"
+                                @click="showTab('report')">Report</button>
                     </div>
 
-                    <!-- Selected Node Details -->
-                    <template x-if="selectedNode">
-                        <div class="card">
-                            <div class="card-header">
-                                Node: <span x-text="selectedNode.label"></span>
-                                <span class="badge badge-ok" x-text="selectedNode.node_type" style="margin-left: 0.5rem;"></span>
-                            </div>
-                            <table class="data-table">
-                                <tbody>
-                                    <tr>
-                                        <td style="color: var(--text-muted);">ID</td>
-                                        <td x-text="selectedNode.id" style="font-family: monospace; font-size: 0.8rem;"></td>
-                                    </tr>
-                                    <tr>
-                                        <td style="color: var(--text-muted);">Events</td>
-                                        <td x-text="selectedNode.event_count"></td>
-                                    </tr>
-                                    <template x-if="selectedNode.first_seen">
-                                        <tr>
-                                            <td style="color: var(--text-muted);">First Seen</td>
-                                            <td x-text="selectedNode.first_seen"></td>
-                                        </tr>
-                                    </template>
-                                    <template x-if="selectedNode.last_seen">
-                                        <tr>
-                                            <td style="color: var(--text-muted);">Last Seen</td>
-                                            <td x-text="selectedNode.last_seen"></td>
-                                        </tr>
-                                    </template>
-                                </tbody>
-                            </table>
+                    <template x-if="detailLoading">
+                        <div style="text-align: center; padding: 2rem;">
+                            <span class="spinner"></span> Loading...
                         </div>
                     </template>
+
+                    <!-- ─── Graph Tab ─────────────────────────── -->
+                    <div x-show="detailTab === 'graph' && !detailLoading">
+                        <div class="card" x-show="graphData">
+                            <div class="card-header">
+                                Investigation Graph
+                                <span style="float: right; font-size: 0.75rem; color: var(--text-muted);">
+                                    Click nodes to inspect. Scroll to zoom. Drag to pan.
+                                </span>
+                            </div>
+                            <div id="cy-graph" style="height: 500px; background: #0d1117; border-radius: 4px;"></div>
+
+                            <!-- Legend -->
+                            <div style="display: flex; flex-wrap: wrap; gap: 1rem; padding: 0.75rem 0; font-size: 0.75rem; color: var(--text-muted);">
+                                <span><span style="color: #FF6B6B;">&#9679;</span> Principal</span>
+                                <span><span style="color: #4ECDC4;">&#9670;</span> IP Address</span>
+                                <span><span style="color: #45B7D1;">&#9632;</span> Resource</span>
+                                <span><span style="color: #96CEB4;">&#9650;</span> API Operation</span>
+                                <span><span style="color: #FF4757;">&#9733;</span> Finding</span>
+                                <span><span style="color: #A8A8A8;">&#9679;</span> Event</span>
+                            </div>
+                        </div>
+
+                        <!-- Selected Node Details -->
+                        <template x-if="selectedNode">
+                            <div class="card">
+                                <div class="card-header">
+                                    Node: <span x-text="selectedNode.label"></span>
+                                    <span class="badge badge-ok" x-text="selectedNode.node_type" style="margin-left: 0.5rem;"></span>
+                                </div>
+                                <table class="data-table">
+                                    <tbody>
+                                        <tr>
+                                            <td style="color: var(--text-muted);">ID</td>
+                                            <td x-text="selectedNode.id" style="font-family: monospace; font-size: 0.8rem;"></td>
+                                        </tr>
+                                        <tr>
+                                            <td style="color: var(--text-muted);">Events</td>
+                                            <td x-text="selectedNode.event_count"></td>
+                                        </tr>
+                                        <template x-if="selectedNode.first_seen">
+                                            <tr>
+                                                <td style="color: var(--text-muted);">First Seen</td>
+                                                <td x-text="selectedNode.first_seen"></td>
+                                            </tr>
+                                        </template>
+                                        <template x-if="selectedNode.last_seen">
+                                            <tr>
+                                                <td style="color: var(--text-muted);">Last Seen</td>
+                                                <td x-text="selectedNode.last_seen"></td>
+                                            </tr>
+                                        </template>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </template>
+                    </div>
+
+                    <!-- ─── Report Tab ────────────────────────── -->
+                    <div x-show="detailTab === 'report' && !detailLoading">
+                        <template x-if="reportLoading">
+                            <div style="text-align: center; padding: 2rem;">
+                                <span class="spinner"></span> Generating report...
+                            </div>
+                        </template>
+
+                        <template x-if="!reportLoading && reportData">
+                            <div>
+                                <!-- Report Header -->
+                                <div class="card">
+                                    <div class="card-header">Investigation Report</div>
+                                    <div style="display: flex; justify-content: space-between; font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.5rem;">
+                                        <span x-text="'Generated: ' + (reportData.generated_at || '—')"></span>
+                                        <span x-text="'ID: ' + (reportData.investigation_id || '—')"></span>
+                                    </div>
+                                    <template x-if="reportData.executive_summary">
+                                        <p style="color: var(--text-primary); margin-top: 0.5rem;" x-text="reportData.executive_summary"></p>
+                                    </template>
+                                </div>
+
+                                <!-- Entity Stats -->
+                                <div class="grid grid-4" style="margin-bottom: 1rem;">
+                                    <div class="card" style="text-align: center;">
+                                        <div class="stat-label">Nodes</div>
+                                        <div class="stat-value" style="font-size: 1.5rem;" x-text="reportData.total_nodes"></div>
+                                    </div>
+                                    <div class="card" style="text-align: center;">
+                                        <div class="stat-label">Edges</div>
+                                        <div class="stat-value" style="font-size: 1.5rem;" x-text="reportData.total_edges"></div>
+                                    </div>
+                                    <div class="card" style="text-align: center;">
+                                        <div class="stat-label">Principals</div>
+                                        <div class="stat-value" style="font-size: 1.5rem;" x-text="(reportData.principals || []).length"></div>
+                                    </div>
+                                    <div class="card" style="text-align: center;">
+                                        <div class="stat-label">IPs</div>
+                                        <div class="stat-value" style="font-size: 1.5rem;" x-text="(reportData.ip_addresses || []).length"></div>
+                                    </div>
+                                </div>
+
+                                <!-- Entity Summaries -->
+                                <template x-if="reportData.entity_summaries && reportData.entity_summaries.length > 0">
+                                    <div class="card">
+                                        <div class="card-header">Entity Breakdown</div>
+                                        <table class="data-table">
+                                            <thead>
+                                                <tr>
+                                                    <th>Type</th>
+                                                    <th>Count</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                <template x-for="(entity, i) in reportData.entity_summaries" :key="i">
+                                                    <tr>
+                                                        <td x-text="entity.type || entity.node_type || '—'"></td>
+                                                        <td x-text="entity.count || '—'"></td>
+                                                    </tr>
+                                                </template>
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </template>
+
+                                <!-- Principals List -->
+                                <template x-if="reportData.principals && reportData.principals.length > 0">
+                                    <div class="card">
+                                        <div class="card-header">Principals</div>
+                                        <div style="display: flex; flex-wrap: wrap; gap: 0.5rem;">
+                                            <template x-for="p in reportData.principals" :key="p">
+                                                <span class="badge badge-error" x-text="p"></span>
+                                            </template>
+                                        </div>
+                                    </div>
+                                </template>
+
+                                <!-- IP Addresses -->
+                                <template x-if="reportData.ip_addresses && reportData.ip_addresses.length > 0">
+                                    <div class="card">
+                                        <div class="card-header">IP Addresses</div>
+                                        <div style="display: flex; flex-wrap: wrap; gap: 0.5rem;">
+                                            <template x-for="ip in reportData.ip_addresses" :key="ip">
+                                                <span class="badge" style="background: #1a3a4a; color: var(--cyan);" x-text="ip"></span>
+                                            </template>
+                                        </div>
+                                    </div>
+                                </template>
+
+                                <!-- API Operations -->
+                                <template x-if="reportData.api_operations && reportData.api_operations.length > 0">
+                                    <div class="card">
+                                        <div class="card-header">API Operations</div>
+                                        <div style="display: flex; flex-wrap: wrap; gap: 0.5rem;">
+                                            <template x-for="op in reportData.api_operations" :key="op">
+                                                <span class="badge badge-ok" x-text="op"></span>
+                                            </template>
+                                        </div>
+                                    </div>
+                                </template>
+
+                                <!-- Findings -->
+                                <template x-if="reportData.findings && reportData.findings.length > 0">
+                                    <div class="card">
+                                        <div class="card-header">Security Findings</div>
+                                        <template x-for="(finding, i) in reportData.findings" :key="i">
+                                            <div class="alert alert-error" style="margin-bottom: 0.5rem;">
+                                                <strong x-text="finding.title || finding.rule_name || 'Finding'"></strong>
+                                                <template x-if="finding.severity">
+                                                    <span class="badge badge-error" style="margin-left: 0.5rem;" x-text="finding.severity"></span>
+                                                </template>
+                                                <template x-if="finding.description">
+                                                    <p style="margin-top: 0.25rem; font-size: 0.8rem;" x-text="finding.description"></p>
+                                                </template>
+                                            </div>
+                                        </template>
+                                    </div>
+                                </template>
+
+                                <!-- Timeline Events -->
+                                <template x-if="reportData.timeline_events && reportData.timeline_events.length > 0">
+                                    <div class="card">
+                                        <div class="card-header">
+                                            Timeline Events (<span x-text="reportData.timeline_events.length"></span>)
+                                        </div>
+                                        <div style="overflow-y: auto; max-height: 400px;">
+                                            <table class="data-table">
+                                                <thead>
+                                                    <tr>
+                                                        <th>Time</th>
+                                                        <th>Event</th>
+                                                        <th>Tag</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    <template x-for="(evt, i) in reportData.timeline_events" :key="i">
+                                                        <tr>
+                                                            <td style="font-size: 0.75rem; white-space: nowrap;"
+                                                                x-text="evt.timestamp || evt.time || '—'"></td>
+                                                            <td style="font-size: 0.8rem;"
+                                                                x-text="evt.description || evt.label || '—'"></td>
+                                                            <td>
+                                                                <template x-if="evt.tag">
+                                                                    <span class="badge badge-warn" x-text="evt.tag"></span>
+                                                                </template>
+                                                            </td>
+                                                        </tr>
+                                                    </template>
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </div>
+                                </template>
+
+                                <!-- Time Range -->
+                                <template x-if="reportData.time_range_start || reportData.time_range_end">
+                                    <div class="card">
+                                        <div class="card-header">Time Range</div>
+                                        <div style="font-size: 0.85rem; color: var(--text-secondary);">
+                                            <span x-text="reportData.time_range_start || '—'"></span>
+                                            <span style="color: var(--text-muted);"> → </span>
+                                            <span x-text="reportData.time_range_end || '—'"></span>
+                                        </div>
+                                    </div>
+                                </template>
+                            </div>
+                        </template>
+                    </div>
                 </div>
             </template>
         </main>

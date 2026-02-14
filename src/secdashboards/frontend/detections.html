@@ -70,6 +70,7 @@
                                 <th>Severity</th>
                                 <th>Tags</th>
                                 <th>Enabled</th>
+                                <th></th>
                             </tr>
                         </thead>
                         <tbody>
@@ -85,12 +86,125 @@
                                         <span :class="rule.enabled ? 'status-ok' : 'status-error'"
                                               x-text="rule.enabled ? 'yes' : 'no'"></span>
                                     </td>
+                                    <td>
+                                        <button class="btn" style="padding: 0.2rem 0.6rem; font-size: 0.75rem;"
+                                                @click="runDetection(rule.id)"
+                                                :disabled="runningRule === rule.id">
+                                            <template x-if="runningRule === rule.id">
+                                                <span><span class="spinner"></span></span>
+                                            </template>
+                                            <template x-if="runningRule !== rule.id">
+                                                <span>Run</span>
+                                            </template>
+                                        </button>
+                                    </td>
                                 </tr>
                             </template>
                         </tbody>
                     </table>
                 </template>
             </div>
+
+            <!-- Detection Result Panel -->
+            <template x-if="detectionResult">
+                <div class="card">
+                    <div class="card-header">
+                        Detection Result: <span x-text="detectionResult.rule_name"></span>
+                        <span style="float: right;">
+                            <button class="btn" style="padding: 0.1rem 0.4rem; font-size: 0.7rem;"
+                                    @click="dismissResult()">Dismiss</button>
+                        </span>
+                    </div>
+
+                    <!-- Status badge -->
+                    <div style="margin-bottom: 0.75rem;">
+                        <template x-if="detectionResult.triggered">
+                            <span class="badge badge-error">TRIGGERED</span>
+                        </template>
+                        <template x-if="!detectionResult.triggered && !detectionResult.error">
+                            <span class="badge badge-ok">CLEAN</span>
+                        </template>
+                        <template x-if="detectionResult.error">
+                            <span class="badge badge-warn">ERROR</span>
+                        </template>
+                        <span style="color: var(--text-muted); margin-left: 0.5rem; font-size: 0.8rem;"
+                              x-text="detectionResult.executed_at"></span>
+                    </div>
+
+                    <!-- Summary stats -->
+                    <template x-if="!detectionResult.error">
+                        <div class="grid grid-4" style="margin-bottom: 0.75rem;">
+                            <div style="text-align: center;">
+                                <div class="stat-label">Matches</div>
+                                <div class="stat-value" style="font-size: 1.5rem;"
+                                     x-text="detectionResult.match_count"></div>
+                            </div>
+                            <div style="text-align: center;">
+                                <div class="stat-label">Severity</div>
+                                <div style="font-size: 1.2rem;">
+                                    <span class="badge" :class="severityClass(detectionResult.severity)"
+                                          x-text="detectionResult.severity"></span>
+                                </div>
+                            </div>
+                            <div style="text-align: center;">
+                                <div class="stat-label">Exec Time</div>
+                                <div style="font-size: 1rem; color: var(--text-primary);"
+                                     x-text="(detectionResult.execution_time_ms || 0) + 'ms'"></div>
+                            </div>
+                            <div style="text-align: center;">
+                                <div class="stat-label">Message</div>
+                                <div style="font-size: 0.8rem; color: var(--text-secondary);"
+                                     x-text="detectionResult.message || '—'"></div>
+                            </div>
+                        </div>
+                    </template>
+
+                    <!-- Error display -->
+                    <template x-if="detectionResult.error">
+                        <div class="alert alert-error" x-text="detectionResult.error"></div>
+                    </template>
+
+                    <!-- Sample matches table -->
+                    <template x-if="detectionResult.matches && detectionResult.matches.length > 0">
+                        <div style="margin-bottom: 0.75rem;">
+                            <div style="color: var(--text-secondary); font-size: 0.8rem; margin-bottom: 0.5rem;">
+                                Sample Matches (showing <span x-text="detectionResult.matches.length"></span>)
+                            </div>
+                            <div style="overflow-x: auto; max-height: 300px; overflow-y: auto;">
+                                <table class="data-table">
+                                    <thead>
+                                        <tr>
+                                            <template x-for="key in Object.keys(detectionResult.matches[0] || {})" :key="key">
+                                                <th x-text="key"></th>
+                                            </template>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <template x-for="(match, i) in detectionResult.matches.slice(0, 10)" :key="i">
+                                            <tr>
+                                                <template x-for="key in Object.keys(detectionResult.matches[0] || {})" :key="key">
+                                                    <td style="font-size: 0.75rem;"
+                                                        x-text="match[key] != null ? String(match[key]).substring(0, 80) : '—'"></td>
+                                                </template>
+                                            </tr>
+                                        </template>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </template>
+
+                    <!-- Investigate button -->
+                    <template x-if="detectionResult.triggered">
+                        <button class="btn btn-primary" @click="investigate()" :disabled="investigating">
+                            <template x-if="!investigating"><span>Create Investigation</span></template>
+                            <template x-if="investigating">
+                                <span><span class="spinner"></span> Building graph...</span>
+                            </template>
+                        </button>
+                    </template>
+                </div>
+            </template>
 
             <!-- Query Explorer Section -->
             <div class="card">

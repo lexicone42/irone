@@ -144,6 +144,11 @@ function detectionsApp() {
         loading: true,
         error: null,
 
+        // Detection run state
+        runningRule: null,
+        detectionResult: null,
+        investigating: false,
+
         // Server query explorer state
         sql: "",
         queryResult: null,
@@ -170,6 +175,51 @@ function detectionsApp() {
             }
             // Initialize DuckDB-WASM in background (non-blocking)
             this.initWasm();
+        },
+
+        async runDetection(ruleId) {
+            this.runningRule = ruleId;
+            this.detectionResult = null;
+            this.error = null;
+            try {
+                this.detectionResult = await apiFetch(`/detections/${ruleId}/run`, {
+                    method: "POST",
+                    body: JSON.stringify({ lookback_minutes: 15 }),
+                });
+            } catch (e) {
+                this.error = e.message;
+            } finally {
+                this.runningRule = null;
+            }
+        },
+
+        async investigate() {
+            if (!this.detectionResult || !this.detectionResult.triggered) return;
+            this.investigating = true;
+            this.error = null;
+            try {
+                const resp = await apiFetch("/investigations/from-detection", {
+                    method: "POST",
+                    body: JSON.stringify({
+                        rule_id: this.detectionResult.rule_id,
+                        lookback_minutes: 15,
+                        enrichment_window_minutes: 60,
+                    }),
+                });
+                if (resp.created && resp.id) {
+                    window.location.href = `/investigations.html#${resp.id}`;
+                } else {
+                    this.error = resp.error || "Investigation not created";
+                }
+            } catch (e) {
+                this.error = e.message;
+            } finally {
+                this.investigating = false;
+            }
+        },
+
+        dismissResult() {
+            this.detectionResult = null;
         },
 
         async initWasm() {
@@ -315,9 +365,17 @@ function investigationsApp() {
         detailLoading: false,
         graphData: null,
         cy: null,
+        detailTab: "graph",   // "graph" | "report"
+        reportData: null,
+        reportLoading: false,
 
         async init() {
             await this.loadList();
+            // Deep-link: open investigation from URL hash (e.g. #inv-abc123)
+            const hash = window.location.hash.slice(1);
+            if (hash && hash.startsWith("inv-")) {
+                await this.openDetail(hash);
+            }
         },
 
         async loadList() {
@@ -356,6 +414,8 @@ function investigationsApp() {
 
         async openDetail(invId) {
             this.detailLoading = true;
+            this.detailTab = "graph";
+            this.reportData = null;
             this.error = null;
             try {
                 this.activeInv = await apiFetch(`/investigations/${invId}`);
@@ -366,6 +426,30 @@ function investigationsApp() {
                 this.error = e.message;
             } finally {
                 this.detailLoading = false;
+            }
+        },
+
+        async showTab(tab) {
+            this.detailTab = tab;
+            if (tab === "graph") {
+                this.$nextTick(() => {
+                    if (this.graphData) this.renderGraph(this.graphData.elements);
+                });
+            } else if (tab === "report" && !this.reportData) {
+                await this.loadReport();
+            }
+        },
+
+        async loadReport() {
+            if (!this.activeInv) return;
+            this.reportLoading = true;
+            this.error = null;
+            try {
+                this.reportData = await apiFetch(`/investigations/${this.activeInv.id}/report`);
+            } catch (e) {
+                this.error = e.message;
+            } finally {
+                this.reportLoading = false;
             }
         },
 
@@ -457,10 +541,13 @@ function investigationsApp() {
             this.activeInv = null;
             this.graphData = null;
             this.selectedNode = null;
+            this.reportData = null;
+            this.detailTab = "graph";
             if (this.cy) {
                 this.cy.destroy();
                 this.cy = null;
             }
+            window.location.hash = "";
         },
 
         timeAgo,
