@@ -19,6 +19,14 @@ aws-sdk-s3 = { workspace = true }
 aws-sdk-dynamodb = { workspace = true }
 aws-sdk-sns = { workspace = true }
 csv = { workspace = true }
+iceberg = { workspace = true }
+iceberg-catalog-glue = { workspace = true }
+arrow-array = { workspace = true }
+arrow-schema = { workspace = true }
+arrow-cast = { workspace = true }
+parquet = { workspace = true }
+futures = { workspace = true }
+bytes = { workspace = true }
 
 [lints]
 workspace = true
