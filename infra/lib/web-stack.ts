@@ -11,6 +11,8 @@ export interface WebStackProps extends cdk.StackProps {
   readonly userPoolId: string;
   readonly userPoolClientId: string;
   readonly cognitoDomain: string;
+  /** Path to cargo-lambda output for iris-web (undefined = dummy placeholder). */
+  readonly webLambdaCodePath?: string;
 }
 
 export class WebStack extends cdk.Stack {
@@ -49,6 +51,7 @@ export class WebStack extends cdk.Stack {
     // --- Lambda: web API ---
     const webLambda = new RustLambda(this, "FastAPI", {
       logicalId: "FastAPIHandlerC4831E27",
+      codePath: props.webLambdaCodePath,
       description: "iris web API (Rust/axum on provided.al2023)",
       memorySize: 1024,
       timeout: 120,

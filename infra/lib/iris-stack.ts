@@ -18,6 +18,8 @@ export interface IrisStackProps extends cdk.StackProps {
   readonly certificateArn: string;
   readonly domainName: string;
   readonly hostedZoneId: string;
+  /** Path to cargo-lambda output for iris-health-checker (undefined = dummy). */
+  readonly healthCheckerCodePath?: string;
 }
 
 export class IrisStack extends cdk.Stack {
@@ -58,6 +60,7 @@ export class IrisStack extends cdk.Stack {
     // --- Health checker Lambda ---
     const healthChecker = new RustLambda(this, "HealthChecker", {
       logicalId: "HealthCheckerFunction0C7E0A62",
+      codePath: props.healthCheckerCodePath,
       functionName: "secdash-health-checker",
       description: "iris health checker (Rust, EventBridge scheduled)",
       memorySize: 1024,
