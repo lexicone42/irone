@@ -53,10 +53,10 @@ impl DetectionRunner {
     }
 
     /// Run a single detection rule.
-    pub fn run_rule(
+    pub async fn run_rule<C: DataConnector>(
         &self,
         rule_id: &str,
-        connector: &dyn DataConnector,
+        connector: &C,
         start: Option<DateTime<Utc>>,
         end: Option<DateTime<Utc>>,
         lookback_minutes: i64,
@@ -75,7 +75,7 @@ impl DetectionRunner {
             "Executing detection query"
         );
 
-        match connector.query(&query) {
+        match connector.query(&query).await {
             Ok(qr) => {
                 let result = rule.evaluate(&qr);
                 info!(
@@ -94,18 +94,23 @@ impl DetectionRunner {
     }
 
     /// Run all enabled detection rules.
-    pub fn run_all(
+    pub async fn run_all<C: DataConnector>(
         &self,
-        connector: &dyn DataConnector,
+        connector: &C,
         start: Option<DateTime<Utc>>,
         end: Option<DateTime<Utc>>,
         lookback_minutes: i64,
     ) -> Vec<DetectionResult> {
-        self.rules
-            .iter()
-            .filter(|(_, r)| r.metadata().enabled)
-            .map(|(id, _)| self.run_rule(id, connector, start, end, lookback_minutes))
-            .collect()
+        let mut results = Vec::new();
+        for (id, rule) in &self.rules {
+            if rule.metadata().enabled {
+                results.push(
+                    self.run_rule(id, connector, start, end, lookback_minutes)
+                        .await,
+                );
+            }
+        }
+        results
     }
 
     /// Load detection rules from YAML files in a directory.
@@ -337,18 +342,18 @@ mod tests {
     }
 
     impl DataConnector for MockConnector {
-        fn query(
+        async fn query(
             &self,
             _sql: &str,
         ) -> Result<QueryResult, Box<dyn std::error::Error + Send + Sync>> {
             Ok(self.result.clone())
         }
-        fn get_schema(
+        async fn get_schema(
             &self,
         ) -> Result<HashMap<String, String>, Box<dyn std::error::Error + Send + Sync>> {
             Ok(HashMap::new())
         }
-        fn check_health(
+        async fn check_health(
             &self,
         ) -> Result<
             crate::connectors::base::HealthCheckResult,
@@ -401,18 +406,18 @@ mod tests {
         assert_eq!(runner.list_rules(false).len(), 2);
     }
 
-    #[test]
-    fn run_rule_not_found() {
+    #[tokio::test]
+    async fn run_rule_not_found() {
         let runner = DetectionRunner::new();
         let connector = MockConnector {
             result: QueryResult::empty(),
         };
-        let result = runner.run_rule("missing", &connector, None, None, 15);
+        let result = runner.run_rule("missing", &connector, None, None, 15).await;
         assert!(result.error.is_some());
     }
 
-    #[test]
-    fn run_rule_triggers() {
+    #[tokio::test]
+    async fn run_rule_triggers() {
         let mut runner = DetectionRunner::new();
         runner.register_rule(Box::new(sample_sql_rule()));
 
@@ -422,20 +427,22 @@ mod tests {
                 json_row!("user" => "bob"),
             ]),
         };
-        let result = runner.run_rule("test-rule", &connector, None, None, 15);
+        let result = runner
+            .run_rule("test-rule", &connector, None, None, 15)
+            .await;
         assert!(result.triggered);
         assert_eq!(result.match_count, 2);
     }
 
-    #[test]
-    fn run_all_runs_enabled_rules() {
+    #[tokio::test]
+    async fn run_all_runs_enabled_rules() {
         let mut runner = DetectionRunner::new();
         runner.register_rule(Box::new(sample_sql_rule()));
 
         let connector = MockConnector {
             result: QueryResult::from_maps(vec![json_row!("x" => 1)]),
         };
-        let results = runner.run_all(&connector, None, None, 15);
+        let results = runner.run_all(&connector, None, None, 15).await;
         assert_eq!(results.len(), 1);
         assert!(results[0].triggered);
     }
