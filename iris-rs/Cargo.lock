@@ -296,11 +296,13 @@ dependencies = [
 name = "iris-persistence"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "iris-core",
+ "redb",
  "serde",
  "serde_json",
+ "tempfile",
  "thiserror",
- "tokio",
  "tracing",
 ]
 
@@ -533,6 +535,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "513962919efc330f829edb2535844d1b912b0fbe2ca165d613e4e8788bb05a5a"
 dependencies = [
  "rand_core",
+]
+
+[[package]]
+name = "redb"
+version = "2.6.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8eca1e9d98d5a7e9002d0013e18d5a9b000aee942eb134883a82f06ebffb6c01"
+dependencies = [
+ "libc",
 ]
 
 [[package]]
