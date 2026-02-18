@@ -5,7 +5,7 @@ set -euo pipefail
 
 BUCKET="${1:-iris-frontend}"
 DIST_ID="${2:-}"
-FRONTEND_DIR="src/secdashboards/frontend"
+FRONTEND_DIR="frontend"
 
 if [[ ! -d "$FRONTEND_DIR" ]]; then
     echo "ERROR: $FRONTEND_DIR not found. Run from repo root." >&2
