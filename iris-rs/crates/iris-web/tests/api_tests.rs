@@ -211,7 +211,7 @@ async fn delete(app: axum::Router, uri: &str) -> (StatusCode, serde_json::Value)
 
 #[tokio::test]
 async fn health_check_returns_ok() {
-    let app = build_router(test_state());
+    let app = build_router(test_state(), None);
     let (status, body) = get(app, "/api/health").await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["status"], "ok");
@@ -219,12 +219,12 @@ async fn health_check_returns_ok() {
 
 #[tokio::test]
 async fn dashboard_summary_empty() {
-    let app = build_router(test_state());
+    let app = build_router(test_state(), None);
     let (status, body) = get(app, "/api/dashboard").await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["sources_count"], 0);
-    assert_eq!(body["rules_count"], 0);
-    assert_eq!(body["investigations_count"], 0);
+    assert_eq!(body["source_count"], 0);
+    assert_eq!(body["rule_count"], 0);
+    assert_eq!(body["investigation_count"], 0);
 }
 
 #[tokio::test]
@@ -236,18 +236,29 @@ async fn dashboard_summary_with_data() {
         .write()
         .await
         .register_security_lake_sources("my_db", "us-west-2");
-    let app = build_router(state);
+    let app = build_router(state, None);
     let (status, body) = get(app, "/api/dashboard").await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["sources_count"], 5);
-    assert_eq!(body["investigations_count"], 1);
+    assert_eq!(body["source_count"], 5);
+    assert_eq!(body["investigation_count"], 1);
+}
+
+// ===== Auth Config =====
+
+#[tokio::test]
+async fn auth_config_returns_defaults() {
+    let app = build_router(test_state(), None);
+    let (status, body) = get(app, "/api/auth/config").await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(!body["auth_enabled"].as_bool().unwrap());
+    assert_eq!(body["cognito_region"], "us-west-2");
 }
 
 // ===== Sources =====
 
 #[tokio::test]
 async fn list_sources_empty() {
-    let app = build_router(test_state());
+    let app = build_router(test_state(), None);
     let (status, body) = get(app, "/api/sources").await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body.as_array().unwrap().len(), 0);
@@ -255,7 +266,7 @@ async fn list_sources_empty() {
 
 #[tokio::test]
 async fn list_sources_with_entries() {
-    let app = build_router(test_state_with_sources());
+    let app = build_router(test_state_with_sources(), None);
     let (status, body) = get(app, "/api/sources").await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body.as_array().unwrap().len(), 2);
@@ -263,7 +274,7 @@ async fn list_sources_with_entries() {
 
 #[tokio::test]
 async fn list_sources_with_tag_filter() {
-    let app = build_router(test_state_with_sources());
+    let app = build_router(test_state_with_sources(), None);
     let (status, body) = get(app, "/api/sources?tag=security-lake").await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body.as_array().unwrap().len(), 2);
@@ -271,7 +282,7 @@ async fn list_sources_with_tag_filter() {
 
 #[tokio::test]
 async fn list_sources_with_nonexistent_tag() {
-    let app = build_router(test_state_with_sources());
+    let app = build_router(test_state_with_sources(), None);
     let (status, body) = get(app, "/api/sources?tag=nonexistent").await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body.as_array().unwrap().len(), 0);
@@ -279,7 +290,7 @@ async fn list_sources_with_nonexistent_tag() {
 
 #[tokio::test]
 async fn source_health_not_found() {
-    let app = build_router(test_state());
+    let app = build_router(test_state(), None);
     let (status, body) = get(app, "/api/sources/nope/health").await;
     assert_eq!(status, StatusCode::NOT_FOUND);
     assert!(body["error"].as_str().unwrap().contains("not found"));
@@ -289,7 +300,7 @@ async fn source_health_not_found() {
 
 #[tokio::test]
 async fn list_rules_empty() {
-    let app = build_router(test_state());
+    let app = build_router(test_state(), None);
     let (status, body) = get(app, "/api/rules").await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body.as_array().unwrap().len(), 0);
@@ -297,7 +308,7 @@ async fn list_rules_empty() {
 
 #[tokio::test]
 async fn list_rules_with_entries() {
-    let app = build_router(test_state_with_rules());
+    let app = build_router(test_state_with_rules(), None);
     let (status, body) = get(app, "/api/rules").await;
     assert_eq!(status, StatusCode::OK);
     let rules = body.as_array().unwrap();
@@ -308,7 +319,7 @@ async fn list_rules_with_entries() {
 
 #[tokio::test]
 async fn get_rule_found() {
-    let app = build_router(test_state_with_rules());
+    let app = build_router(test_state_with_rules(), None);
     let (status, body) = get(app, "/api/rules/rule-1").await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["id"], "rule-1");
@@ -317,7 +328,7 @@ async fn get_rule_found() {
 
 #[tokio::test]
 async fn get_rule_not_found() {
-    let app = build_router(test_state_with_rules());
+    let app = build_router(test_state_with_rules(), None);
     let (status, body) = get(app, "/api/rules/nonexistent").await;
     assert_eq!(status, StatusCode::NOT_FOUND);
     assert!(body["error"].as_str().unwrap().contains("not found"));
@@ -327,7 +338,7 @@ async fn get_rule_not_found() {
 
 #[tokio::test]
 async fn list_investigations_empty() {
-    let app = build_router(test_state());
+    let app = build_router(test_state(), None);
     let (status, body) = get(app, "/api/investigations").await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body.as_array().unwrap().len(), 0);
@@ -335,7 +346,7 @@ async fn list_investigations_empty() {
 
 #[tokio::test]
 async fn list_investigations_with_entries() {
-    let app = build_router(test_state_with_investigation());
+    let app = build_router(test_state_with_investigation(), None);
     let (status, body) = get(app, "/api/investigations").await;
     assert_eq!(status, StatusCode::OK);
     let invs = body.as_array().unwrap();
@@ -348,7 +359,7 @@ async fn list_investigations_with_entries() {
 
 #[tokio::test]
 async fn get_investigation_found() {
-    let app = build_router(test_state_with_investigation());
+    let app = build_router(test_state_with_investigation(), None);
     let (status, body) = get(app, "/api/investigations/inv-1").await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["id"], "inv-1");
@@ -358,7 +369,7 @@ async fn get_investigation_found() {
 
 #[tokio::test]
 async fn get_investigation_not_found() {
-    let app = build_router(test_state());
+    let app = build_router(test_state(), None);
     let (status, body) = get(app, "/api/investigations/nope").await;
     assert_eq!(status, StatusCode::NOT_FOUND);
     assert!(body["error"].as_str().unwrap().contains("not found"));
@@ -366,7 +377,7 @@ async fn get_investigation_not_found() {
 
 #[tokio::test]
 async fn get_investigation_graph_cytoscape_format() {
-    let app = build_router(test_state_with_investigation());
+    let app = build_router(test_state_with_investigation(), None);
     let (status, body) = get(app, "/api/investigations/inv-1/graph").await;
     assert_eq!(status, StatusCode::OK);
 
@@ -392,7 +403,7 @@ async fn get_investigation_graph_cytoscape_format() {
 
 #[tokio::test]
 async fn get_investigation_report() {
-    let app = build_router(test_state_with_investigation());
+    let app = build_router(test_state_with_investigation(), None);
     let (status, body) = get(app, "/api/investigations/inv-1/report").await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["investigation_id"], "inv-1");
@@ -402,7 +413,7 @@ async fn get_investigation_report() {
 
 #[tokio::test]
 async fn tag_timeline_event() {
-    let app = build_router(test_state_with_investigation());
+    let app = build_router(test_state_with_investigation(), None);
     let (status, body) = post_json(
         app,
         "/api/investigations/inv-1/timeline/tag",
@@ -420,7 +431,7 @@ async fn tag_timeline_event() {
 
 #[tokio::test]
 async fn tag_timeline_event_not_found() {
-    let app = build_router(test_state_with_investigation());
+    let app = build_router(test_state_with_investigation(), None);
     let (status, body) = post_json(
         app,
         "/api/investigations/inv-1/timeline/tag",
@@ -437,7 +448,7 @@ async fn tag_timeline_event_not_found() {
 
 #[tokio::test]
 async fn delete_investigation() {
-    let app = build_router(test_state_with_investigation());
+    let app = build_router(test_state_with_investigation(), None);
     let (status, body) = delete(app, "/api/investigations/inv-1").await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["deleted"], "inv-1");
@@ -445,7 +456,7 @@ async fn delete_investigation() {
 
 #[tokio::test]
 async fn delete_investigation_not_found() {
-    let app = build_router(test_state());
+    let app = build_router(test_state(), None);
     let (status, body) = delete(app, "/api/investigations/nope").await;
     assert_eq!(status, StatusCode::NOT_FOUND);
     assert!(body["error"].as_str().unwrap().contains("not found"));
@@ -453,7 +464,7 @@ async fn delete_investigation_not_found() {
 
 #[tokio::test]
 async fn create_investigation_no_source() {
-    let app = build_router(test_state());
+    let app = build_router(test_state(), None);
     let (status, body) = post_json(
         app,
         "/api/investigations",
@@ -473,7 +484,7 @@ async fn create_investigation_no_source() {
 
 #[tokio::test]
 async fn from_detection_rule_not_found() {
-    let app = build_router(test_state_with_sources());
+    let app = build_router(test_state_with_sources(), None);
     let (status, body) = post_json(
         app,
         "/api/investigations/from-detection",
@@ -490,7 +501,7 @@ async fn from_detection_rule_not_found() {
 
 #[tokio::test]
 async fn from_detection_source_not_found() {
-    let app = build_router(test_state_with_rules());
+    let app = build_router(test_state_with_rules(), None);
     let (status, body) = post_json(
         app,
         "/api/investigations/from-detection",
