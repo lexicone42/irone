@@ -10,6 +10,7 @@ iris-core = { workspace = true }
 iris-aws = { workspace = true }
 iris-auth = { workspace = true }
 iris-persistence = { workspace = true }
+l42-token-handler = { workspace = true }
 axum = { workspace = true }
 tower = { workspace = true }
 tower-http = { workspace = true }

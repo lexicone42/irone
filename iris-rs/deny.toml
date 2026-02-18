@@ -12,6 +12,8 @@ allow = [
     "Zlib",
     "Unicode-3.0",
     "Unicode-DFS-2016",
+    "CDLA-Permissive-2.0",
+    "OpenSSL",
 ]
 confidence-threshold = 0.8
 
@@ -28,3 +30,4 @@ ignore = []
 [sources]
 unknown-registry = "deny"
 unknown-git = "deny"
+allow-org = { github = ["lexicone42"] }
