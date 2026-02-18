@@ -62,6 +62,14 @@ repos:
         pass_filenames: false
         stages: [pre-push]
 
+      # Rust: cargo-deny license/advisory check
+      - id: cargo-deny
+        name: Cargo Deny (licenses + advisories)
+        entry: bash -c 'cd iris-rs && cargo deny check 2>&1'
+        language: system
+        files: ^iris-rs/
+        pass_filenames: false
+
       # Quick unit tests (pre-push only)
       - id: pytest-quick
         name: Quick Tests (mocked AWS)

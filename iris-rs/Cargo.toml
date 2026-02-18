@@ -13,6 +13,7 @@ members = [
 version = "0.1.0"
 edition = "2024"
 license = "MIT"
+publish = false
 repository = "https://github.com/lexicone42/secdashboards"
 
 [workspace.dependencies]
@@ -40,6 +41,9 @@ uuid = { version = "1", features = ["v4", "serde"] }
 
 # Regex
 regex = "1"
+
+# Persistence
+redb = "3"
 
 # Internal crates
 iris-core = { path = "crates/iris-core" }
