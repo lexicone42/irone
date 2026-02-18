@@ -594,7 +594,7 @@ mod tests {
     use crate::detections::Severity;
     use crate::json_row;
 
-    /// Mock SecurityLakeQueries for testing GraphBuilder.
+    /// Mock `SecurityLakeQueries` for testing `GraphBuilder`.
     struct MockSL {
         user_results: QueryResult,
         ip_results: QueryResult,

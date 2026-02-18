@@ -171,8 +171,9 @@ async fn cognito_logout(
     request: axum::http::Request<axum::body::Body>,
 ) -> Redirect {
     // Mark session as destroyed (session middleware will clear cookie on response)
-    if let Some(handle) =
-        request.extensions().get::<l42_token_handler::session::middleware::SessionHandle>()
+    if let Some(handle) = request
+        .extensions()
+        .get::<l42_token_handler::session::middleware::SessionHandle>()
     {
         *handle.destroyed.lock().await = true;
     }

@@ -333,7 +333,7 @@ impl SecurityLakeQueries for SecurityLakeConnector {
 mod tests {
     use super::*;
 
-    /// Test that SQL generation for query_by_event_class produces correct format.
+    /// Test that SQL generation for `query_by_event_class` produces correct format.
     /// We test the SQL format logic without actual AWS calls.
     #[test]
     fn format_athena_timestamp_correct() {

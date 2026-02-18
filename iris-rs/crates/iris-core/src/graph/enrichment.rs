@@ -344,7 +344,7 @@ mod tests {
     use crate::connectors::ocsf::SecurityLakeError;
     use crate::json_row;
 
-    /// Mock SecurityLakeQueries that returns canned results.
+    /// Mock `SecurityLakeQueries` that returns canned results.
     struct MockSecurityLake {
         /// Results returned for each event class.
         results: std::collections::HashMap<u32, QueryResult>,

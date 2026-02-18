@@ -1,17 +1,9 @@
-# Pre-commit hooks for Security Dashboards
-# Install: uv run pre-commit install
-# Run manually: uv run pre-commit run --all-files
+# Pre-commit hooks for iris (Rust + JS)
+# Install: prek install
+# Run manually: prek run --all-files
 
 repos:
-  # Python formatting and linting (fast)
-  - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.8.6
-    hooks:
-      - id: ruff
-        args: [--fix]
-      - id: ruff-format
-
-  # YAML and file validation
+  # File validation and hygiene
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v5.0.0
     hooks:
@@ -25,42 +17,24 @@ repos:
       - id: detect-private-key
       - id: check-merge-conflict
 
-  # Local hooks (use uv-installed tools)
+  # Local hooks
   - repo: local
     hooks:
-      # Type checking (fast, every commit)
-      - id: ty-check
-        name: Type Check (ty)
-        entry: uv run ty check src/
+      # Rust: format check (fast, every commit)
+      - id: cargo-fmt
+        name: Cargo Format
+        entry: bash -c 'cd iris-rs && cargo fmt --check 2>&1'
         language: system
-        files: ^src/.*\.py$
+        files: ^iris-rs/.*\.rs$
         pass_filenames: false
 
-      # Lambda handler syntax check (fast, every commit)
-      - id: dashboard-handler-syntax
-        name: Lambda Handler Syntax Check
-        entry: uv run python -m py_compile src/secdashboards/health/dashboard_handler.py
+      # Rust: clippy lint (moderate, every commit)
+      - id: cargo-clippy
+        name: Cargo Clippy
+        entry: bash -c 'cd iris-rs && cargo clippy --workspace --all-targets -- -D warnings 2>&1'
         language: system
-        files: ^src/secdashboards/health/.*\.py$
+        files: ^iris-rs/
         pass_filenames: false
-
-      # CDK synth check (slower, pre-push only)
-      - id: cdk-synth
-        name: CDK Synth Check
-        entry: bash -c 'cd infrastructure/cdk && uv run npx cdk synth --quiet 2>&1 | head -20'
-        language: system
-        files: ^infrastructure/cdk/.*\.py$
-        pass_filenames: false
-        stages: [pre-push]
-
-      # CDK stack tests (pre-push only)
-      - id: cdk-tests
-        name: CDK Stack Tests
-        entry: uv run pytest infrastructure/cdk/tests/ -x -q
-        language: system
-        files: ^infrastructure/cdk/.*\.py$
-        pass_filenames: false
-        stages: [pre-push]
 
       # Rust: cargo-deny license/advisory check
       - id: cargo-deny
@@ -70,12 +44,12 @@ repos:
         files: ^iris-rs/
         pass_filenames: false
 
-      # Quick unit tests (pre-push only)
-      - id: pytest-quick
-        name: Quick Tests (mocked AWS)
-        entry: uv run pytest tests/ -x -q --ignore=tests/test_security_lake_integration.py --ignore=tests/test_neptune_integration.py -k "not integration"
+      # Rust: tests (pre-push only — takes ~30s)
+      - id: cargo-test
+        name: Cargo Test
+        entry: bash -c 'cd iris-rs && cargo test --workspace 2>&1'
         language: system
-        files: ^(src|tests)/.*\.py$
+        files: ^iris-rs/
         pass_filenames: false
         stages: [pre-push]
 
