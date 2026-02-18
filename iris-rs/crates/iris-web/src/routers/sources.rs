@@ -97,25 +97,32 @@ async fn all_sources_health(
     let sources: Vec<DataSource> = catalog.list_sources().into_iter().cloned().collect();
     drop(catalog);
 
-    if !query.live
-        && let Some(cache) = build_health_cache(&state)
-    {
-        match cache.get_all_latest().await {
-            Ok(cached) if !cached.is_empty() => {
-                let results: Vec<HealthCheckResult> = cached
-                    .into_iter()
-                    .map(|c| {
-                        HealthCheckResult::new(&c.source_name, c.healthy)
-                            .with_record_count(c.record_count)
-                            .with_latency(c.latency_seconds)
-                    })
-                    .collect();
-                return Ok(Json(results));
+    // Cache-first: read from DynamoDB unless ?live=true
+    if !query.live {
+        if let Some(cache) = build_health_cache(&state) {
+            match cache.get_all_latest().await {
+                Ok(cached) => {
+                    let results: Vec<HealthCheckResult> = cached
+                        .into_iter()
+                        .map(|c| {
+                            HealthCheckResult::new(&c.source_name, c.healthy)
+                                .with_record_count(c.record_count)
+                                .with_latency(c.latency_seconds)
+                        })
+                        .collect();
+                    return Ok(Json(results));
+                }
+                Err(e) => {
+                    tracing::warn!(err = %e, "failed to read health cache");
+                }
             }
-            _ => {} // fall through to live check
         }
+        // No cache configured or cache read failed — return empty rather than
+        // running live checks (which can exceed API Gateway's 29s timeout).
+        return Ok(Json(Vec::new()));
     }
 
+    // ?live=true: run Athena queries (may be slow)
     let results = run_live_health_checks(&sources, &state.sdk_config).await;
     Ok(Json(results))
 }
