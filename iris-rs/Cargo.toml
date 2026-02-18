@@ -43,7 +43,7 @@ uuid = { version = "1", features = ["v4", "serde"] }
 regex = "1"
 
 # Persistence
-redb = "2"
+redb = "3"
 
 # Internal crates
 iris-core = { path = "crates/iris-core" }
