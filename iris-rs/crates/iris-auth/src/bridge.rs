@@ -8,7 +8,9 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use axum::Router;
+use axum::extract::State;
 use axum::middleware::from_fn;
+use axum::response::Redirect;
 
 use iris_core::config::AppConfig;
 use l42_token_handler::AppState as AuthState;
@@ -114,7 +116,6 @@ pub async fn build_auth(config: &AppConfig) -> Option<AuthComponents> {
             "/refresh",
             axum::routing::post(routes::refresh::refresh_tokens),
         )
-        .route("/logout", axum::routing::post(routes::logout::logout))
         .route(
             "/authorize",
             axum::routing::post(routes::authorize::authorize),
@@ -123,6 +124,11 @@ pub async fn build_auth(config: &AppConfig) -> Option<AuthComponents> {
 
     // Open auth routes (no CSRF):
     let open_routes = Router::new()
+        .route("/login", axum::routing::get(cognito_login))
+        .route(
+            "/logout",
+            axum::routing::get(cognito_logout).post(routes::logout::logout),
+        )
         .route("/token", axum::routing::get(routes::token::get_token))
         .route(
             "/callback",
@@ -144,6 +150,41 @@ pub async fn build_auth(config: &AppConfig) -> Option<AuthComponents> {
     );
 
     Some(AuthComponents { state, routes })
+}
+
+/// `GET /auth/login` — redirect to Cognito Hosted UI.
+#[allow(clippy::unused_async)]
+async fn cognito_login(State(state): State<Arc<AuthState>>) -> Redirect {
+    let cfg = &state.config;
+    let callback = format!("{}/auth/callback", cfg.frontend_url);
+    let callback_encoded = urlencoding::encode(&callback);
+    let url = format!(
+        "https://{}/oauth2/authorize?client_id={}&response_type=code&scope=openid+email+profile&redirect_uri={}",
+        cfg.cognito_domain, cfg.cognito_client_id, callback_encoded
+    );
+    Redirect::temporary(&url)
+}
+
+/// `GET /auth/logout` — destroy session and redirect to Cognito logout.
+async fn cognito_logout(
+    State(state): State<Arc<AuthState>>,
+    request: axum::http::Request<axum::body::Body>,
+) -> Redirect {
+    // Mark session as destroyed (session middleware will clear cookie on response)
+    if let Some(handle) =
+        request.extensions().get::<l42_token_handler::session::middleware::SessionHandle>()
+    {
+        *handle.destroyed.lock().await = true;
+    }
+
+    let cfg = &state.config;
+    let logout_uri = format!("{}/auth/login", cfg.frontend_url);
+    let logout_uri_encoded = urlencoding::encode(&logout_uri);
+    let url = format!(
+        "https://{}/logout?client_id={}&logout_uri={}",
+        cfg.cognito_domain, cfg.cognito_client_id, logout_uri_encoded
+    );
+    Redirect::temporary(&url)
 }
 
 /// Initialize Cedar policy engine from bundled policies.

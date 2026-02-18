@@ -107,6 +107,20 @@ fi
 WEB_ZIP="$IRIS_RS_DIR/target/lambda/iris-web/bootstrap.zip"
 HEALTH_ZIP="$IRIS_RS_DIR/target/lambda/iris-health-checker/bootstrap.zip"
 
+# --- Bundle Cedar policies into iris-web zip ---
+CEDAR_SRC="$PROJECT_ROOT/../l42cognitopasskey/rust/cedar"
+if [[ -d "$CEDAR_SRC" ]]; then
+    echo "Bundling Cedar policies into iris-web zip..."
+    # Create a temp dir with cedar/ structure, add to existing zip
+    CEDAR_TMP=$(mktemp -d)
+    cp -r "$CEDAR_SRC" "$CEDAR_TMP/cedar"
+    (cd "$CEDAR_TMP" && zip -qr "$WEB_ZIP" cedar/)
+    rm -rf "$CEDAR_TMP"
+    echo "  Cedar policies bundled ($(du -sh "$CEDAR_SRC" | cut -f1))"
+else
+    echo "WARNING: Cedar policies not found at $CEDAR_SRC — deploying without authorization"
+fi
+
 # --- Helper: deploy one Lambda ---
 deploy_lambda() {
     local name="$1"
@@ -169,5 +183,10 @@ fi
 
 echo ""
 echo "Deploy complete."
-[[ "$DEPLOY_WEB" == true ]] && echo "  iris-web:            $SECDASH_WEB_LAMBDA_NAME ($zip_size)"
-[[ "$DEPLOY_HEALTH" == true ]] && echo "  iris-health-checker: $SECDASH_HEALTH_LAMBDA_NAME"
+if [[ "$DEPLOY_WEB" == true ]]; then
+    local_size=$(du -h "$WEB_ZIP" | cut -f1)
+    echo "  iris-web:            $SECDASH_WEB_LAMBDA_NAME ($local_size)"
+fi
+if [[ "$DEPLOY_HEALTH" == true ]]; then
+    echo "  iris-health-checker: $SECDASH_HEALTH_LAMBDA_NAME"
+fi

@@ -5,10 +5,14 @@ use serde::Serialize;
 
 use crate::state::AppState;
 
-/// Build the dashboard sub-router.
+/// Build the dashboard sub-router (auth-protected routes).
 pub fn router() -> Router<AppState> {
+    Router::new().route("/dashboard", get(dashboard_summary))
+}
+
+/// Public routes that bypass auth (health probe + auth config).
+pub fn public_router() -> Router<AppState> {
     Router::new()
-        .route("/dashboard", get(dashboard_summary))
         .route("/health", get(health_check))
         .route("/auth/config", get(auth_config))
 }

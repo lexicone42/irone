@@ -12,20 +12,26 @@ use crate::state::AppState;
 
 /// Build the full axum router with all API routes, auth, and middleware.
 pub fn build_router(state: AppState, auth: Option<AuthComponents>) -> Router {
-    let api = Router::new()
+    // Protected API routes (behind require_auth when auth enabled)
+    let protected_api = Router::new()
         .merge(sources::router())
         .merge(detections::router())
         .merge(investigations::router())
         .merge(dashboard::router());
 
-    // When auth is enabled, protect API routes with require_auth guard
-    let api = if auth.is_some() {
-        api.layer(from_fn(require_auth))
+    let protected_api = if auth.is_some() {
+        protected_api.layer(from_fn(require_auth))
     } else {
-        api
+        protected_api
     };
 
-    let mut app = Router::new().nest("/api", api).with_state(state);
+    // Public API routes (health probe, auth config) — no auth guard
+    let public_api = dashboard::public_router();
+
+    let mut app = Router::new()
+        .nest("/api", protected_api)
+        .nest("/api", public_api)
+        .with_state(state);
 
     // Merge auth routes (already Router<()> with state bound)
     if let Some(auth_components) = auth {
