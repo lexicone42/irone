@@ -45,6 +45,16 @@ regex = "1"
 # Persistence
 redb = "3"
 
+# AWS
+aws-config = { version = "1", features = ["behavior-version-latest"] }
+aws-sdk-athena = "1"
+aws-sdk-s3 = "1"
+aws-sdk-dynamodb = "1"
+aws-sdk-sns = "1"
+
+# CSV parsing
+csv = "1.3"
+
 # Internal crates
 iris-core = { path = "crates/iris-core" }
 iris-aws = { path = "crates/iris-aws" }

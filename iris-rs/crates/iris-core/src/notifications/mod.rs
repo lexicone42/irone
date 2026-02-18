@@ -22,9 +22,10 @@ pub struct SecurityAlert {
 /// Trait for notification delivery channels (SNS, Slack, etc.).
 ///
 /// Concrete implementations live in `iris-aws` (SNS) or separate crates.
+#[allow(async_fn_in_trait)]
 pub trait NotificationChannel: Send + Sync {
     /// Send an alert. Returns Ok(()) on success.
-    fn send_alert(
+    async fn send_alert(
         &self,
         alert: &SecurityAlert,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>>;

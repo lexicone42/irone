@@ -78,18 +78,22 @@ impl HealthCheckResult {
 ///
 /// This is the Rust equivalent of the Python `DataConnector` ABC.
 /// Concrete implementations live in `iris-aws` (not in core).
+#[allow(async_fn_in_trait)]
 pub trait DataConnector: Send + Sync {
     /// Execute a SQL query and return results.
     ///
     /// # Errors
     /// Returns an error if the query fails.
-    fn query(&self, sql: &str) -> Result<QueryResult, Box<dyn std::error::Error + Send + Sync>>;
+    async fn query(
+        &self,
+        sql: &str,
+    ) -> Result<QueryResult, Box<dyn std::error::Error + Send + Sync>>;
 
     /// Get the schema of the data source (field name → type).
     ///
     /// # Errors
     /// Returns an error if schema introspection fails.
-    fn get_schema(
+    async fn get_schema(
         &self,
     ) -> Result<HashMap<String, String>, Box<dyn std::error::Error + Send + Sync>>;
 
@@ -97,7 +101,9 @@ pub trait DataConnector: Send + Sync {
     ///
     /// # Errors
     /// Returns an error if the health check fails to execute.
-    fn check_health(&self) -> Result<HealthCheckResult, Box<dyn std::error::Error + Send + Sync>>;
+    async fn check_health(
+        &self,
+    ) -> Result<HealthCheckResult, Box<dyn std::error::Error + Send + Sync>>;
 }
 
 #[cfg(test)]

@@ -20,6 +20,7 @@ envy = "0.4"
 proptest = "1"
 serde_json = { workspace = true }
 tempfile = "3"
+tokio = { workspace = true }
 
 [lints]
 workspace = true
