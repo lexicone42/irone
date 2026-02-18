@@ -1,8 +1,0 @@
-{# Build result fragment — swapped in by HTMX #}
-{% if success %}
-<div class="alert alert-success">
-    Built package for <strong>{{ rule_name }}</strong>: {{ package_path }}
-</div>
-{% else %}
-<div class="alert alert-error">Build failed: {{ error }}</div>
-{% endif %}

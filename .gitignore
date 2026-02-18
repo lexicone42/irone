@@ -1,15 +1,5 @@
-# Python-generated files
-__pycache__/
-*.py[oc]
-build/
-dist/
-wheels/
-*.egg-info
-
-# Virtual environments
-.venv/
-venv/
-ENV/
+# Rust build artifacts
+iris-rs/target/
 
 # IDE
 .idea/
@@ -17,14 +7,6 @@ ENV/
 *.swp
 *.swo
 *~
-
-# Testing
-.pytest_cache/
-.hypothesis/
-.coverage
-htmlcov/
-.tox/
-.nox/
 
 # Local configuration - NEVER COMMIT
 .env
@@ -46,7 +28,6 @@ samconfig.toml
 
 # CDK outputs - NEVER COMMIT (contains account IDs, resource names)
 cdk.out/
-infrastructure/cdk/cdk.out/
 *.cdk.staging/
 cdk.context.json
 
@@ -60,9 +41,8 @@ output/
 site/
 *.pdf
 *.html
-# But track Jinja2 templates and static frontend
-!src/secdashboards/web/templates/**/*.html
-!src/secdashboards/frontend/**/*.html
+# But track static frontend HTML
+!frontend/**/*.html
 
 # Log files
 *.log
@@ -78,16 +58,10 @@ temp/
 .DS_Store
 Thumbs.db
 
-# Pre-commit cache
-.pre-commit-cache/
-
 # Node.js (for CDK)
 node_modules/
 npm-debug.log
 yarn-error.log
-
-# Rust build artifacts
-iris-rs/target/
 
 # Claude Code conversation logs
 .claude/
