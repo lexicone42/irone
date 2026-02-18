@@ -1,0 +1,4 @@
+# Default to ARM64 musl for Lambda when cross-compiling
+# For local dev, cargo will use the host target automatically
+[target.aarch64-unknown-linux-musl]
+linker = "aarch64-linux-gnu-gcc"

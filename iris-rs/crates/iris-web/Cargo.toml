@@ -1,0 +1,18 @@
+[package]
+name = "iris-web"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+iris-core = { workspace = true }
+iris-aws = { workspace = true }
+iris-auth = { workspace = true }
+iris-persistence = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+
+[lints]
+workspace = true
