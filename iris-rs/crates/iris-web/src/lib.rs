@@ -1,2 +1,5 @@
-// iris-web: axum router + Lambda handler
-// Phase 5 implementation
+pub mod app;
+pub mod config;
+pub mod error;
+pub mod routers;
+pub mod state;
