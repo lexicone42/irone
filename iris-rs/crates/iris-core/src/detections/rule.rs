@@ -223,17 +223,69 @@ impl FieldFilter {
 }
 
 /// Apply a set of filters to a `QueryResult`, keeping only rows that match all filters.
+///
+/// Returns `None` if no filtering was needed (empty filter list), allowing the caller
+/// to reuse the original `QueryResult` without cloning.
 #[must_use]
-pub fn apply_filters(qr: &QueryResult, filters: &[FieldFilter]) -> QueryResult {
+pub fn apply_filters(qr: &QueryResult, filters: &[FieldFilter]) -> Option<QueryResult> {
     if filters.is_empty() {
-        return qr.clone();
+        return None;
     }
     let rows: Vec<serde_json::Map<String, Value>> = qr
         .to_maps()
         .into_iter()
         .filter(|row| filters.iter().all(|f| f.matches(row)))
         .collect();
-    QueryResult::from_maps(rows)
+    Some(QueryResult::from_maps(rows))
+}
+
+/// Shared evaluation logic for threshold-based detection rules.
+///
+/// All rule types use the same pattern: check match count against threshold,
+/// take up to 100 sample matches, and produce a `DetectionResult`.
+#[must_use]
+pub fn threshold_evaluate(
+    rule_id: &str,
+    rule_name: &str,
+    severity: &Severity,
+    qr: &QueryResult,
+    threshold: usize,
+) -> DetectionResult {
+    let start = Utc::now();
+    let match_count = qr.len();
+    let triggered = match_count >= threshold;
+
+    let matches = if triggered {
+        qr.head(100).to_maps()
+    } else {
+        Vec::new()
+    };
+
+    let message = if triggered {
+        format!(
+            "Detection '{rule_name}' triggered with {match_count} matches (threshold: {threshold})"
+        )
+    } else {
+        format!(
+            "Detection '{rule_name}' did not trigger ({match_count} matches, threshold: {threshold})"
+        )
+    };
+
+    #[allow(clippy::cast_precision_loss)]
+    let execution_time_ms = (Utc::now() - start).num_microseconds().unwrap_or(0) as f64 / 1000.0;
+
+    DetectionResult {
+        rule_id: rule_id.into(),
+        rule_name: rule_name.into(),
+        triggered,
+        severity: severity.clone(),
+        match_count,
+        matches,
+        message,
+        executed_at: Utc::now(),
+        execution_time_ms,
+        error: None,
+    }
 }
 
 /// Common interface for detection rules.
@@ -302,48 +354,13 @@ impl DetectionRule for SQLDetectionRule {
     }
 
     fn evaluate(&self, qr: &QueryResult) -> DetectionResult {
-        let start = Utc::now();
-        let match_count = qr.len();
-        let triggered = match_count >= self.threshold;
-
-        let matches = if triggered {
-            qr.head(100).to_maps()
-        } else {
-            Vec::new()
-        };
-
-        let message = if triggered {
-            format!(
-                "Detection '{}' triggered with {} matches (threshold: {})",
-                self.name(),
-                match_count,
-                self.threshold
-            )
-        } else {
-            format!(
-                "Detection '{}' did not trigger ({} matches, threshold: {})",
-                self.name(),
-                match_count,
-                self.threshold
-            )
-        };
-
-        #[allow(clippy::cast_precision_loss)]
-        let execution_time_ms =
-            (Utc::now() - start).num_microseconds().unwrap_or(0) as f64 / 1000.0;
-
-        DetectionResult {
-            rule_id: self.id().into(),
-            rule_name: self.name().into(),
-            triggered,
-            severity: self.meta.severity.clone(),
-            match_count,
-            matches,
-            message,
-            executed_at: Utc::now(),
-            execution_time_ms,
-            error: None,
-        }
+        threshold_evaluate(
+            self.id(),
+            self.name(),
+            &self.meta.severity,
+            qr,
+            self.threshold,
+        )
     }
 }
 
@@ -457,48 +474,13 @@ impl DetectionRule for DualTargetDetectionRule {
     }
 
     fn evaluate(&self, qr: &QueryResult) -> DetectionResult {
-        let start = Utc::now();
-        let match_count = qr.len();
-        let triggered = match_count >= self.threshold;
-
-        let matches = if triggered {
-            qr.head(100).to_maps()
-        } else {
-            Vec::new()
-        };
-
-        let message = if triggered {
-            format!(
-                "Detection '{}' triggered with {} matches (threshold: {})",
-                self.name(),
-                match_count,
-                self.threshold
-            )
-        } else {
-            format!(
-                "Detection '{}' did not trigger ({} matches, threshold: {})",
-                self.name(),
-                match_count,
-                self.threshold
-            )
-        };
-
-        #[allow(clippy::cast_precision_loss)]
-        let execution_time_ms =
-            (Utc::now() - start).num_microseconds().unwrap_or(0) as f64 / 1000.0;
-
-        DetectionResult {
-            rule_id: self.id().into(),
-            rule_name: self.name().into(),
-            triggered,
-            severity: self.meta.severity.clone(),
-            match_count,
-            matches,
-            message,
-            executed_at: Utc::now(),
-            execution_time_ms,
-            error: None,
-        }
+        threshold_evaluate(
+            self.id(),
+            self.name(),
+            &self.meta.severity,
+            qr,
+            self.threshold,
+        )
     }
 }
 
@@ -530,48 +512,13 @@ impl DetectionRule for OCSFDetectionRule {
     }
 
     fn evaluate(&self, qr: &QueryResult) -> DetectionResult {
-        let start = Utc::now();
-        let match_count = qr.len();
-        let triggered = match_count >= self.threshold;
-
-        let matches = if triggered {
-            qr.head(100).to_maps()
-        } else {
-            Vec::new()
-        };
-
-        let message = if triggered {
-            format!(
-                "Detection '{}' triggered with {} matches (threshold: {})",
-                self.name(),
-                match_count,
-                self.threshold
-            )
-        } else {
-            format!(
-                "Detection '{}' did not trigger ({} matches, threshold: {})",
-                self.name(),
-                match_count,
-                self.threshold
-            )
-        };
-
-        #[allow(clippy::cast_precision_loss)]
-        let execution_time_ms =
-            (Utc::now() - start).num_microseconds().unwrap_or(0) as f64 / 1000.0;
-
-        DetectionResult {
-            rule_id: self.id().into(),
-            rule_name: self.name().into(),
-            triggered,
-            severity: self.meta.severity.clone(),
-            match_count,
-            matches,
-            message,
-            executed_at: Utc::now(),
-            execution_time_ms,
-            error: None,
-        }
+        threshold_evaluate(
+            self.id(),
+            self.name(),
+            &self.meta.severity,
+            qr,
+            self.threshold,
+        )
     }
 }
 
@@ -747,8 +694,14 @@ mod tests {
             field: "status_id".into(),
             op: FilterOp::Equals("1".into()),
         }];
-        let filtered = apply_filters(&qr, &filters);
+        let filtered = apply_filters(&qr, &filters).expect("should filter");
         assert_eq!(filtered.len(), 2);
+    }
+
+    #[test]
+    fn apply_filters_returns_none_when_empty() {
+        let qr = QueryResult::from_maps(vec![json_row!("x" => "1")]);
+        assert!(apply_filters(&qr, &[]).is_none());
     }
 
     #[test]
