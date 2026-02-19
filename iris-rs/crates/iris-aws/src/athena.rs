@@ -152,7 +152,10 @@ impl DataConnector for AthenaConnector {
             );
         }
 
-        let resp = req.send().await.map_err(|e| AwsError::Sdk(Box::new(e)))?;
+        let resp = req.send().await.map_err(|e| {
+            // Extract the full error chain for diagnostics — SDK Display often just says "service error"
+            AwsError::QueryFailed(format!("StartQueryExecution failed: {e:?}"))
+        })?;
 
         let query_id = resp
             .query_execution_id()

@@ -68,7 +68,7 @@ export class IrisStack extends cdk.Stack {
       environment: {
         SECDASH_SECURITY_LAKE_DB: "amazon_security_lake_glue_db_us_west_2",
         SECDASH_HEALTH_CACHE_TABLE: healthCacheTable.tableName,
-        SECDASH_USE_DIRECT_QUERY: "true",
+        SECDASH_USE_DIRECT_QUERY: "false",
         RUST_LOG: "info",
       },
     });
@@ -106,7 +106,7 @@ export class IrisStack extends cdk.Stack {
     );
     healthChecker.function.addToRolePolicy(
       new iam.PolicyStatement({
-        actions: ["s3:GetObject", "s3:ListBucket"],
+        actions: ["s3:GetObject", "s3:PutObject", "s3:ListBucket", "s3:GetBucketLocation"],
         resources: [
           "arn:aws:s3:::aws-security-data-lake-*",
           "arn:aws:s3:::aws-security-data-lake-*/*",
