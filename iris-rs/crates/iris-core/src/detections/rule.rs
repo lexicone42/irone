@@ -526,6 +526,7 @@ impl DetectionRule for OCSFDetectionRule {
 mod tests {
     use super::*;
     use crate::json_row;
+    use proptest::prelude::*;
 
     fn sample_metadata() -> DetectionMetadata {
         DetectionMetadata {
@@ -809,5 +810,149 @@ threshold: 1
         assert_eq!(meta.id, "detect-root-login");
         assert_eq!(meta.severity, Severity::High);
         assert!(meta.enabled); // default
+    }
+
+    // --- Property tests (sharp-edges driven) ---
+
+    // SE-1: threshold_evaluate invariant — triggered iff match_count >= threshold.
+    // Catches threshold=0 always-trigger and off-by-one edge cases.
+    proptest! {
+        #[test]
+        fn threshold_triggered_iff_count_gte_threshold(
+            n_rows in 0_usize..200,
+            threshold in 0_usize..200,
+        ) {
+            let rows: Vec<serde_json::Map<String, Value>> =
+                (0..n_rows).map(|i| json_row!("i" => i)).collect();
+            let qr = QueryResult::from_maps(rows);
+
+            let result = threshold_evaluate("r", "rule", &Severity::High, &qr, threshold);
+
+            prop_assert_eq!(
+                result.triggered,
+                n_rows >= threshold,
+                "triggered mismatch: {} rows vs threshold {}",
+                n_rows,
+                threshold,
+            );
+            prop_assert_eq!(result.match_count, n_rows);
+            prop_assert!(result.error.is_none());
+        }
+    }
+
+    /// SE-1b: threshold=0 means EVERY result triggers, including empty.
+    /// This is a documentation-worthy invariant — if you don't want this,
+    /// don't set threshold to 0.
+    #[test]
+    fn threshold_zero_triggers_on_empty() {
+        let qr = QueryResult::empty();
+        let result = threshold_evaluate("r", "rule", &Severity::High, &qr, 0);
+        assert!(result.triggered);
+        assert_eq!(result.match_count, 0);
+    }
+
+    // SE-2: NotEquals on missing field returns true (field absent = not equal).
+    // Property: for any expected value, a row missing the field always passes NotEquals.
+    proptest! {
+        #[test]
+        fn not_equals_missing_field_always_passes(expected in "\\PC{1,50}") {
+            let filter = FieldFilter {
+                field: "nonexistent_field".into(),
+                op: FilterOp::NotEquals(expected),
+            };
+            let row = json_row!("other_field" => "value");
+            prop_assert!(filter.matches(&row), "NotEquals should pass when field is missing");
+        }
+    }
+
+    // SE-2 inverse: Equals on missing field always fails.
+    proptest! {
+        #[test]
+        fn equals_missing_field_always_fails(expected in "\\PC{1,50}") {
+            let filter = FieldFilter {
+                field: "nonexistent_field".into(),
+                op: FilterOp::Equals(expected),
+            };
+            let row = json_row!("other_field" => "value");
+            prop_assert!(!filter.matches(&row), "Equals should fail when field is missing");
+        }
+    }
+
+    // SE-6: Filters only match string values. Numeric JSON values are invisible.
+    // Property: Equals("5") never matches a row where the field is the number 5.
+    #[test]
+    fn equals_filter_does_not_match_numeric_json_value() {
+        use serde_json::json;
+        let filter = FieldFilter {
+            field: "severity_id".into(),
+            op: FilterOp::Equals("5".into()),
+        };
+        // Numeric value — as_str() returns None
+        let row: serde_json::Map<String, Value> =
+            serde_json::from_value(json!({"severity_id": 5})).unwrap();
+        assert!(
+            !filter.matches(&row),
+            "String filter should not match numeric JSON value"
+        );
+
+        // String value — this one matches
+        let row_str: serde_json::Map<String, Value> =
+            serde_json::from_value(json!({"severity_id": "5"})).unwrap();
+        assert!(filter.matches(&row_str));
+    }
+
+    // apply_filters monotonicity: filtering can only reduce or preserve row count.
+    proptest! {
+        #[test]
+        fn apply_filters_never_increases_rows(
+            n_rows in 0_usize..50,
+            filter_value in "[0-9]",
+        ) {
+            let rows: Vec<serde_json::Map<String, Value>> = (0..n_rows)
+                .map(|i| json_row!("x" => i.to_string()))
+                .collect();
+            let qr = QueryResult::from_maps(rows);
+            let filters = vec![FieldFilter {
+                field: "x".into(),
+                op: FilterOp::Equals(filter_value),
+            }];
+            let filtered = apply_filters(&qr, &filters).unwrap_or_else(|| qr.clone());
+            prop_assert!(filtered.len() <= qr.len());
+        }
+    }
+
+    // apply_filters with empty filters returns None (identity — no clone).
+    proptest! {
+        #[test]
+        fn apply_filters_empty_is_none(n_rows in 0_usize..20) {
+            let rows: Vec<serde_json::Map<String, Value>> = (0..n_rows)
+                .map(|i| json_row!("x" => i.to_string()))
+                .collect();
+            let qr = QueryResult::from_maps(rows);
+            prop_assert!(apply_filters(&qr, &[]).is_none());
+        }
+    }
+
+    // threshold_evaluate: matches vector is empty when not triggered,
+    // and capped at 100 when triggered.
+    proptest! {
+        #[test]
+        fn evaluate_matches_bounded(
+            n_rows in 0_usize..250,
+            threshold in 1_usize..50,
+        ) {
+            let rows: Vec<serde_json::Map<String, Value>> = (0..n_rows)
+                .map(|i| json_row!("i" => i))
+                .collect();
+            let qr = QueryResult::from_maps(rows);
+            let result = threshold_evaluate("r", "rule", &Severity::High, &qr, threshold);
+
+            if result.triggered {
+                prop_assert!(result.matches.len() <= 100);
+                prop_assert!(!result.matches.is_empty());
+            } else {
+                prop_assert!(result.matches.is_empty());
+            }
+        }
     }
 }
