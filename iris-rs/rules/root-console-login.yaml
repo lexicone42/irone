@@ -1,0 +1,21 @@
+id: detect-root-console-login
+name: Root Account Console Login
+description: >
+  Detects AWS root account console login events.
+  Root account usage should be extremely rare and is a critical security signal.
+severity: critical
+event_class: authentication
+limit: 1000
+threshold: 1
+tags:
+  - authentication
+  - root-account
+mitre_attack:
+  - T1078.004
+data_sources:
+  - cloudtrail
+filters:
+  - field: actor.user.type
+    equals: Root
+  - field: status_id
+    equals: "1"

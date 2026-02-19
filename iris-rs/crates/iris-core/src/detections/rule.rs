@@ -1,9 +1,11 @@
 use std::collections::HashMap;
 
 use chrono::{DateTime, NaiveDateTime, Utc};
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::connectors::ocsf::{OCSFEventClass, get_nested_value};
 use crate::connectors::result::QueryResult;
 
 /// Detection severity levels.
@@ -158,6 +160,82 @@ impl std::fmt::Display for QueryTarget {
     }
 }
 
+/// What data to fetch for a detection rule.
+///
+/// SQL rules use raw SQL templates; OCSF rules use structured event class queries
+/// that work with both Iceberg (direct S3 reads) and Athena.
+#[derive(Debug, Clone)]
+pub enum DetectionQuery {
+    /// A raw SQL query string (with `{start_time}` / `{end_time}` already substituted).
+    Sql(String),
+    /// An OCSF event class query — dispatched to `SecurityLakeQueries::query_by_event_class`.
+    Ocsf {
+        event_class: OCSFEventClass,
+        limit: usize,
+    },
+}
+
+/// A declarative filter on OCSF event fields, applied post-query in Rust.
+#[derive(Debug, Clone)]
+pub struct FieldFilter {
+    pub field: String,
+    pub op: FilterOp,
+}
+
+/// Filter operations for `FieldFilter`.
+#[derive(Debug, Clone)]
+pub enum FilterOp {
+    Equals(String),
+    NotEquals(String),
+    Contains(String),
+    In(Vec<String>),
+    Regex(Regex),
+}
+
+impl FieldFilter {
+    /// Test whether a single OCSF event row matches this filter.
+    #[must_use]
+    pub fn matches(&self, row: &serde_json::Map<String, Value>) -> bool {
+        let val = get_nested_value(row, &self.field);
+        match &self.op {
+            FilterOp::Equals(expected) => val
+                .as_ref()
+                .and_then(Value::as_str)
+                .is_some_and(|s| s == expected),
+            FilterOp::NotEquals(expected) => val
+                .as_ref()
+                .and_then(Value::as_str)
+                .is_none_or(|s| s != expected),
+            FilterOp::Contains(needle) => val
+                .as_ref()
+                .and_then(Value::as_str)
+                .is_some_and(|s| s.contains(needle.as_str())),
+            FilterOp::In(values) => val
+                .as_ref()
+                .and_then(Value::as_str)
+                .is_some_and(|s| values.iter().any(|v| v == s)),
+            FilterOp::Regex(re) => val
+                .as_ref()
+                .and_then(Value::as_str)
+                .is_some_and(|s| re.is_match(s)),
+        }
+    }
+}
+
+/// Apply a set of filters to a `QueryResult`, keeping only rows that match all filters.
+#[must_use]
+pub fn apply_filters(qr: &QueryResult, filters: &[FieldFilter]) -> QueryResult {
+    if filters.is_empty() {
+        return qr.clone();
+    }
+    let rows: Vec<serde_json::Map<String, Value>> = qr
+        .to_maps()
+        .into_iter()
+        .filter(|row| filters.iter().all(|f| f.matches(row)))
+        .collect();
+    QueryResult::from_maps(rows)
+}
+
 /// Common interface for detection rules.
 pub trait DetectionRule: Send + Sync {
     /// Rule metadata.
@@ -173,8 +251,13 @@ pub trait DetectionRule: Send + Sync {
         &self.metadata().name
     }
 
-    /// Get the SQL query for a time window.
-    fn get_query(&self, start: DateTime<Utc>, end: DateTime<Utc>) -> String;
+    /// Build the query specification for a time window.
+    fn build_query(&self, start: DateTime<Utc>, end: DateTime<Utc>) -> DetectionQuery;
+
+    /// Post-query filters applied in Rust (default: none).
+    fn filters(&self) -> &[FieldFilter] {
+        &[]
+    }
 
     /// Evaluate query results and determine if detection triggered.
     fn evaluate(&self, qr: &QueryResult) -> DetectionResult;
@@ -210,10 +293,12 @@ impl DetectionRule for SQLDetectionRule {
         &self.meta
     }
 
-    fn get_query(&self, start: DateTime<Utc>, end: DateTime<Utc>) -> String {
-        self.query_template
-            .replace("{start_time}", &format_athena_timestamp(start))
-            .replace("{end_time}", &format_athena_timestamp(end))
+    fn build_query(&self, start: DateTime<Utc>, end: DateTime<Utc>) -> DetectionQuery {
+        DetectionQuery::Sql(
+            self.query_template
+                .replace("{start_time}", &format_athena_timestamp(start))
+                .replace("{end_time}", &format_athena_timestamp(end)),
+        )
     }
 
     fn evaluate(&self, qr: &QueryResult) -> DetectionResult {
@@ -364,9 +449,84 @@ impl DetectionRule for DualTargetDetectionRule {
         &self.meta
     }
 
-    fn get_query(&self, start: DateTime<Utc>, end: DateTime<Utc>) -> String {
-        self.get_query_for_target(&self.default_target, start, end)
-            .unwrap_or_default()
+    fn build_query(&self, start: DateTime<Utc>, end: DateTime<Utc>) -> DetectionQuery {
+        DetectionQuery::Sql(
+            self.get_query_for_target(&self.default_target, start, end)
+                .unwrap_or_default(),
+        )
+    }
+
+    fn evaluate(&self, qr: &QueryResult) -> DetectionResult {
+        let start = Utc::now();
+        let match_count = qr.len();
+        let triggered = match_count >= self.threshold;
+
+        let matches = if triggered {
+            qr.head(100).to_maps()
+        } else {
+            Vec::new()
+        };
+
+        let message = if triggered {
+            format!(
+                "Detection '{}' triggered with {} matches (threshold: {})",
+                self.name(),
+                match_count,
+                self.threshold
+            )
+        } else {
+            format!(
+                "Detection '{}' did not trigger ({} matches, threshold: {})",
+                self.name(),
+                match_count,
+                self.threshold
+            )
+        };
+
+        #[allow(clippy::cast_precision_loss)]
+        let execution_time_ms =
+            (Utc::now() - start).num_microseconds().unwrap_or(0) as f64 / 1000.0;
+
+        DetectionResult {
+            rule_id: self.id().into(),
+            rule_name: self.name().into(),
+            triggered,
+            severity: self.meta.severity.clone(),
+            match_count,
+            matches,
+            message,
+            executed_at: Utc::now(),
+            execution_time_ms,
+            error: None,
+        }
+    }
+}
+
+/// An OCSF-native detection rule that queries by event class and filters in Rust.
+#[derive(Debug, Clone)]
+pub struct OCSFDetectionRule {
+    pub meta: DetectionMetadata,
+    pub event_class: OCSFEventClass,
+    pub rule_filters: Vec<FieldFilter>,
+    pub threshold: usize,
+    pub limit: usize,
+    pub group_by_fields: Vec<String>,
+}
+
+impl DetectionRule for OCSFDetectionRule {
+    fn metadata(&self) -> &DetectionMetadata {
+        &self.meta
+    }
+
+    fn build_query(&self, _start: DateTime<Utc>, _end: DateTime<Utc>) -> DetectionQuery {
+        DetectionQuery::Ocsf {
+            event_class: self.event_class,
+            limit: self.limit,
+        }
+    }
+
+    fn filters(&self) -> &[FieldFilter] {
+        &self.rule_filters
     }
 
     fn evaluate(&self, qr: &QueryResult) -> DetectionResult {
@@ -481,7 +641,7 @@ mod tests {
     }
 
     #[test]
-    fn sql_detection_rule_get_query() {
+    fn sql_detection_rule_build_query() {
         let rule = SQLDetectionRule {
             meta: sample_metadata(),
             query_template: "SELECT * FROM t WHERE time >= TIMESTAMP '{start_time}' AND time < TIMESTAMP '{end_time}'".into(),
@@ -495,10 +655,100 @@ mod tests {
             .unwrap()
             .with_timezone(&Utc);
 
-        let query = rule.get_query(start, end);
+        let DetectionQuery::Sql(query) = rule.build_query(start, end) else {
+            panic!("Expected DetectionQuery::Sql");
+        };
         assert!(query.contains("2024-01-15 10:00:00"));
         assert!(query.contains("2024-01-15 11:00:00"));
         assert!(!query.contains("{start_time}"));
+    }
+
+    #[test]
+    fn ocsf_detection_rule_build_query() {
+        let rule = OCSFDetectionRule {
+            meta: sample_metadata(),
+            event_class: OCSFEventClass::ApiActivity,
+            rule_filters: vec![FieldFilter {
+                field: "api.operation".into(),
+                op: FilterOp::In(vec!["AttachUserPolicy".into(), "PutRolePolicy".into()]),
+            }],
+            threshold: 1,
+            limit: 5000,
+            group_by_fields: Vec::new(),
+        };
+        let DetectionQuery::Ocsf { event_class, limit } = rule.build_query(Utc::now(), Utc::now())
+        else {
+            panic!("Expected DetectionQuery::Ocsf");
+        };
+        assert_eq!(event_class, OCSFEventClass::ApiActivity);
+        assert_eq!(limit, 5000);
+        assert_eq!(rule.filters().len(), 1);
+    }
+
+    #[test]
+    fn field_filter_equals() {
+        let filter = FieldFilter {
+            field: "status_id".into(),
+            op: FilterOp::Equals("1".into()),
+        };
+        let row = json_row!("status_id" => "1");
+        assert!(filter.matches(&row));
+        let row_no = json_row!("status_id" => "2");
+        assert!(!filter.matches(&row_no));
+    }
+
+    #[test]
+    fn field_filter_in() {
+        use serde_json::json;
+        let filter = FieldFilter {
+            field: "api.operation".into(),
+            op: FilterOp::In(vec!["AttachUserPolicy".into(), "PutRolePolicy".into()]),
+        };
+        let row: serde_json::Map<String, Value> =
+            serde_json::from_value(json!({"api": {"operation": "AttachUserPolicy"}})).unwrap();
+        assert!(filter.matches(&row));
+        let row_no: serde_json::Map<String, Value> =
+            serde_json::from_value(json!({"api": {"operation": "DeleteRole"}})).unwrap();
+        assert!(!filter.matches(&row_no));
+    }
+
+    #[test]
+    fn field_filter_contains() {
+        let filter = FieldFilter {
+            field: "message".into(),
+            op: FilterOp::Contains("error".into()),
+        };
+        let row = json_row!("message" => "An error occurred");
+        assert!(filter.matches(&row));
+        let row_no = json_row!("message" => "All good");
+        assert!(!filter.matches(&row_no));
+    }
+
+    #[test]
+    fn field_filter_regex() {
+        let filter = FieldFilter {
+            field: "user".into(),
+            op: FilterOp::Regex(Regex::new(r"^admin-\d+$").unwrap()),
+        };
+        let row = json_row!("user" => "admin-42");
+        assert!(filter.matches(&row));
+        let row_no = json_row!("user" => "user-42");
+        assert!(!filter.matches(&row_no));
+    }
+
+    #[test]
+    fn apply_filters_keeps_matching_rows() {
+        let qr = QueryResult::from_maps(vec![
+            json_row!("status_id" => "1", "user" => "alice"),
+            json_row!("status_id" => "2", "user" => "bob"),
+            json_row!("status_id" => "1", "user" => "charlie"),
+        ]);
+        let filters = vec![FieldFilter {
+            field: "status_id".into(),
+            op: FilterOp::Equals("1".into()),
+        }];
+        let filtered = apply_filters(&qr, &filters);
+        assert_eq!(filtered.len(), 2);
     }
 
     #[test]

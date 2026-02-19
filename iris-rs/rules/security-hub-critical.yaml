@@ -1,0 +1,19 @@
+id: detect-security-hub-critical
+name: Security Hub Critical Finding
+description: >
+  Detects critical severity findings from AWS Security Hub.
+  OCSF severity_id 5 maps to critical.
+severity: critical
+event_class: security_finding
+limit: 1000
+threshold: 1
+tags:
+  - security-hub
+  - findings
+mitre_attack:
+  - T1190
+data_sources:
+  - security-hub
+filters:
+  - field: severity_id
+    equals: "5"

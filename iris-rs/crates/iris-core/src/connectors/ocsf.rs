@@ -72,6 +72,55 @@ impl OCSFEventClass {
         self as u32
     }
 
+    /// Parse a `snake_case` YAML string into an `OCSFEventClass`.
+    ///
+    /// Accepts the canonical `snake_case` names used in detection rule YAML files.
+    #[must_use]
+    pub fn from_yaml_str(s: &str) -> Option<Self> {
+        match s {
+            "file_activity" => Some(Self::FileActivity),
+            "kernel_extension" => Some(Self::KernelExtension),
+            "kernel_activity" => Some(Self::KernelActivity),
+            "memory_activity" => Some(Self::MemoryActivity),
+            "module_activity" => Some(Self::ModuleActivity),
+            "scheduled_job_activity" => Some(Self::ScheduledJobActivity),
+            "process_activity" => Some(Self::ProcessActivity),
+            "security_finding" => Some(Self::SecurityFinding),
+            "vulnerability_finding" => Some(Self::VulnerabilityFinding),
+            "compliance_finding" => Some(Self::ComplianceFinding),
+            "detection_finding" => Some(Self::DetectionFinding),
+            "incident_finding" => Some(Self::IncidentFinding),
+            "account_change" => Some(Self::AccountChange),
+            "authentication" => Some(Self::Authentication),
+            "authorize_session" => Some(Self::AuthorizeSession),
+            "entity_management" => Some(Self::EntityManagement),
+            "user_access_management" => Some(Self::UserAccessManagement),
+            "group_management" => Some(Self::GroupManagement),
+            "network_activity" => Some(Self::NetworkActivity),
+            "http_activity" => Some(Self::HttpActivity),
+            "dns_activity" => Some(Self::DnsActivity),
+            "dhcp_activity" => Some(Self::DhcpActivity),
+            "rdp_activity" => Some(Self::RdpActivity),
+            "smb_activity" => Some(Self::SmbActivity),
+            "ssh_activity" => Some(Self::SshActivity),
+            "ftp_activity" => Some(Self::FtpActivity),
+            "email_activity" => Some(Self::EmailActivity),
+            "network_file_activity" => Some(Self::NetworkFileActivity),
+            "email_file_activity" => Some(Self::EmailFileActivity),
+            "email_url_activity" => Some(Self::EmailUrlActivity),
+            "ntp_activity" => Some(Self::NtpActivity),
+            "tunnel_activity" => Some(Self::TunnelActivity),
+            "web_resource_access_activity" => Some(Self::WebResourceAccessActivity),
+            "application_lifecycle" => Some(Self::ApplicationLifecycle),
+            "api_activity" => Some(Self::ApiActivity),
+            "web_resource_activity" => Some(Self::WebResourceActivity),
+            "datastore_activity" => Some(Self::DatastoreActivity),
+            "file_hosting_activity" => Some(Self::FileHostingActivity),
+            "scan_activity" => Some(Self::ScanActivity),
+            _ => None,
+        }
+    }
+
     /// Get a human-readable name for the event class.
     #[must_use]
     pub const fn name(self) -> &'static str {
@@ -315,6 +364,32 @@ mod tests {
     fn get_nested_value_missing() {
         let data = serde_json::Map::new();
         assert!(get_nested_value(&data, "missing.path").is_none());
+    }
+
+    #[test]
+    fn from_yaml_str_known_classes() {
+        assert_eq!(
+            OCSFEventClass::from_yaml_str("api_activity"),
+            Some(OCSFEventClass::ApiActivity)
+        );
+        assert_eq!(
+            OCSFEventClass::from_yaml_str("authentication"),
+            Some(OCSFEventClass::Authentication)
+        );
+        assert_eq!(
+            OCSFEventClass::from_yaml_str("security_finding"),
+            Some(OCSFEventClass::SecurityFinding)
+        );
+        assert_eq!(
+            OCSFEventClass::from_yaml_str("network_activity"),
+            Some(OCSFEventClass::NetworkActivity)
+        );
+    }
+
+    #[test]
+    fn from_yaml_str_unknown_returns_none() {
+        assert!(OCSFEventClass::from_yaml_str("not_a_class").is_none());
+        assert!(OCSFEventClass::from_yaml_str("").is_none());
     }
 
     #[test]
