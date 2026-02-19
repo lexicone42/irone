@@ -2,13 +2,15 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use chrono::{DateTime, Duration, Utc};
+use regex::Regex;
 use tracing::{debug, info, warn};
 
 use super::rule::{
-    DetectionMetadata, DetectionResult, DetectionRule, DualTargetDetectionRule, SQLDetectionRule,
-    Severity,
+    DetectionMetadata, DetectionQuery, DetectionResult, DetectionRule, DualTargetDetectionRule,
+    FieldFilter, FilterOp, OCSFDetectionRule, SQLDetectionRule, Severity, apply_filters,
 };
 use crate::connectors::base::DataConnector;
+use crate::connectors::ocsf::{OCSFEventClass, SecurityLakeQueries};
 
 /// Runs detection rules against data source connectors.
 ///
@@ -53,7 +55,11 @@ impl DetectionRunner {
     }
 
     /// Run a single detection rule.
-    pub async fn run_rule<C: DataConnector>(
+    ///
+    /// Dispatches to either `DataConnector::query` (SQL rules) or
+    /// `SecurityLakeQueries::query_by_event_class` (OCSF rules), then
+    /// applies any post-query filters in Rust before evaluation.
+    pub async fn run_rule<C: DataConnector + SecurityLakeQueries>(
         &self,
         rule_id: &str,
         connector: &C,
@@ -68,33 +74,59 @@ impl DetectionRunner {
         let end = end.unwrap_or_else(Utc::now);
         let start = start.unwrap_or_else(|| end - Duration::minutes(lookback_minutes));
 
-        let query = rule.get_query(start, end);
-        debug!(
-            rule_id,
-            query_preview = &query[..query.len().min(200)],
-            "Executing detection query"
-        );
+        let detection_query = rule.build_query(start, end);
 
-        match connector.query(&query).await {
-            Ok(qr) => {
-                let result = rule.evaluate(&qr);
-                info!(
+        let qr = match &detection_query {
+            DetectionQuery::Sql(sql) => {
+                debug!(
                     rule_id,
-                    triggered = result.triggered,
-                    match_count = result.match_count,
-                    "Detection completed"
+                    query_preview = &sql[..sql.len().min(200)],
+                    "Executing SQL detection query"
                 );
-                result
+                match connector.query(sql).await {
+                    Ok(qr) => qr,
+                    Err(e) => {
+                        warn!(rule_id, error = %e, "Detection rule SQL query failed");
+                        return DetectionResult::error(rule_id, rule.name(), &e.to_string());
+                    }
+                }
             }
-            Err(e) => {
-                warn!(rule_id, error = %e, "Detection rule failed");
-                DetectionResult::error(rule_id, rule.name(), &e.to_string())
+            DetectionQuery::Ocsf { event_class, limit } => {
+                debug!(
+                    rule_id,
+                    event_class = %event_class,
+                    limit,
+                    "Executing OCSF detection query"
+                );
+                match connector
+                    .query_by_event_class(*event_class, start, end, *limit, None)
+                    .await
+                {
+                    Ok(qr) => qr,
+                    Err(e) => {
+                        warn!(rule_id, error = %e, "Detection rule OCSF query failed");
+                        return DetectionResult::error(rule_id, rule.name(), &e.to_string());
+                    }
+                }
             }
-        }
+        };
+
+        // Apply post-query Rust-native filters
+        let filtered = apply_filters(&qr, rule.filters());
+
+        let result = rule.evaluate(&filtered);
+        info!(
+            rule_id,
+            triggered = result.triggered,
+            match_count = result.match_count,
+            pre_filter_count = qr.len(),
+            "Detection completed"
+        );
+        result
     }
 
     /// Run all enabled detection rules.
-    pub async fn run_all<C: DataConnector>(
+    pub async fn run_all<C: DataConnector + SecurityLakeQueries>(
         &self,
         connector: &C,
         start: Option<DateTime<Utc>>,
@@ -165,8 +197,9 @@ impl Default for DetectionRunner {
 /// Load detection rules from a YAML file.
 ///
 /// Supports:
-/// - `SQLDetectionRule`: Traditional SQL/Athena queries (has `query` field)
+/// - `OCSFDetectionRule`: OCSF-native rules (has `event_class` field)
 /// - `DualTargetDetectionRule`: Rules with `queries` dict or `log_type: cloudwatch_logs`
+/// - `SQLDetectionRule`: Traditional SQL/Athena queries (has `query` field)
 fn load_yaml_rules(
     file_path: &Path,
 ) -> Result<Vec<Box<dyn DetectionRule>>, Box<dyn std::error::Error>> {
@@ -185,6 +218,9 @@ fn load_yaml_rules(
             .as_mapping()
             .ok_or("Rule definition must be a mapping")?;
 
+        let event_class_str = map
+            .get(yaml_key("event_class"))
+            .and_then(serde_yaml::Value::as_str);
         let has_queries = map.contains_key(yaml_key("queries"));
         let log_type = map
             .get(yaml_key("log_type"))
@@ -207,7 +243,26 @@ fn load_yaml_rules(
             })
             .unwrap_or_default();
 
-        if has_queries || log_type == "cloudwatch_logs" {
+        if let Some(ec_str) = event_class_str {
+            // OCSF-native rule
+            let event_class = OCSFEventClass::from_yaml_str(ec_str)
+                .ok_or_else(|| format!("Unknown event_class '{}' in rule '{}'", ec_str, meta.id))?;
+            #[allow(clippy::cast_possible_truncation)]
+            let limit = map
+                .get(yaml_key("limit"))
+                .and_then(serde_yaml::Value::as_u64)
+                .unwrap_or(5000) as usize;
+            let filters = parse_filters(map)?;
+            let rule = OCSFDetectionRule {
+                meta,
+                event_class,
+                rule_filters: filters,
+                threshold,
+                limit,
+                group_by_fields: group_by,
+            };
+            rules.push(Box::new(rule));
+        } else if has_queries || log_type == "cloudwatch_logs" {
             let raw_queries = parse_queries(map, log_type);
             let rule = DualTargetDetectionRule::new(meta, raw_queries, threshold, group_by);
             rules.push(Box::new(rule));
@@ -328,15 +383,79 @@ fn parse_queries(map: &serde_yaml::Mapping, log_type: &str) -> HashMap<String, S
     HashMap::new()
 }
 
+/// Parse the `filters` array from a YAML rule definition.
+fn parse_filters(
+    map: &serde_yaml::Mapping,
+) -> Result<Vec<FieldFilter>, Box<dyn std::error::Error>> {
+    let Some(filters_val) = map.get(yaml_key("filters")) else {
+        return Ok(Vec::new());
+    };
+    let filters_seq = filters_val
+        .as_sequence()
+        .ok_or("'filters' must be a sequence")?;
+
+    let mut filters = Vec::new();
+    for filter_val in filters_seq {
+        let fmap = filter_val
+            .as_mapping()
+            .ok_or("Each filter must be a mapping")?;
+
+        let field = fmap
+            .get(yaml_key("field"))
+            .and_then(serde_yaml::Value::as_str)
+            .ok_or("Filter must have a 'field'")?
+            .to_string();
+
+        let op = if let Some(v) = fmap
+            .get(yaml_key("equals"))
+            .and_then(serde_yaml::Value::as_str)
+        {
+            FilterOp::Equals(v.to_string())
+        } else if let Some(v) = fmap
+            .get(yaml_key("not_equals"))
+            .and_then(serde_yaml::Value::as_str)
+        {
+            FilterOp::NotEquals(v.to_string())
+        } else if let Some(v) = fmap
+            .get(yaml_key("contains"))
+            .and_then(serde_yaml::Value::as_str)
+        {
+            FilterOp::Contains(v.to_string())
+        } else if let Some(seq) = fmap
+            .get(yaml_key("in"))
+            .and_then(serde_yaml::Value::as_sequence)
+        {
+            let values: Vec<String> = seq
+                .iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect();
+            FilterOp::In(values)
+        } else if let Some(v) = fmap
+            .get(yaml_key("regex"))
+            .and_then(serde_yaml::Value::as_str)
+        {
+            let re = Regex::new(v).map_err(|e| format!("Invalid regex '{v}' in filter: {e}"))?;
+            FilterOp::Regex(re)
+        } else {
+            return Err(format!("Filter for field '{field}' has no valid operator").into());
+        };
+
+        filters.push(FieldFilter { field, op });
+    }
+
+    Ok(filters)
+}
+
 #[cfg(test)]
 mod tests {
     use std::io::Write;
 
     use super::*;
+    use crate::connectors::ocsf::{OCSFEventClass, SecurityLakeError};
     use crate::connectors::result::QueryResult;
     use crate::json_row;
 
-    /// A mock connector that returns preset results.
+    /// A mock connector that returns preset results for both SQL and OCSF queries.
     struct MockConnector {
         result: QueryResult,
     }
@@ -362,6 +481,65 @@ mod tests {
             Ok(crate::connectors::base::HealthCheckResult::new(
                 "mock", true,
             ))
+        }
+    }
+
+    impl SecurityLakeQueries for MockConnector {
+        async fn query_by_event_class(
+            &self,
+            _event_class: OCSFEventClass,
+            _start: DateTime<Utc>,
+            _end: DateTime<Utc>,
+            _limit: usize,
+            _additional_filters: Option<&str>,
+        ) -> Result<QueryResult, SecurityLakeError> {
+            Ok(self.result.clone())
+        }
+        async fn query_authentication_events(
+            &self,
+            _start: DateTime<Utc>,
+            _end: DateTime<Utc>,
+            _status: Option<&str>,
+            _limit: usize,
+        ) -> Result<QueryResult, SecurityLakeError> {
+            Ok(self.result.clone())
+        }
+        async fn query_api_activity(
+            &self,
+            _start: DateTime<Utc>,
+            _end: DateTime<Utc>,
+            _service: Option<&str>,
+            _operation: Option<&str>,
+            _limit: usize,
+        ) -> Result<QueryResult, SecurityLakeError> {
+            Ok(self.result.clone())
+        }
+        async fn query_network_activity(
+            &self,
+            _start: DateTime<Utc>,
+            _end: DateTime<Utc>,
+            _src_ip: Option<&str>,
+            _dst_ip: Option<&str>,
+            _dst_port: Option<u16>,
+            _limit: usize,
+        ) -> Result<QueryResult, SecurityLakeError> {
+            Ok(self.result.clone())
+        }
+        async fn query_security_findings(
+            &self,
+            _start: DateTime<Utc>,
+            _end: DateTime<Utc>,
+            _severity: Option<&str>,
+            _limit: usize,
+        ) -> Result<QueryResult, SecurityLakeError> {
+            Ok(self.result.clone())
+        }
+        async fn get_event_summary(
+            &self,
+            _start: DateTime<Utc>,
+            _end: DateTime<Utc>,
+        ) -> Result<QueryResult, SecurityLakeError> {
+            Ok(self.result.clone())
         }
     }
 
@@ -432,6 +610,46 @@ mod tests {
             .await;
         assert!(result.triggered);
         assert_eq!(result.match_count, 2);
+    }
+
+    #[tokio::test]
+    async fn run_ocsf_rule_with_filters() {
+        let mut runner = DetectionRunner::new();
+        let rule = OCSFDetectionRule {
+            meta: DetectionMetadata {
+                id: "ocsf-test".into(),
+                name: "OCSF Test".into(),
+                severity: Severity::High,
+                enabled: true,
+                ..serde_json::from_str::<DetectionMetadata>(
+                    r#"{"id":"ocsf-test","name":"OCSF Test","severity":"high"}"#,
+                )
+                .unwrap()
+            },
+            event_class: OCSFEventClass::ApiActivity,
+            rule_filters: vec![FieldFilter {
+                field: "status_id".into(),
+                op: FilterOp::Equals("1".into()),
+            }],
+            threshold: 1,
+            limit: 5000,
+            group_by_fields: Vec::new(),
+        };
+        runner.register_rule(Box::new(rule));
+
+        // Mock returns 3 rows, but only 2 have status_id=1
+        let connector = MockConnector {
+            result: QueryResult::from_maps(vec![
+                json_row!("status_id" => "1", "op" => "AttachUserPolicy"),
+                json_row!("status_id" => "2", "op" => "ListBuckets"),
+                json_row!("status_id" => "1", "op" => "PutRolePolicy"),
+            ]),
+        };
+        let result = runner
+            .run_rule("ocsf-test", &connector, None, None, 15)
+            .await;
+        assert!(result.triggered);
+        assert_eq!(result.match_count, 2); // Filtered from 3 to 2
     }
 
     #[tokio::test]
@@ -507,5 +725,68 @@ mod tests {
 
         let rule = runner.get_rule("dual-rule").unwrap();
         assert_eq!(rule.name(), "Dual Target Rule");
+    }
+
+    #[test]
+    fn load_yaml_ocsf_rule() {
+        let dir = tempfile::tempdir().unwrap();
+        let file_path = dir.path().join("ocsf.yaml");
+        let mut f = std::fs::File::create(&file_path).unwrap();
+        writeln!(
+            f,
+            r#"id: detect-iam-priv-esc
+name: IAM Privilege Escalation
+severity: high
+event_class: api_activity
+limit: 5000
+threshold: 1
+filters:
+  - field: api.operation
+    in: [AttachUserPolicy, AttachRolePolicy, PutUserPolicy, PutRolePolicy]
+  - field: status_id
+    equals: "1"
+"#
+        )
+        .unwrap();
+
+        let mut runner = DetectionRunner::new();
+        let loaded = runner.load_rules_from_directory(dir.path());
+        assert_eq!(loaded, 1);
+
+        let rule = runner.get_rule("detect-iam-priv-esc").unwrap();
+        assert_eq!(rule.name(), "IAM Privilege Escalation");
+        assert_eq!(rule.filters().len(), 2);
+
+        let DetectionQuery::Ocsf { event_class, limit } = rule.build_query(Utc::now(), Utc::now())
+        else {
+            panic!("Expected OCSF query");
+        };
+        assert_eq!(event_class, OCSFEventClass::ApiActivity);
+        assert_eq!(limit, 5000);
+    }
+
+    #[test]
+    fn load_yaml_ocsf_rule_with_regex_filter() {
+        let dir = tempfile::tempdir().unwrap();
+        let file_path = dir.path().join("regex.yaml");
+        let mut f = std::fs::File::create(&file_path).unwrap();
+        writeln!(
+            f,
+            r#"id: regex-rule
+name: Regex Rule
+severity: medium
+event_class: authentication
+threshold: 1
+filters:
+  - field: actor.user.name
+    regex: "^admin-\\d+$"
+"#
+        )
+        .unwrap();
+
+        let mut runner = DetectionRunner::new();
+        let loaded = runner.load_rules_from_directory(dir.path());
+        assert_eq!(loaded, 1);
+        assert_eq!(runner.get_rule("regex-rule").unwrap().filters().len(), 1);
     }
 }

@@ -69,6 +69,7 @@ export class WebStack extends cdk.Stack {
         SECDASH_USE_DIRECT_QUERY: "true",
         SECDASH_AUTH_ENABLED: "true",
         SECDASH_CEDAR_POLICY_DIR: "cedar",
+        SECDASH_RULES_DIR: "rules",
         RUST_LOG: "info",
         // NOTE: SECDASH_COGNITO_CLIENT_SECRET and SECDASH_SESSION_SECRET_KEY
         // are currently set as plaintext env vars on the deployed Lambda.

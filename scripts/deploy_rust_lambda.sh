@@ -121,6 +121,20 @@ else
     echo "WARNING: Cedar policies not found at $CEDAR_SRC — deploying without authorization"
 fi
 
+# --- Bundle detection rules into iris-web zip ---
+RULES_DIR="$IRIS_RS_DIR/rules"
+if [[ -d "$RULES_DIR" ]]; then
+    RULE_COUNT=$(find "$RULES_DIR" -name '*.yaml' | wc -l)
+    if [[ "$RULE_COUNT" -gt 0 ]]; then
+        echo "Bundling $RULE_COUNT detection rules into iris-web zip..."
+        RULES_TMP=$(mktemp -d)
+        cp -r "$RULES_DIR" "$RULES_TMP/rules"
+        (cd "$RULES_TMP" && zip -qr "$WEB_ZIP" rules/)
+        rm -rf "$RULES_TMP"
+        echo "  Detection rules bundled."
+    fi
+fi
+
 # --- Helper: deploy one Lambda ---
 deploy_lambda() {
     local name="$1"
