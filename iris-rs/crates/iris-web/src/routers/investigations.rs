@@ -6,7 +6,6 @@ use axum::{Json, Router};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use iris_aws::security_lake::SecurityLakeConnector;
 use iris_core::graph::{
     EventTag, GraphBuilder, NodeType, SecurityGraph, extract_timeline_from_graph,
 };
@@ -156,7 +155,9 @@ async fn create_investigation(
             .ok_or_else(|| WebError::NotFound(format!("source '{source_name}' not found")))?;
         drop(catalog);
 
-        let connector = SecurityLakeConnector::from_source(source, &state.sdk_config);
+        let connector =
+            iris_aws::create_connector(source, &state.sdk_config, state.config.use_direct_query)
+                .await;
         let mut builder = GraphBuilder::new();
         builder
             .build_from_identifiers(
@@ -226,7 +227,8 @@ async fn create_from_detection(
     drop(catalog);
 
     // 3. Run detection
-    let connector = SecurityLakeConnector::from_source(source, &state.sdk_config);
+    let connector =
+        iris_aws::create_connector(source, &state.sdk_config, state.config.use_direct_query).await;
     let result = state
         .runner
         .run_rule(
@@ -454,7 +456,8 @@ async fn enrich_investigation(
     drop(catalog);
 
     // Build connector and re-enrich
-    let connector = SecurityLakeConnector::from_source(source, &state.sdk_config);
+    let connector =
+        iris_aws::create_connector(source, &state.sdk_config, state.config.use_direct_query).await;
 
     // Extract identifiers from existing graph
     let principals: Vec<String> = inv

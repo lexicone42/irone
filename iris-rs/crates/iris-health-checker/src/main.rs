@@ -23,7 +23,11 @@ async fn handler(_event: LambdaEvent<serde_json::Value>) -> Result<serde_json::V
         Some(HealthCacheClient::new(&sdk_config, cache_table))
     };
 
-    let checker = ScheduledChecker::new(catalog, health_cache, sdk_config);
+    let use_direct_query = std::env::var("SECDASH_USE_DIRECT_QUERY")
+        .map(|v| v.eq_ignore_ascii_case("true"))
+        .unwrap_or(true);
+
+    let checker = ScheduledChecker::new(catalog, health_cache, sdk_config, use_direct_query);
     let result = checker.run().await;
 
     tracing::info!(

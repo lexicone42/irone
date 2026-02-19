@@ -63,9 +63,10 @@ export class WebStack extends cdk.Stack {
         SECDASH_COGNITO_USER_POOL_ID: props.userPoolId,
         SECDASH_COGNITO_CLIENT_ID: props.userPoolClientId,
         SECDASH_COGNITO_DOMAIN: props.cognitoDomain,
+        SECDASH_FRONTEND_URL: "https://iris.lexicone.com",
         SECDASH_COGNITO_REDIRECT_URI:
           "https://iris.lexicone.com/auth/callback",
-        SECDASH_USE_DIRECT_QUERY: "false",
+        SECDASH_USE_DIRECT_QUERY: "true",
         SECDASH_AUTH_ENABLED: "true",
         SECDASH_CEDAR_POLICY_DIR: "cedar",
         RUST_LOG: "info",

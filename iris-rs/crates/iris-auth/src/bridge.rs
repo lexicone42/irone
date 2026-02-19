@@ -33,9 +33,12 @@ fn to_l42_config(app: &AppConfig) -> L42Config {
         cognito_region: app.cognito_region.clone(),
         session_secret: app.session_secret_key.clone(),
         frontend_url: if app.frontend_url.is_empty() {
-            app.cognito_redirect_uri
-                .rsplit_once('/')
-                .map_or(app.cognito_redirect_uri.clone(), |(base, _)| base.into())
+            // Strip the path to get the origin (scheme + authority).
+            // "https://iris.lexicone.com/auth/callback" → "https://iris.lexicone.com"
+            let uri = &app.cognito_redirect_uri;
+            uri.find("://")
+                .and_then(|i| uri[i + 3..].find('/').map(|j| uri[..i + 3 + j].to_string()))
+                .unwrap_or_else(|| uri.clone())
         } else {
             app.frontend_url.clone()
         },
@@ -262,7 +265,8 @@ mod tests {
         };
 
         let l42 = to_l42_config(&app);
-        assert_eq!(l42.frontend_url, "https://iris.lexicone.com/auth");
+        // Must strip the entire path, not just the last segment
+        assert_eq!(l42.frontend_url, "https://iris.lexicone.com");
     }
 
     #[tokio::test]

@@ -68,7 +68,7 @@ export class IrisStack extends cdk.Stack {
       environment: {
         SECDASH_SECURITY_LAKE_DB: "amazon_security_lake_glue_db_us_west_2",
         SECDASH_HEALTH_CACHE_TABLE: healthCacheTable.tableName,
-        SECDASH_USE_DIRECT_QUERY: "false",
+        SECDASH_USE_DIRECT_QUERY: "true",
         RUST_LOG: "info",
       },
     });

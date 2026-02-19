@@ -4,7 +4,6 @@ use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 
 use iris_aws::health_cache::HealthCacheClient;
-use iris_aws::security_lake::SecurityLakeConnector;
 use iris_core::catalog::DataSource;
 use iris_core::connectors::base::{DataConnector, HealthCheckResult};
 
@@ -122,8 +121,9 @@ async fn all_sources_health(
         return Ok(Json(Vec::new()));
     }
 
-    // ?live=true: run Athena queries (may be slow)
-    let results = run_live_health_checks(&sources, &state.sdk_config).await;
+    // ?live=true: run live queries (may be slow)
+    let results =
+        run_live_health_checks(&sources, &state.sdk_config, state.config.use_direct_query).await;
     Ok(Json(results))
 }
 
@@ -151,7 +151,8 @@ async fn source_health(
     }
 
     // Live check
-    let connector = SecurityLakeConnector::from_source(source, &state.sdk_config);
+    let connector =
+        iris_aws::create_connector(source, &state.sdk_config, state.config.use_direct_query).await;
     let result = connector.check_health().await.map_err(WebError::from)?;
     Ok(Json(result))
 }
@@ -185,7 +186,8 @@ async fn refresh_health(
     let sources: Vec<DataSource> = catalog.list_sources().into_iter().cloned().collect();
     drop(catalog);
 
-    let results = run_live_health_checks(&sources, &state.sdk_config).await;
+    let results =
+        run_live_health_checks(&sources, &state.sdk_config, state.config.use_direct_query).await;
 
     // Write-through to DynamoDB cache
     if let Some(cache) = build_health_cache(&state)
@@ -211,12 +213,15 @@ fn build_health_cache(state: &AppState) -> Option<HealthCacheClient> {
 async fn run_live_health_checks(
     sources: &[DataSource],
     sdk_config: &aws_config::SdkConfig,
+    use_direct_query: bool,
 ) -> Vec<HealthCheckResult> {
     let mut set = tokio::task::JoinSet::new();
     for source in sources {
-        let connector = SecurityLakeConnector::from_source(source.clone(), sdk_config);
+        let sdk = sdk_config.clone();
+        let src = source.clone();
         let name = source.name.clone();
         set.spawn(async move {
+            let connector = iris_aws::create_connector(src, &sdk, use_direct_query).await;
             match connector.check_health().await {
                 Ok(result) => result,
                 Err(e) => HealthCheckResult::new(name, false).with_error(e.to_string()),
