@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::path::Path;
+use std::time::Duration as StdDuration;
 
 use chrono::{DateTime, Duration, Utc};
 use regex::Regex;
@@ -54,11 +55,16 @@ impl DetectionRunner {
             .collect()
     }
 
+    /// Maximum time a detection query may run before being cancelled.
+    const QUERY_TIMEOUT: StdDuration = StdDuration::from_secs(30);
+
     /// Run a single detection rule.
     ///
     /// Dispatches to either `DataConnector::query` (SQL rules) or
     /// `SecurityLakeQueries::query_by_event_class` (OCSF rules), then
     /// applies any post-query filters in Rust before evaluation.
+    ///
+    /// Queries are subject to a 30-second timeout to prevent hung connections.
     pub async fn run_rule<C: DataConnector + SecurityLakeQueries>(
         &self,
         rule_id: &str,
@@ -76,45 +82,52 @@ impl DetectionRunner {
 
         let detection_query = rule.build_query(start, end);
 
-        let qr = match &detection_query {
-            DetectionQuery::Sql(sql) => {
-                debug!(
-                    rule_id,
-                    query_preview = &sql[..sql.len().min(200)],
-                    "Executing SQL detection query"
-                );
-                match connector.query(sql).await {
-                    Ok(qr) => qr,
-                    Err(e) => {
-                        warn!(rule_id, error = %e, "Detection rule SQL query failed");
-                        return DetectionResult::error(rule_id, rule.name(), &e.to_string());
-                    }
+        let query_future = async {
+            match &detection_query {
+                DetectionQuery::Sql(sql) => {
+                    debug!(
+                        rule_id,
+                        query_preview = &sql[..sql.len().min(200)],
+                        "Executing SQL detection query"
+                    );
+                    connector.query(sql).await.map_err(|e| e.to_string())
                 }
-            }
-            DetectionQuery::Ocsf { event_class, limit } => {
-                debug!(
-                    rule_id,
-                    event_class = %event_class,
-                    limit,
-                    "Executing OCSF detection query"
-                );
-                match connector
-                    .query_by_event_class(*event_class, start, end, *limit, None)
-                    .await
-                {
-                    Ok(qr) => qr,
-                    Err(e) => {
-                        warn!(rule_id, error = %e, "Detection rule OCSF query failed");
-                        return DetectionResult::error(rule_id, rule.name(), &e.to_string());
-                    }
+                DetectionQuery::Ocsf { event_class, limit } => {
+                    debug!(
+                        rule_id,
+                        event_class = %event_class,
+                        limit,
+                        "Executing OCSF detection query"
+                    );
+                    connector
+                        .query_by_event_class(*event_class, start, end, *limit, None)
+                        .await
+                        .map_err(|e| e.to_string())
                 }
             }
         };
 
-        // Apply post-query Rust-native filters
-        let filtered = apply_filters(&qr, rule.filters());
+        let qr = match tokio::time::timeout(Self::QUERY_TIMEOUT, query_future).await {
+            Ok(Ok(qr)) => qr,
+            Ok(Err(e)) => {
+                warn!(rule_id, error = %e, "Detection query failed");
+                return DetectionResult::error(rule_id, rule.name(), &e);
+            }
+            Err(_) => {
+                warn!(rule_id, "Detection query timed out after 30s");
+                return DetectionResult::error(
+                    rule_id,
+                    rule.name(),
+                    "Query timed out after 30 seconds",
+                );
+            }
+        };
 
-        let result = rule.evaluate(&filtered);
+        // Apply post-query Rust-native filters (returns None if no filters → use original)
+        let filtered = apply_filters(&qr, rule.filters());
+        let eval_qr = filtered.as_ref().unwrap_or(&qr);
+
+        let result = rule.evaluate(eval_qr);
         info!(
             rule_id,
             triggered = result.triggered,
