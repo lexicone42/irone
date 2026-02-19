@@ -1,5 +1,4 @@
 use iris_aws::health_cache::HealthCacheClient;
-use iris_aws::security_lake::SecurityLakeConnector;
 use iris_core::catalog::DataCatalog;
 use iris_core::connectors::base::{DataConnector, HealthCheckResult};
 
@@ -19,6 +18,7 @@ pub struct ScheduledChecker {
     catalog: DataCatalog,
     health_cache: Option<HealthCacheClient>,
     sdk_config: aws_config::SdkConfig,
+    use_direct_query: bool,
 }
 
 impl ScheduledChecker {
@@ -26,11 +26,13 @@ impl ScheduledChecker {
         catalog: DataCatalog,
         health_cache: Option<HealthCacheClient>,
         sdk_config: aws_config::SdkConfig,
+        use_direct_query: bool,
     ) -> Self {
         Self {
             catalog,
             health_cache,
             sdk_config,
+            use_direct_query,
         }
     }
 
@@ -51,9 +53,12 @@ impl ScheduledChecker {
         // Parallel health checks
         let mut set = tokio::task::JoinSet::new();
         for source in sources {
-            let connector = SecurityLakeConnector::from_source(source.clone(), &self.sdk_config);
+            let sdk = self.sdk_config.clone();
+            let src = source.clone();
             let name = source.name.clone();
+            let use_direct = self.use_direct_query;
             set.spawn(async move {
+                let connector = iris_aws::create_connector(src, &sdk, use_direct).await;
                 let health: HealthCheckResult = match connector.check_health().await {
                     Ok(result) => result,
                     Err(e) => HealthCheckResult::new(name, false).with_error(e.to_string()),
@@ -114,7 +119,7 @@ mod tests {
             .behavior_version(aws_config::BehaviorVersion::latest())
             .region(aws_config::Region::new("us-west-2"))
             .build();
-        let checker = ScheduledChecker::new(catalog, None, sdk_config);
+        let checker = ScheduledChecker::new(catalog, None, sdk_config, false);
         let result = checker.run().await;
         assert_eq!(result.total_sources, 0);
         assert!(result.results.is_empty());

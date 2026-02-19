@@ -4,7 +4,6 @@ use axum::{Json, Router};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 
-use iris_aws::security_lake::SecurityLakeConnector;
 use iris_core::detections::DetectionResult;
 
 use crate::error::WebError;
@@ -144,7 +143,8 @@ async fn run_detection(
     drop(catalog);
 
     // Build connector and run detection
-    let connector = SecurityLakeConnector::from_source(source, &state.sdk_config);
+    let connector =
+        iris_aws::create_connector(source, &state.sdk_config, state.config.use_direct_query).await;
     let result = state
         .runner
         .run_rule(
