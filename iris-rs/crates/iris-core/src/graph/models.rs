@@ -4,6 +4,8 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::connectors::ocsf::get_nested_str;
+
 /// Types of nodes in the security graph.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum NodeType {
@@ -101,29 +103,28 @@ pub struct PrincipalNode {
 
 impl PrincipalNode {
     #[must_use]
-    pub fn create_id(user_name: &str) -> String {
-        format!("Principal:{user_name}")
+    pub fn create_id(user_name: &str, account_id: Option<&str>) -> String {
+        match account_id {
+            Some(acct) => format!("Principal:{acct}:{user_name}"),
+            None => format!("Principal:{user_name}"),
+        }
     }
 
     /// Create a `GraphNode` + `PrincipalNode` from OCSF event data.
     #[must_use]
-    pub fn from_ocsf(event: &HashMap<String, Value>) -> Option<(GraphNode, Self)> {
-        let user_name = get_nested_str(event, &["actor.user.name", "user_name"])
-            .or_else(|| get_deep_str(event, &["actor", "user", "name"]))?;
+    pub fn from_ocsf(event: &serde_json::Map<String, Value>) -> Option<(GraphNode, Self)> {
+        let user_name = get_nested_str(event, &["actor.user.name", "user_name"])?;
 
-        let user_type = get_nested_str(event, &["actor.user.type", "user_type"])
-            .or_else(|| get_deep_str(event, &["actor", "user", "type"]));
+        let user_type = get_nested_str(event, &["actor.user.type", "user_type"]);
 
-        let arn = get_nested_str(event, &["actor.user.uid"])
-            .or_else(|| get_deep_str(event, &["actor", "user", "uid"]));
+        let arn = get_nested_str(event, &["actor.user.uid"]);
 
         let account_id = get_nested_str(
             event,
             &["actor.user.account_uid", "cloud.account.uid", "accountid"],
-        )
-        .or_else(|| get_deep_str(event, &["cloud", "account", "uid"]));
+        );
 
-        let id = Self::create_id(&user_name);
+        let id = Self::create_id(&user_name, account_id.as_deref());
         let node = GraphNode {
             id: id.clone(),
             node_type: NodeType::Principal,
@@ -277,12 +278,10 @@ impl APIOperationNode {
 
     /// Create from OCSF event data.
     #[must_use]
-    pub fn from_ocsf(event: &HashMap<String, Value>) -> Option<(GraphNode, Self)> {
-        let operation = get_nested_str(event, &["api.operation", "operation"])
-            .or_else(|| get_deep_str(event, &["api", "operation"]))?;
+    pub fn from_ocsf(event: &serde_json::Map<String, Value>) -> Option<(GraphNode, Self)> {
+        let operation = get_nested_str(event, &["api.operation", "operation"])?;
 
-        let mut service = get_nested_str(event, &["api.service.name", "service"])
-            .or_else(|| get_deep_str(event, &["api", "service", "name"]))?;
+        let mut service = get_nested_str(event, &["api.service.name", "service"])?;
 
         // Normalize service name
         if let Some(stripped) = service.strip_suffix(".amazonaws.com") {
@@ -558,41 +557,10 @@ pub struct GraphSummary {
     pub edges_by_type: HashMap<String, usize>,
 }
 
-// --- Helpers for OCSF field extraction ---
-
-/// Try to get a string value from any of the given flat keys.
-fn get_nested_str(event: &HashMap<String, Value>, keys: &[&str]) -> Option<String> {
-    for key in keys {
-        if let Some(Value::String(s)) = event.get(*key)
-            && !s.is_empty()
-        {
-            return Some(s.clone());
-        }
-    }
-    None
-}
-
-/// Navigate nested dicts to extract a string value.
-fn get_deep_str(event: &HashMap<String, Value>, path: &[&str]) -> Option<String> {
-    let mut current: &Value =
-        &Value::Object(event.iter().map(|(k, v)| (k.clone(), v.clone())).collect());
-    for part in path {
-        match current {
-            Value::Object(map) => {
-                current = map.get(*part)?;
-            }
-            _ => return None,
-        }
-    }
-    match current {
-        Value::String(s) if !s.is_empty() => Some(s.clone()),
-        _ => None,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     fn make_node(id: &str, node_type: NodeType) -> GraphNode {
         GraphNode {
@@ -619,6 +587,14 @@ mod tests {
             last_seen: None,
             event_count: 1,
         }
+    }
+
+    /// Helper to build an OCSF event map for tests.
+    fn ocsf_map(pairs: &[(&str, &str)]) -> serde_json::Map<String, Value> {
+        pairs
+            .iter()
+            .map(|(k, v)| ((*k).to_string(), json!(v)))
+            .collect()
     }
 
     #[test]
@@ -771,8 +747,16 @@ mod tests {
     }
 
     #[test]
-    fn principal_create_id() {
-        assert_eq!(PrincipalNode::create_id("alice"), "Principal:alice");
+    fn principal_create_id_without_account() {
+        assert_eq!(PrincipalNode::create_id("alice", None), "Principal:alice");
+    }
+
+    #[test]
+    fn principal_create_id_with_account() {
+        assert_eq!(
+            PrincipalNode::create_id("alice", Some("123456789012")),
+            "Principal:123456789012:alice"
+        );
     }
 
     #[test]
@@ -865,13 +849,8 @@ mod tests {
     }
 
     #[test]
-    fn principal_from_ocsf_flat_fields() {
-        let mut event = HashMap::new();
-        event.insert("actor.user.name".to_string(), Value::String("alice".into()));
-        event.insert(
-            "actor.user.type".to_string(),
-            Value::String("IAMUser".into()),
-        );
+    fn principal_from_ocsf_dot_path_fields() {
+        let event = ocsf_map(&[("actor.user.name", "alice"), ("actor.user.type", "IAMUser")]);
 
         let (node, principal) = PrincipalNode::from_ocsf(&event).unwrap();
         assert_eq!(node.id, "Principal:alice");
@@ -880,27 +859,51 @@ mod tests {
     }
 
     #[test]
+    fn principal_from_ocsf_nested_fields() {
+        let mut event = serde_json::Map::new();
+        event.insert(
+            "actor".into(),
+            json!({"user": {"name": "bob", "type": "AssumedRole"}}),
+        );
+        event.insert("accountid".into(), json!("123456789012"));
+
+        let (node, principal) = PrincipalNode::from_ocsf(&event).unwrap();
+        assert_eq!(node.id, "Principal:123456789012:bob");
+        assert_eq!(principal.user_name, "bob");
+        assert_eq!(principal.account_id, Some("123456789012".into()));
+    }
+
+    #[test]
     fn principal_from_ocsf_missing_name_returns_none() {
-        let event = HashMap::new();
+        let event = serde_json::Map::new();
         assert!(PrincipalNode::from_ocsf(&event).is_none());
     }
 
     #[test]
     fn api_operation_from_ocsf() {
-        let mut event = HashMap::new();
-        event.insert(
-            "api.operation".to_string(),
-            Value::String("GetObject".into()),
-        );
-        event.insert(
-            "api.service.name".to_string(),
-            Value::String("s3.amazonaws.com".into()),
-        );
+        let event = ocsf_map(&[
+            ("api.operation", "GetObject"),
+            ("api.service.name", "s3.amazonaws.com"),
+        ]);
 
         let (node, op) = APIOperationNode::from_ocsf(&event).unwrap();
         assert_eq!(node.label, "s3:GetObject");
         assert_eq!(op.service, "s3"); // .amazonaws.com stripped
         assert_eq!(op.operation, "GetObject");
+    }
+
+    #[test]
+    fn api_operation_from_ocsf_nested() {
+        let mut event = serde_json::Map::new();
+        event.insert(
+            "api".into(),
+            json!({"operation": "PutObject", "service": {"name": "s3"}}),
+        );
+
+        let (node, op) = APIOperationNode::from_ocsf(&event).unwrap();
+        assert_eq!(node.label, "s3:PutObject");
+        assert_eq!(op.service, "s3");
+        assert_eq!(op.operation, "PutObject");
     }
 
     #[test]

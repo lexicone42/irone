@@ -16,6 +16,7 @@ regex = { workspace = true }
 tracing = { workspace = true }
 envy = { workspace = true }
 tokio = { version = "1", features = ["time"] }
+futures = { workspace = true }
 
 [dev-dependencies]
 proptest = "1"
