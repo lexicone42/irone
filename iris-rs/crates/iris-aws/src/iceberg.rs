@@ -65,9 +65,13 @@ impl IcebergConnector {
             .region()
             .map_or_else(|| source.region.clone(), std::string::ToString::to_string);
 
+        // warehouse must be a valid S3 URL — it's used only for FileIO scheme
+        // detection (S3 vs GCS vs local). Actual data paths come from Iceberg
+        // metadata resolved via Glue. Any valid s3:// URL works.
+        let warehouse = format!("s3://aws-security-data-lake-{region}");
         let props = HashMap::from([
-            ("warehouse".to_string(), database.to_string()),
-            ("region".to_string(), region),
+            ("warehouse".to_string(), warehouse),
+            ("region_name".to_string(), region),
         ]);
 
         let catalog = GlueCatalogBuilder::default()
