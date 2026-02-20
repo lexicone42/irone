@@ -134,7 +134,7 @@ impl IcebergConnector {
             .await
             .map_err(|e| AwsError::QueryFailed(format!("failed to collect scan tasks: {e}")))?;
 
-        debug!(file_count = tasks.len(), "Iceberg scan planned");
+        tracing::info!(file_count = tasks.len(), "Iceberg scan planned");
 
         if tasks.is_empty() {
             return Ok(QueryResult::empty());
@@ -164,7 +164,7 @@ impl IcebergConnector {
             }
         }
 
-        debug!(
+        tracing::info!(
             total_rows,
             files_read = tasks.len(),
             "Iceberg scan complete"
