@@ -145,7 +145,10 @@ pub async fn create_connector(
 ) -> ConnectorKind {
     if use_direct_query {
         match IcebergConnector::new(source.clone(), sdk_config).await {
-            Ok(c) => return ConnectorKind::Iceberg(Box::new(c)),
+            Ok(c) => {
+                tracing::info!(source = %source.name, connector = "iceberg", "Using direct Iceberg connector");
+                return ConnectorKind::Iceberg(Box::new(c));
+            }
             Err(e) => {
                 tracing::warn!(
                     source = %source.name,
@@ -155,6 +158,7 @@ pub async fn create_connector(
             }
         }
     }
+    tracing::info!(source = %source.name, connector = "athena", "Using Athena connector");
     ConnectorKind::Athena(Box::new(SecurityLakeConnector::from_source(
         source, sdk_config,
     )))
