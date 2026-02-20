@@ -111,7 +111,7 @@ function healthMonitor() {
             this.error = null;
             try {
                 const resp = await apiFetch("/sources/refresh", { method: "POST" });
-                this.sources = resp.results || [];
+                this.sources = resp;
                 if (this.sources.length > 0) {
                     this.lastChecked = this.sources[0].checked_at;
                 }
@@ -206,8 +206,10 @@ function detectionsApp() {
                         enrichment_window_minutes: 60,
                     }),
                 });
-                if (resp.created && resp.id) {
-                    window.location.href = `/investigations.html#${resp.id}`;
+                if (resp.triggered && resp.investigation_id) {
+                    window.location.href = `/investigations.html#${resp.investigation_id}`;
+                } else if (!resp.triggered) {
+                    this.error = "Detection did not trigger — no investigation created";
                 } else {
                     this.error = resp.error || "Investigation not created";
                 }

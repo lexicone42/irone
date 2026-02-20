@@ -33,7 +33,8 @@ const fn default_true() -> bool {
 
 #[derive(Debug, Deserialize)]
 pub struct RunDetectionRequest {
-    pub source_name: String,
+    /// If omitted, uses the first Security Lake source from the catalog.
+    pub source_name: Option<String>,
     #[serde(default = "default_lookback")]
     pub lookback_minutes: i64,
 }
@@ -134,12 +135,21 @@ async fn run_detection(
         return Err(WebError::NotFound(format!("rule '{rule_id}' not found")));
     }
 
-    // Resolve source
+    // Resolve source: explicit name or first Security Lake source
     let catalog = state.catalog.read().await;
-    let source = catalog
-        .get_source(&body.source_name)
-        .cloned()
-        .ok_or_else(|| WebError::NotFound(format!("source '{}' not found", body.source_name)))?;
+    let source = if let Some(ref name) = body.source_name {
+        catalog
+            .get_source(name)
+            .cloned()
+            .ok_or_else(|| WebError::NotFound(format!("source '{name}' not found")))?
+    } else {
+        catalog
+            .filter_by_tag("security-lake")
+            .into_iter()
+            .next()
+            .cloned()
+            .ok_or_else(|| WebError::BadRequest("no Security Lake source configured".into()))?
+    };
     drop(catalog);
 
     // Build connector and run detection

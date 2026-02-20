@@ -390,12 +390,13 @@ async fn get_investigation_graph_cytoscape_format() {
 
     // Check node data format
     assert!(nodes[0]["data"]["id"].is_string());
-    assert!(nodes[0]["data"]["type"].is_string());
+    assert!(nodes[0]["data"]["node_type"].is_string());
     assert!(nodes[0]["data"]["label"].is_string());
 
     // Check edge data format
     assert!(edges[0]["data"]["source"].is_string());
     assert!(edges[0]["data"]["target"].is_string());
+    assert!(edges[0]["data"]["edge_type"].is_string());
 
     // Summary present
     assert!(body["summary"]["total_nodes"].as_u64().unwrap() > 0);

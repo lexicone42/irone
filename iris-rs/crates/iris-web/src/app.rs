@@ -7,7 +7,7 @@ use tower_http::trace::TraceLayer;
 use iris_auth::bridge::AuthComponents;
 use iris_auth::middleware::require_auth;
 
-use crate::routers::{dashboard, detections, investigations, sources};
+use crate::routers::{dashboard, detections, investigations, query, sources};
 use crate::state::AppState;
 
 /// Build the full axum router with all API routes, auth, and middleware.
@@ -17,6 +17,7 @@ pub fn build_router(state: AppState, auth: Option<AuthComponents>) -> Router {
         .merge(sources::router())
         .merge(detections::router())
         .merge(investigations::router())
+        .merge(query::router())
         .merge(dashboard::router());
 
     let protected_api = if auth.is_some() {
