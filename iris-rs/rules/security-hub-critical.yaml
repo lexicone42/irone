@@ -1,10 +1,11 @@
 id: detect-security-hub-critical
-name: Security Hub Critical Finding
+name: Security Hub Critical Compliance Finding
 description: >
-  Detects critical severity findings from AWS Security Hub.
-  OCSF severity_id 5 maps to critical.
+  Detects critical severity compliance findings from AWS Security Hub.
+  Security Hub maps to OCSF class_uid 2003 (Compliance Finding),
+  not 2001 (Security Finding). OCSF severity_id 5 maps to critical.
 severity: critical
-event_class: security_finding
+event_class: compliance_finding
 limit: 1000
 threshold: 1
 tags:
