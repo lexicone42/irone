@@ -171,7 +171,7 @@ async fn create_investigation(
                 true,
             )
             .await;
-        builder.get_graph().clone()
+        builder.into_graph()
     } else {
         SecurityGraph::new()
     };
@@ -278,7 +278,7 @@ async fn create_from_detection(
             true,
         )
         .await;
-    let graph = builder.get_graph().clone();
+    let graph = builder.into_graph();
 
     // 4. Extract timeline
     let timeline = extract_timeline_from_graph(&graph, true, true);
@@ -489,7 +489,7 @@ async fn enrich_investigation(
     builder
         .build_from_identifiers(&connector, &principals, &ips, start, end, 1000, true)
         .await;
-    let graph = builder.get_graph().clone();
+    let graph = builder.into_graph();
     let timeline = extract_timeline_from_graph(&graph, true, true);
 
     let node_count = graph.node_count();
@@ -503,16 +503,18 @@ async fn enrich_investigation(
     }
     drop(invs);
 
-    // Persist
+    // Persist only the updated graph and timeline (avoid cloning entire Investigation)
     if let Some(ref store) = state.investigation_store {
         let invs = state.investigations.read().await;
         if let Some(inv) = invs.get(&inv_id) {
             let store = Arc::clone(store);
-            let inv_clone = inv.clone();
+            let id = inv.id.clone();
+            let graph = inv.graph.clone();
+            let timeline = inv.timeline.clone();
             let _ = tokio::task::spawn_blocking(move || {
-                let _ = store.save_graph(&inv_clone.id, &inv_clone.graph);
-                let _ = store.save_timeline(&inv_clone.id, &inv_clone.timeline);
-                let _ = store.delete_artifacts(&inv_clone.id);
+                let _ = store.save_graph(&id, &graph);
+                let _ = store.save_timeline(&id, &timeline);
+                let _ = store.delete_artifacts(&id);
             })
             .await;
         }

@@ -107,30 +107,20 @@ impl GraphBuilder {
             let end_time = result.executed_at;
             let start_time = end_time - Duration::minutes(enrichment_window_minutes);
 
-            // Enrich by users (limit to 10)
-            for user in identifiers.users.iter().take(10) {
-                self.enrich_by_user(
-                    &enricher,
-                    user,
-                    start_time,
-                    end_time,
-                    max_related_events,
-                    include_events,
-                )
-                .await;
-            }
+            // Run all enrichment queries in parallel, then process results
+            let enrichment_results = Self::run_enrichment_parallel(
+                &enricher,
+                &identifiers,
+                start_time,
+                end_time,
+                max_related_events,
+            )
+            .await;
 
-            // Enrich by IPs (limit to 10)
-            for ip in identifiers.ips.iter().take(10) {
-                self.enrich_by_ip(
-                    &enricher,
-                    ip,
-                    start_time,
-                    end_time,
-                    max_related_events,
-                    include_events,
-                )
-                .await;
+            for qr in &enrichment_results {
+                if !qr.is_empty() {
+                    self.process_query_result(qr, include_events);
+                }
             }
         }
 
@@ -167,36 +157,39 @@ impl GraphBuilder {
 
         let enricher = SecurityLakeEnricher::new(security_lake);
 
-        for user in users.iter().take(10) {
-            self.enrich_by_user(
-                &enricher,
-                user,
-                start_time,
-                end_time,
-                max_events,
-                include_events,
-            )
-            .await;
-        }
+        // Build identifiers from the provided lists
+        let identifiers = ExtractedIdentifiers {
+            users: users.iter().cloned().collect(),
+            ips: ips.iter().cloned().collect(),
+            ..Default::default()
+        };
 
-        for ip in ips.iter().take(10) {
-            self.enrich_by_ip(
-                &enricher,
-                ip,
-                start_time,
-                end_time,
-                max_events,
-                include_events,
-            )
-            .await;
+        let enrichment_results = Self::run_enrichment_parallel(
+            &enricher,
+            &identifiers,
+            start_time,
+            end_time,
+            max_events,
+        )
+        .await;
+
+        for qr in &enrichment_results {
+            if !qr.is_empty() {
+                self.process_query_result(qr, include_events);
+            }
         }
 
         &self.graph
     }
 
-    /// Return the built graph.
+    /// Return a reference to the built graph.
     pub fn get_graph(&self) -> &SecurityGraph {
         &self.graph
+    }
+
+    /// Consume the builder and return the graph without cloning.
+    pub fn into_graph(self) -> SecurityGraph {
+        self.graph
     }
 
     /// Reset the builder for a new graph.
@@ -342,8 +335,7 @@ impl GraphBuilder {
         event: &serde_json::Map<String, Value>,
         event_time: DateTime<Utc>,
     ) -> Option<String> {
-        // Use the same extraction logic as PrincipalNode
-        let (mut node, _principal) = PrincipalNode::from_ocsf_map(event)?;
+        let (mut node, _principal) = PrincipalNode::from_ocsf(event)?;
         node.update_timestamps(event_time);
         let id = node.id.clone();
         self.graph.add_node(node);
@@ -365,7 +357,7 @@ impl GraphBuilder {
         let mut node = GraphNode {
             id: id.clone(),
             node_type: NodeType::IPAddress,
-            label: ip.clone(),
+            label: ip,
             properties: HashMap::new(),
             first_seen: None,
             last_seen: None,
@@ -382,29 +374,7 @@ impl GraphBuilder {
         event: &serde_json::Map<String, Value>,
         event_time: DateTime<Utc>,
     ) -> Option<String> {
-        // Extract using the same logic as models::APIOperationNode
-        let operation = get_nested_value(event, "api.operation")
-            .or_else(|| event.get("operation").cloned())
-            .and_then(|v| v.as_str().map(std::string::ToString::to_string))?;
-
-        let mut service = get_nested_value(event, "api.service.name")
-            .or_else(|| event.get("service").cloned())
-            .and_then(|v| v.as_str().map(std::string::ToString::to_string))?;
-
-        if let Some(stripped) = service.strip_suffix(".amazonaws.com") {
-            service = stripped.to_string();
-        }
-
-        let id = APIOperationNode::create_id(&service, &operation);
-        let mut node = GraphNode {
-            id: id.clone(),
-            node_type: NodeType::APIOperation,
-            label: format!("{service}:{operation}"),
-            properties: HashMap::new(),
-            first_seen: None,
-            last_seen: None,
-            event_count: 0,
-        };
+        let (mut node, _api_op) = APIOperationNode::from_ocsf(event)?;
         node.update_timestamps(event_time);
 
         // Record status if available
@@ -413,6 +383,7 @@ impl GraphBuilder {
                 .insert("last_status".into(), Value::String(status.to_string()));
         }
 
+        let id = node.id.clone();
         self.graph.add_node(node);
         Some(id)
     }
@@ -475,38 +446,44 @@ impl GraphBuilder {
         self.graph.add_edge(edge);
     }
 
-    /// Enrich by user, adding results to the graph.
-    async fn enrich_by_user<S: SecurityLakeQueries>(
-        &mut self,
+    /// Run all enrichment queries in parallel, returning results.
+    ///
+    /// Queries for all users and IPs run concurrently via `futures::future::join_all`,
+    /// then the caller processes results sequentially into the graph.
+    async fn run_enrichment_parallel<S: SecurityLakeQueries>(
         enricher: &SecurityLakeEnricher<'_, S>,
-        user: &str,
+        identifiers: &ExtractedIdentifiers,
         start: DateTime<Utc>,
         end: DateTime<Utc>,
         limit: usize,
-        include_events: bool,
-    ) {
-        let qr = enricher.enrich_by_user(user, start, end, None, limit).await;
-        if !qr.is_empty() {
-            debug!(user = user, events = qr.len(), "enriched by user");
-            self.process_query_result(&qr, include_events);
-        }
-    }
+    ) -> Vec<QueryResult> {
+        let user_futures = identifiers.users.iter().take(10).map(|user| {
+            let user = user.clone();
+            async move {
+                let qr = enricher
+                    .enrich_by_user(&user, start, end, None, limit)
+                    .await;
+                if !qr.is_empty() {
+                    debug!(user = %user, events = qr.len(), "enriched by user");
+                }
+                qr
+            }
+        });
 
-    /// Enrich by IP, adding results to the graph.
-    async fn enrich_by_ip<S: SecurityLakeQueries>(
-        &mut self,
-        enricher: &SecurityLakeEnricher<'_, S>,
-        ip: &str,
-        start: DateTime<Utc>,
-        end: DateTime<Utc>,
-        limit: usize,
-        include_events: bool,
-    ) {
-        let qr = enricher.enrich_by_ip(ip, start, end, "both", limit).await;
-        if !qr.is_empty() {
-            debug!(ip = ip, events = qr.len(), "enriched by IP");
-            self.process_query_result(&qr, include_events);
-        }
+        let ip_futures = identifiers.ips.iter().take(10).map(|ip| {
+            let ip = ip.clone();
+            async move {
+                let qr = enricher.enrich_by_ip(&ip, start, end, "both", limit).await;
+                if !qr.is_empty() {
+                    debug!(ip = %ip, events = qr.len(), "enriched by IP");
+                }
+                qr
+            }
+        });
+
+        let mut results = futures::future::join_all(user_futures).await;
+        results.extend(futures::future::join_all(ip_futures).await);
+        results
     }
 }
 
@@ -543,44 +520,6 @@ fn parse_timestamp(value: Option<&Value>) -> DateTime<Utc> {
             }
         }
         _ => Utc::now(),
-    }
-}
-
-// Helper on PrincipalNode that works with serde_json::Map directly
-impl PrincipalNode {
-    /// Create from a `serde_json::Map` (OCSF data with possible flat or nested keys).
-    #[must_use]
-    pub fn from_ocsf_map(event: &serde_json::Map<String, Value>) -> Option<(GraphNode, Self)> {
-        let user_name =
-            crate::connectors::ocsf::get_nested_str(event, &["actor.user.name", "user_name"])?;
-
-        let user_type =
-            crate::connectors::ocsf::get_nested_str(event, &["actor.user.type", "user_type"]);
-
-        let arn = crate::connectors::ocsf::get_nested_str(event, &["actor.user.uid"]);
-
-        let account_id = crate::connectors::ocsf::get_nested_str(
-            event,
-            &["actor.user.account_uid", "cloud.account.uid", "accountid"],
-        );
-
-        let id = Self::create_id(&user_name);
-        let node = GraphNode {
-            id: id.clone(),
-            node_type: NodeType::Principal,
-            label: user_name.clone(),
-            properties: HashMap::new(),
-            first_seen: None,
-            last_seen: None,
-            event_count: 0,
-        };
-        let principal = Self {
-            user_name,
-            user_type,
-            arn,
-            account_id,
-        };
-        Some((node, principal))
     }
 }
 
