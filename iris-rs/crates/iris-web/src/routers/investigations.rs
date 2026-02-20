@@ -60,7 +60,8 @@ pub struct CreateInvestigationRequest {
 pub struct CreateFromDetectionRequest {
     pub rule_id: String,
     pub name: Option<String>,
-    pub source_name: String,
+    /// If omitted, uses the first Security Lake source from the catalog.
+    pub source_name: Option<String>,
     #[serde(default = "default_lookback")]
     pub lookback_minutes: i64,
     #[serde(default = "default_enrichment_window")]
@@ -218,12 +219,21 @@ async fn create_from_detection(
         )));
     }
 
-    // 2. Resolve source
+    // 2. Resolve source: explicit name or first Security Lake source
     let catalog = state.catalog.read().await;
-    let source = catalog
-        .get_source(&body.source_name)
-        .cloned()
-        .ok_or_else(|| WebError::NotFound(format!("source '{}' not found", body.source_name)))?;
+    let source = if let Some(ref name) = body.source_name {
+        catalog
+            .get_source(name)
+            .cloned()
+            .ok_or_else(|| WebError::NotFound(format!("source '{name}' not found")))?
+    } else {
+        catalog
+            .filter_by_tag("security-lake")
+            .into_iter()
+            .next()
+            .cloned()
+            .ok_or_else(|| WebError::BadRequest("no Security Lake source configured".into()))?
+    };
     drop(catalog);
 
     // 3. Run detection
@@ -355,7 +365,7 @@ async fn get_graph(
             serde_json::Value::String(node.label.clone()),
         );
         data.insert(
-            "type".into(),
+            "node_type".into(),
             serde_json::Value::String(node.node_type.to_string()),
         );
         if let Some(t) = node.first_seen {
@@ -393,7 +403,7 @@ async fn get_graph(
             serde_json::Value::String(edge.target_id.clone()),
         );
         data.insert(
-            "label".into(),
+            "edge_type".into(),
             serde_json::Value::String(edge.edge_type.to_string()),
         );
         data.insert("weight".into(), serde_json::json!(edge.weight));

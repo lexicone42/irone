@@ -49,6 +49,11 @@ fn to_l42_config(app: &AppConfig) -> L42Config {
         session_https_only: app.is_lambda,
         cookie_domain: None,
         auth_path_prefix: "/auth".into(),
+        // Passkey fields — iris doesn't use passkeys; safe defaults.
+        callback_use_origin: false,
+        callback_allowed_origins: Vec::new(),
+        aaguid_allowlist: Vec::new(),
+        require_device_bound: false,
     }
 }
 
