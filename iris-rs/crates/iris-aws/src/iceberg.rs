@@ -12,6 +12,10 @@
 
 use std::collections::HashMap;
 
+use arrow_array::{Int32Array, RecordBatch, cast::AsArray};
+use arrow_ord::cmp::eq;
+use arrow_schema::DataType;
+use arrow_select::filter::filter_record_batch;
 use aws_sdk_s3::Client as S3Client;
 use chrono::{DateTime, Utc};
 use futures::TryStreamExt;
@@ -31,6 +35,53 @@ use iris_core::connectors::result::QueryResult;
 
 use crate::arrow_convert::record_batches_to_query_result;
 use crate::error::{AwsError, parse_s3_location};
+
+/// Arrow-level row filter applied after reading Parquet files.
+///
+/// Needed because our "plan with iceberg, read with arrow-rs" bypass skips
+/// iceberg's row-level filtering — Iceberg predicates only prune at the
+/// manifest/file level, so without this, queries like `class_uid = 3002`
+/// return unfiltered rows.
+enum ArrowRowFilter {
+    /// Filter rows where an int column equals a specific value.
+    IntEquals { column: String, value: i32 },
+}
+
+impl ArrowRowFilter {
+    fn apply(&self, batch: &RecordBatch) -> Result<RecordBatch, AwsError> {
+        match self {
+            Self::IntEquals { column, value } => {
+                let col_idx = batch.schema().index_of(column).map_err(|_| {
+                    AwsError::QueryFailed(format!("filter column '{column}' not found in batch"))
+                })?;
+                let col = batch.column(col_idx);
+
+                // Create a scalar array of the target value with the same length
+                let target = Int32Array::from(vec![*value; batch.num_rows()]);
+
+                // Cast column to Int32 if needed (OCSF class_uid is typically int/long)
+                let col_i32 = if *col.data_type() == DataType::Int32 {
+                    col.as_primitive::<arrow_array::types::Int32Type>().clone()
+                } else {
+                    arrow_cast::cast(col, &DataType::Int32)
+                        .map_err(|e| {
+                            AwsError::QueryFailed(format!(
+                                "failed to cast column '{column}' to Int32: {e}"
+                            ))
+                        })?
+                        .as_primitive::<arrow_array::types::Int32Type>()
+                        .clone()
+                };
+
+                let mask = eq(&col_i32, &target)
+                    .map_err(|e| AwsError::QueryFailed(format!("filter comparison failed: {e}")))?;
+
+                filter_record_batch(batch, &mask)
+                    .map_err(|e| AwsError::QueryFailed(format!("filter_record_batch failed: {e}")))
+            }
+        }
+    }
+}
 
 /// Direct Iceberg connector for Security Lake tables.
 ///
@@ -122,10 +173,15 @@ impl IcebergConnector {
     /// This is the core bypass: we use iceberg for scan planning (manifest
     /// filtering, partition pruning), then read Parquet files with arrow-rs
     /// which handles nested OCSF structs correctly.
+    ///
+    /// The optional `row_filter` applies Arrow-level row filtering after reading
+    /// each Parquet file. This is necessary because Iceberg predicates only prune
+    /// at the manifest/file level — our bypass skips iceberg's row-level filtering.
     async fn execute_scan(
         &self,
         scan: TableScan,
         limit: Option<usize>,
+        row_filter: Option<ArrowRowFilter>,
     ) -> Result<QueryResult, AwsError> {
         // Plan: get the list of Parquet files to read
         let plan = scan
@@ -160,8 +216,15 @@ impl IcebergConnector {
             let batches = read_parquet_bytes(&parquet_bytes, row_limit - total_rows)?;
 
             for batch in batches {
-                total_rows += batch.num_rows();
-                all_batches.push(batch);
+                let filtered = if let Some(ref filter) = row_filter {
+                    filter.apply(&batch)?
+                } else {
+                    batch
+                };
+                if filtered.num_rows() > 0 {
+                    total_rows += filtered.num_rows();
+                    all_batches.push(filtered);
+                }
                 if total_rows >= row_limit {
                     break;
                 }
@@ -259,7 +322,7 @@ impl DataConnector for IcebergConnector {
 
         let table = self.load_table().await?;
         let scan = Self::build_scan(&table, None)?;
-        let qr = self.execute_scan(scan, Some(1000)).await?;
+        let qr = self.execute_scan(scan, Some(1000), None).await?;
         Ok(qr)
     }
 
@@ -301,7 +364,7 @@ impl DataConnector for IcebergConnector {
             }
         };
 
-        match self.execute_scan(scan, Some(1)).await {
+        match self.execute_scan(scan, Some(1), None).await {
             Ok(qr) => {
                 let latency = start.elapsed().as_secs_f64();
                 let healthy = !qr.is_empty();
@@ -354,7 +417,15 @@ impl SecurityLakeQueries for IcebergConnector {
         let scan = Self::build_scan(&table, Some(predicate))
             .map_err(|e| SecurityLakeError::QueryFailed(e.to_string()))?;
 
-        self.execute_scan(scan, Some(safe_limit))
+        // Apply Arrow-level row filter for class_uid since Iceberg predicates
+        // only prune at the manifest/file level in our bypass pattern.
+        #[allow(clippy::cast_possible_wrap)]
+        let row_filter = Some(ArrowRowFilter::IntEquals {
+            column: "class_uid".into(),
+            value: event_class.class_uid() as i32,
+        });
+
+        self.execute_scan(scan, Some(safe_limit), row_filter)
             .await
             .map_err(|e| SecurityLakeError::QueryFailed(e.to_string()))
     }
@@ -427,7 +498,7 @@ impl SecurityLakeQueries for IcebergConnector {
             .map_err(|e| SecurityLakeError::QueryFailed(e.to_string()))?;
 
         let qr = self
-            .execute_scan(scan, Some(10_000))
+            .execute_scan(scan, Some(10_000), None)
             .await
             .map_err(|e| SecurityLakeError::QueryFailed(e.to_string()))?;
 
@@ -617,5 +688,121 @@ mod tests {
     fn class_uid_predicate_builds() {
         let pred = IcebergConnector::class_uid_predicate(3002);
         let _ = format!("{pred:?}");
+    }
+
+    #[test]
+    fn arrow_row_filter_int_equals() {
+        use arrow_array::{Int32Array, RecordBatch, StringArray};
+        use arrow_schema::{Field, Schema};
+        use std::sync::Arc;
+
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("class_uid", DataType::Int32, false),
+            Field::new("class_name", DataType::Utf8, false),
+        ]));
+
+        let batch = RecordBatch::try_new(
+            schema,
+            vec![
+                Arc::new(Int32Array::from(vec![6003, 3002, 6003, 3002, 4001])),
+                Arc::new(StringArray::from(vec![
+                    "API Activity",
+                    "Authentication",
+                    "API Activity",
+                    "Authentication",
+                    "Network Activity",
+                ])),
+            ],
+        )
+        .unwrap();
+
+        let filter = ArrowRowFilter::IntEquals {
+            column: "class_uid".into(),
+            value: 3002,
+        };
+        let filtered = filter.apply(&batch).unwrap();
+
+        assert_eq!(filtered.num_rows(), 2);
+        let names = filtered
+            .column(1)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
+        assert_eq!(names.value(0), "Authentication");
+        assert_eq!(names.value(1), "Authentication");
+    }
+
+    #[test]
+    fn arrow_row_filter_int_equals_casts_int64() {
+        use arrow_array::{Int64Array, RecordBatch};
+        use arrow_schema::{Field, Schema};
+        use std::sync::Arc;
+
+        // Security Lake stores class_uid as Int64, filter should cast
+        let schema = Arc::new(Schema::new(vec![Field::new(
+            "class_uid",
+            DataType::Int64,
+            false,
+        )]));
+
+        let batch = RecordBatch::try_new(
+            schema,
+            vec![Arc::new(Int64Array::from(vec![6003, 3002, 4001]))],
+        )
+        .unwrap();
+
+        let filter = ArrowRowFilter::IntEquals {
+            column: "class_uid".into(),
+            value: 3002,
+        };
+        let filtered = filter.apply(&batch).unwrap();
+        assert_eq!(filtered.num_rows(), 1);
+    }
+
+    #[test]
+    fn arrow_row_filter_no_matches_returns_empty() {
+        use arrow_array::{Int32Array, RecordBatch};
+        use arrow_schema::{Field, Schema};
+        use std::sync::Arc;
+
+        let schema = Arc::new(Schema::new(vec![Field::new(
+            "class_uid",
+            DataType::Int32,
+            false,
+        )]));
+
+        let batch =
+            RecordBatch::try_new(schema, vec![Arc::new(Int32Array::from(vec![6003, 4001]))])
+                .unwrap();
+
+        let filter = ArrowRowFilter::IntEquals {
+            column: "class_uid".into(),
+            value: 9999,
+        };
+        let filtered = filter.apply(&batch).unwrap();
+        assert_eq!(filtered.num_rows(), 0);
+    }
+
+    #[test]
+    fn arrow_row_filter_missing_column_errors() {
+        use arrow_array::{Int32Array, RecordBatch};
+        use arrow_schema::{Field, Schema};
+        use std::sync::Arc;
+
+        let schema = Arc::new(Schema::new(vec![Field::new(
+            "other_col",
+            DataType::Int32,
+            false,
+        )]));
+
+        let batch =
+            RecordBatch::try_new(schema, vec![Arc::new(Int32Array::from(vec![1]))]).unwrap();
+
+        let filter = ArrowRowFilter::IntEquals {
+            column: "class_uid".into(),
+            value: 3002,
+        };
+        let result = filter.apply(&batch);
+        assert!(result.is_err());
     }
 }

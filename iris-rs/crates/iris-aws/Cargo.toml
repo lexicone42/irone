@@ -24,9 +24,14 @@ iceberg-catalog-glue = { workspace = true }
 arrow-array = { workspace = true }
 arrow-schema = { workspace = true }
 arrow-cast = { workspace = true }
+arrow-select = { workspace = true }
+arrow-ord = { workspace = true }
 parquet = { workspace = true }
 futures = { workspace = true }
 bytes = { workspace = true }
+
+[dev-dependencies]
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [lints]
 workspace = true
