@@ -561,7 +561,7 @@ impl PrincipalNode {
 
         let account_id = crate::connectors::ocsf::get_nested_str(
             event,
-            &["actor.user.account_uid", "cloud.account.uid"],
+            &["actor.user.account_uid", "cloud.account.uid", "accountid"],
         );
 
         let id = Self::create_id(&user_name);

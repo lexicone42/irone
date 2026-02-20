@@ -117,8 +117,11 @@ impl PrincipalNode {
         let arn = get_nested_str(event, &["actor.user.uid"])
             .or_else(|| get_deep_str(event, &["actor", "user", "uid"]));
 
-        let account_id = get_nested_str(event, &["actor.user.account_uid", "cloud.account.uid"])
-            .or_else(|| get_deep_str(event, &["cloud", "account", "uid"]));
+        let account_id = get_nested_str(
+            event,
+            &["actor.user.account_uid", "cloud.account.uid", "accountid"],
+        )
+        .or_else(|| get_deep_str(event, &["cloud", "account", "uid"]));
 
         let id = Self::create_id(&user_name);
         let node = GraphNode {
