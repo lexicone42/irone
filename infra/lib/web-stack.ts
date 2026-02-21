@@ -11,12 +11,12 @@ export interface WebStackProps extends cdk.StackProps {
   readonly userPoolId: string;
   readonly userPoolClientId: string;
   readonly cognitoDomain: string;
-  /** Path to cargo-lambda output for iris-web (undefined = dummy placeholder). */
+  /** Path to cargo-lambda output for irone-web (undefined = dummy placeholder). */
   readonly webLambdaCodePath?: string;
 }
 
 export class WebStack extends cdk.Stack {
-  /** The HTTP API, exposed for CloudFront origin in iris-stack. */
+  /** The HTTP API, exposed for CloudFront origin in irone-stack. */
   public readonly httpApi: HttpApi;
 
   constructor(scope: Construct, id: string, props: WebStackProps) {
@@ -52,7 +52,7 @@ export class WebStack extends cdk.Stack {
     const webLambda = new RustLambda(this, "FastAPI", {
       logicalId: "FastAPIHandlerC4831E27",
       codePath: props.webLambdaCodePath,
-      description: "iris web API (Rust/axum on provided.al2023)",
+      description: "irone web API (Rust/axum on provided.al2023)",
       memorySize: 1024,
       timeout: 120,
       environment: {
@@ -63,9 +63,9 @@ export class WebStack extends cdk.Stack {
         SECDASH_COGNITO_USER_POOL_ID: props.userPoolId,
         SECDASH_COGNITO_CLIENT_ID: props.userPoolClientId,
         SECDASH_COGNITO_DOMAIN: props.cognitoDomain,
-        SECDASH_FRONTEND_URL: "https://iris.lexicone.com",
+        SECDASH_FRONTEND_URL: "https://irone.lexicone.com",
         SECDASH_COGNITO_REDIRECT_URI:
-          "https://iris.lexicone.com/auth/callback",
+          "https://irone.lexicone.com/auth/callback",
         SECDASH_USE_DIRECT_QUERY: "true",
         SECDASH_AUTH_ENABLED: "true",
         SECDASH_CEDAR_POLICY_DIR: "cedar",

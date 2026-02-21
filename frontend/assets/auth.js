@@ -1,4 +1,4 @@
-/* iris — Session-based authentication via server-side Cognito flow.
+/* irone — Session-based authentication via server-side Cognito flow.
  *
  * The Lambda handles OAuth code exchange and session management.
  * This module checks auth status and redirects to login if needed.
@@ -90,7 +90,7 @@ const auth = (() => {
     /** Logout — redirect to server-side logout. */
     async function logout() {
         _user = null;
-        sessionStorage.removeItem("iris_auth");
+        sessionStorage.removeItem("irone_auth");
         window.location.href = "/auth/logout";
     }
 

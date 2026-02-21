@@ -1,4 +1,4 @@
-# Pre-commit hooks for iris (Rust + JS)
+# Pre-commit hooks for irone (Rust + JS)
 # Install: prek install
 # Run manually: prek run --all-files
 
@@ -23,33 +23,33 @@ repos:
       # Rust: format check (fast, every commit)
       - id: cargo-fmt
         name: Cargo Format
-        entry: bash -c 'cd iris-rs && cargo fmt --check 2>&1'
+        entry: bash -c 'cd irone-rs && cargo fmt --check 2>&1'
         language: system
-        files: ^iris-rs/.*\.rs$
+        files: ^irone-rs/.*\.rs$
         pass_filenames: false
 
       # Rust: clippy lint (moderate, every commit)
       - id: cargo-clippy
         name: Cargo Clippy
-        entry: bash -c 'cd iris-rs && cargo clippy --workspace --all-targets -- -D warnings 2>&1'
+        entry: bash -c 'cd irone-rs && cargo clippy --workspace --all-targets -- -D warnings 2>&1'
         language: system
-        files: ^iris-rs/
+        files: ^irone-rs/
         pass_filenames: false
 
       # Rust: cargo-deny license/advisory check
       - id: cargo-deny
         name: Cargo Deny (licenses + advisories)
-        entry: bash -c 'cd iris-rs && cargo deny check 2>&1'
+        entry: bash -c 'cd irone-rs && cargo deny check 2>&1'
         language: system
-        files: ^iris-rs/
+        files: ^irone-rs/
         pass_filenames: false
 
       # Rust: tests (pre-push only — takes ~30s)
       - id: cargo-test
         name: Cargo Test
-        entry: bash -c 'cd iris-rs && cargo test --workspace 2>&1'
+        entry: bash -c 'cd irone-rs && cargo test --workspace 2>&1'
         language: system
-        files: ^iris-rs/
+        files: ^irone-rs/
         pass_filenames: false
         stages: [pre-push]
 

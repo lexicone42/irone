@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Deploy iris Rust Lambdas via CDK.
+# Deploy irone Rust Lambdas via CDK.
 #
 # Usage:
 #   ./scripts/deploy_cdk.sh              # build + deploy all stacks
@@ -12,7 +12,7 @@
 set -euo pipefail
 
 PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-IRIS_RS_DIR="$PROJECT_ROOT/iris-rs"
+IRONE_RS_DIR="$PROJECT_ROOT/irone-rs"
 INFRA_DIR="$PROJECT_ROOT/infra"
 REGION="${SECDASH_REGION:-us-west-2}"
 SKIP_BUILD=false
@@ -35,13 +35,13 @@ if [[ "$SKIP_BUILD" == true ]]; then
     echo "Skipping build (reusing existing output)"
 else
     echo "Building release binaries with cargo-lambda..."
-    (cd "$IRIS_RS_DIR" && cargo lambda build --release)
+    (cd "$IRONE_RS_DIR" && cargo lambda build --release)
     echo "  Build complete."
 fi
 
 # Verify bootstrap binaries exist
-for crate in iris-web iris-health-checker; do
-    bootstrap="$IRIS_RS_DIR/target/lambda/$crate/bootstrap"
+for crate in irone-web irone-health-checker; do
+    bootstrap="$IRONE_RS_DIR/target/lambda/$crate/bootstrap"
     if [[ ! -f "$bootstrap" ]]; then
         echo "ERROR: Bootstrap not found: $bootstrap"
         echo "Run without --skip-build or build manually first."
@@ -50,20 +50,20 @@ for crate in iris-web iris-health-checker; do
     echo "  $crate: $(du -h "$bootstrap" | cut -f1)"
 done
 
-# iris-alerting may not exist yet (crate not built)
-alerting_bootstrap="$IRIS_RS_DIR/target/lambda/iris-alerting/bootstrap"
+# irone-alerting may not exist yet (crate not built)
+alerting_bootstrap="$IRONE_RS_DIR/target/lambda/irone-alerting/bootstrap"
 if [[ -f "$alerting_bootstrap" ]]; then
-    echo "  iris-alerting: $(du -h "$alerting_bootstrap" | cut -f1)"
+    echo "  irone-alerting: $(du -h "$alerting_bootstrap" | cut -f1)"
 else
-    echo "  iris-alerting: not built (will use dummy placeholder)"
+    echo "  irone-alerting: not built (will use dummy placeholder)"
 fi
 
-# --- Step 2: Bundle Cedar policies into iris-web output ---
+# --- Step 2: Bundle Cedar policies into irone-web output ---
 CEDAR_SRC="$PROJECT_ROOT/../l42cognitopasskey/rust/cedar"
-WEB_LAMBDA_DIR="$IRIS_RS_DIR/target/lambda/iris-web"
+WEB_LAMBDA_DIR="$IRONE_RS_DIR/target/lambda/irone-web"
 
 if [[ -d "$CEDAR_SRC" ]]; then
-    echo "Bundling Cedar policies into iris-web..."
+    echo "Bundling Cedar policies into irone-web..."
     rm -rf "$WEB_LAMBDA_DIR/cedar"
     cp -r "$CEDAR_SRC" "$WEB_LAMBDA_DIR/cedar"
     echo "  Cedar policies: $(find "$WEB_LAMBDA_DIR/cedar" -type f | wc -l) files"

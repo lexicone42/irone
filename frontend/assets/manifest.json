@@ -1,6 +1,6 @@
 {
-    "name": "iris — Security Dashboard",
-    "short_name": "iris",
+    "name": "irone — Security Dashboard",
+    "short_name": "irone",
     "description": "Security Lake monitoring and investigation platform",
     "start_url": "/",
     "display": "standalone",

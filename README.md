@@ -1,21 +1,23 @@
-# iris — Security Data Lake Analytics
+# irone — Security Data Lake Analytics
 
 [![Built with Claude Code](https://img.shields.io/badge/Built%20with-Claude%20Code-6B48FF?style=flat&logo=claude)](https://claude.com/claude-code)
 
 A Rust-based security analytics platform for AWS Security Lake. Run OCSF-native detection rules against live data, build investigation graphs, and deploy as lightweight AWS Lambda functions.
 
+The name "irone" comes from the aromatic compound found in iris flowers — and contains "iron", a nod to Rust.
+
 ## Architecture
 
 ```
-iris/
-├── iris-rs/                  # Rust workspace (6 crates, 276 tests)
-│   ├── iris-core/            # Config, connectors, catalog, detections, graph, reports
-│   ├── iris-aws/             # SecurityLakeConnector (Athena + Iceberg), DynamoDB, SNS
-│   ├── iris-persistence/     # redb-backed investigation store
-│   ├── iris-auth/            # Cognito OAuth + Cedar authorization (via l42-token-handler)
-│   ├── iris-web/             # Axum web layer — 21 JSON API endpoints, Lambda handler
-│   ├── iris-health-checker/  # Scheduled EventBridge Lambda for parallel health checks
-│   └── rules/                # 9 OCSF detection rules (YAML)
+irone/
+├── irone-rs/                  # Rust workspace (6 crates, 276 tests)
+│   ├── irone-core/            # Config, connectors, catalog, detections, graph, reports
+│   ├── irone-aws/             # SecurityLakeConnector (Athena + Iceberg), DynamoDB, SNS
+│   ├── irone-persistence/     # redb-backed investigation store
+│   ├── irone-auth/            # Cognito OAuth + Cedar authorization (via l42-token-handler)
+│   ├── irone-web/             # Axum web layer — 21 JSON API endpoints, Lambda handler
+│   ├── irone-health-checker/  # Scheduled EventBridge Lambda for parallel health checks
+│   └── rules/                 # 9 OCSF detection rules (YAML)
 ├── frontend/                 # Static Alpine.js frontend → S3 + CloudFront
 ├── infra/                    # TypeScript CDK (4 stacks)
 └── scripts/                  # Deploy scripts (Rust Lambda, frontend, CDK)
@@ -41,7 +43,7 @@ iris/
 ### Build & Test
 
 ```bash
-cd iris-rs
+cd irone-rs
 cargo test --workspace    # 276 tests
 cargo build --release     # Build all crates
 ```
@@ -67,7 +69,7 @@ cargo build --release     # Build all crates
 
 ### Detection Rules
 
-Rules are OCSF-native YAML in `iris-rs/rules/`. Each rule targets an OCSF event class and applies declarative filters:
+Rules are OCSF-native YAML in `irone-rs/rules/`. Each rule targets an OCSF event class and applies declarative filters:
 
 ```yaml
 id: detect-api-permission-enumeration

@@ -1,4 +1,4 @@
-/* iris — Alpine.js application components */
+/* irone — Alpine.js application components */
 
 const API = "/api";
 

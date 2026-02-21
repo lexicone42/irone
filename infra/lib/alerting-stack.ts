@@ -9,7 +9,7 @@ import { RustLambda } from "./constructs/rust-lambda.js";
 
 export interface AlertingStackProps extends cdk.StackProps {
   readonly healthCacheTableName: string;
-  /** Path to cargo-lambda output for iris-alerting (undefined = dummy). */
+  /** Path to cargo-lambda output for irone-alerting (undefined = dummy). */
   readonly alertingLambdaCodePath?: string;
 }
 
@@ -50,7 +50,7 @@ export class AlertingStack extends cdk.Stack {
       logicalId: "AlertingFunction020026F9",
       codePath: props.alertingLambdaCodePath,
       functionName: "secdash-alerting",
-      description: "iris alerting (Rust, EventBridge scheduled)",
+      description: "irone alerting (Rust, EventBridge scheduled)",
       memorySize: 512,
       timeout: 300,
       environment: {

@@ -1,0 +1,37 @@
+[package]
+name = "irone-aws"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+irone-core = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+chrono = { workspace = true }
+aws-config = { workspace = true }
+aws-sdk-athena = { workspace = true }
+aws-sdk-s3 = { workspace = true }
+aws-sdk-dynamodb = { workspace = true }
+aws-sdk-sns = { workspace = true }
+csv = { workspace = true }
+iceberg = { workspace = true }
+iceberg-catalog-glue = { workspace = true }
+arrow-array = { workspace = true }
+arrow-schema = { workspace = true }
+arrow-cast = { workspace = true }
+arrow-select = { workspace = true }
+arrow-ord = { workspace = true }
+parquet = { workspace = true }
+futures = { workspace = true }
+bytes = { workspace = true }
+
+[dev-dependencies]
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[lints]
+workspace = true

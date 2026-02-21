@@ -1,5 +1,5 @@
 # Rust build artifacts
-iris-rs/target/
+irone-rs/target/
 
 # IDE
 .idea/

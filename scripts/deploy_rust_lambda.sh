@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Deploy iris-rs Rust Lambdas to AWS.
+# Deploy irone-rs Rust Lambdas to AWS.
 #
 # Usage:
 #   ./scripts/deploy_rust_lambda.sh              # deploy both Lambdas
-#   ./scripts/deploy_rust_lambda.sh web           # deploy only iris-web
-#   ./scripts/deploy_rust_lambda.sh health        # deploy only iris-health-checker
+#   ./scripts/deploy_rust_lambda.sh web           # deploy only irone-web
+#   ./scripts/deploy_rust_lambda.sh health        # deploy only irone-health-checker
 #   ./scripts/deploy_rust_lambda.sh --skip-build  # reuse existing zips
 #
 # Override defaults via environment:
@@ -19,7 +19,7 @@ set -euo pipefail
 REGION="${SECDASH_REGION:-us-west-2}"
 S3_KEY_PREFIX="${SECDASH_S3_KEY_PREFIX:-lambda/rust/}"
 PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-IRIS_RS_DIR="$PROJECT_ROOT/iris-rs"
+IRONE_RS_DIR="$PROJECT_ROOT/irone-rs"
 SKIP_BUILD=false
 DEPLOY_WEB=true
 DEPLOY_HEALTH=true
@@ -100,17 +100,17 @@ if [[ "$SKIP_BUILD" == true ]]; then
     echo "Skipping build (reusing existing zips)"
 else
     echo "Building release binaries with cargo-lambda..."
-    (cd "$IRIS_RS_DIR" && cargo lambda build --release --output-format zip)
+    (cd "$IRONE_RS_DIR" && cargo lambda build --release --output-format zip)
     echo "  Build complete."
 fi
 
-WEB_ZIP="$IRIS_RS_DIR/target/lambda/iris-web/bootstrap.zip"
-HEALTH_ZIP="$IRIS_RS_DIR/target/lambda/iris-health-checker/bootstrap.zip"
+WEB_ZIP="$IRONE_RS_DIR/target/lambda/irone-web/bootstrap.zip"
+HEALTH_ZIP="$IRONE_RS_DIR/target/lambda/irone-health-checker/bootstrap.zip"
 
-# --- Bundle Cedar policies into iris-web zip ---
+# --- Bundle Cedar policies into irone-web zip ---
 CEDAR_SRC="$PROJECT_ROOT/../l42cognitopasskey/rust/cedar"
 if [[ -d "$CEDAR_SRC" ]]; then
-    echo "Bundling Cedar policies into iris-web zip..."
+    echo "Bundling Cedar policies into irone-web zip..."
     # Create a temp dir with cedar/ structure, add to existing zip
     CEDAR_TMP=$(mktemp -d)
     cp -r "$CEDAR_SRC" "$CEDAR_TMP/cedar"
@@ -121,12 +121,12 @@ else
     echo "WARNING: Cedar policies not found at $CEDAR_SRC — deploying without authorization"
 fi
 
-# --- Bundle detection rules into iris-web zip ---
-RULES_DIR="$IRIS_RS_DIR/rules"
+# --- Bundle detection rules into irone-web zip ---
+RULES_DIR="$IRONE_RS_DIR/rules"
 if [[ -d "$RULES_DIR" ]]; then
     RULE_COUNT=$(find "$RULES_DIR" -name '*.yaml' | wc -l)
     if [[ "$RULE_COUNT" -gt 0 ]]; then
-        echo "Bundling $RULE_COUNT detection rules into iris-web zip..."
+        echo "Bundling $RULE_COUNT detection rules into irone-web zip..."
         RULES_TMP=$(mktemp -d)
         cp -r "$RULES_DIR" "$RULES_TMP/rules"
         (cd "$RULES_TMP" && zip -qr "$WEB_ZIP" rules/)
@@ -185,22 +185,22 @@ deploy_lambda() {
 # --- Step 2: Deploy ---
 if [[ "$DEPLOY_WEB" == true ]]; then
     echo ""
-    echo "Deploying iris-web..."
-    deploy_lambda "$SECDASH_WEB_LAMBDA_NAME" "$WEB_ZIP" "${S3_KEY_PREFIX}iris-web.zip"
+    echo "Deploying irone-web..."
+    deploy_lambda "$SECDASH_WEB_LAMBDA_NAME" "$WEB_ZIP" "${S3_KEY_PREFIX}irone-web.zip"
 fi
 
 if [[ "$DEPLOY_HEALTH" == true ]]; then
     echo ""
-    echo "Deploying iris-health-checker..."
-    deploy_lambda "$SECDASH_HEALTH_LAMBDA_NAME" "$HEALTH_ZIP" "${S3_KEY_PREFIX}iris-health-checker.zip"
+    echo "Deploying irone-health-checker..."
+    deploy_lambda "$SECDASH_HEALTH_LAMBDA_NAME" "$HEALTH_ZIP" "${S3_KEY_PREFIX}irone-health-checker.zip"
 fi
 
 echo ""
 echo "Deploy complete."
 if [[ "$DEPLOY_WEB" == true ]]; then
     local_size=$(du -h "$WEB_ZIP" | cut -f1)
-    echo "  iris-web:            $SECDASH_WEB_LAMBDA_NAME ($local_size)"
+    echo "  irone-web:            $SECDASH_WEB_LAMBDA_NAME ($local_size)"
 fi
 if [[ "$DEPLOY_HEALTH" == true ]]; then
-    echo "  iris-health-checker: $SECDASH_HEALTH_LAMBDA_NAME"
+    echo "  irone-health-checker: $SECDASH_HEALTH_LAMBDA_NAME"
 fi

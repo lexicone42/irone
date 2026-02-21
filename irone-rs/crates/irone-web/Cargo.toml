@@ -1,0 +1,38 @@
+[package]
+name = "irone-web"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+irone-core = { workspace = true }
+irone-aws = { workspace = true }
+irone-auth = { workspace = true }
+irone-persistence = { workspace = true }
+l42-token-handler = { workspace = true }
+axum = { workspace = true }
+tower = { workspace = true }
+tower-http = { workspace = true }
+lambda_http = { workspace = true }
+http = { workspace = true }
+aws-config = { workspace = true }
+envy = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+thiserror = { workspace = true }
+chrono = { workspace = true }
+uuid = { workspace = true }
+
+[[bin]]
+name = "irone-web"
+path = "src/main.rs"
+
+[dev-dependencies]
+tower = { workspace = true }
+
+[lints]
+workspace = true
