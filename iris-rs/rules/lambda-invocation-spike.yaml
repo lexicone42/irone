@@ -1,0 +1,23 @@
+id: detect-lambda-invocation-spike
+name: Unusual Lambda Invocation Spike
+description: >
+  Detects an unusual volume of Lambda invocations within the lookback window.
+  Normal 24h baseline is ~1800 invocations across all functions (MetastoreManager
+  ~288, health+alerting ~960, web ~420, others ~130). Threshold set above this
+  baseline to catch genuine spikes: abuse, misconfiguration, or compromised
+  credentials triggering mass invocations.
+severity: medium
+event_class: api_activity
+limit: 5000
+threshold: 2500
+tags:
+  - lambda
+  - anomaly
+  - resource-abuse
+mitre_attack:
+  - T1648
+data_sources:
+  - lambda-execution
+filters:
+  - field: api.operation
+    equals: Invoke

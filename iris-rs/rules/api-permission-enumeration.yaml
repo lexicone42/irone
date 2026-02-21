@@ -1,0 +1,24 @@
+id: detect-api-permission-enumeration
+name: API Permission Enumeration by IAM User
+description: >
+  Detects a high volume of failed API calls from IAM users (human operators),
+  which may indicate an attacker probing for accessible permissions after
+  obtaining credentials. Focuses on IAMUser type to exclude AssumedRole
+  service-to-service failures and AWSService background noise.
+severity: high
+event_class: api_activity
+limit: 5000
+threshold: 20
+tags:
+  - reconnaissance
+  - permission-enumeration
+mitre_attack:
+  - T1580
+  - T1526
+data_sources:
+  - cloudtrail
+filters:
+  - field: status
+    equals: Failure
+  - field: actor.user.type
+    equals: IAMUser

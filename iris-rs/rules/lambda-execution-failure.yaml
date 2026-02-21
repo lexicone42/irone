@@ -1,0 +1,22 @@
+id: detect-lambda-execution-failure
+name: Lambda Execution Failure
+description: >
+  Detects failed Lambda function executions. While occasional failures are
+  normal, a pattern of failures on security-critical functions (token handlers,
+  auth edge functions) may indicate misconfiguration, resource exhaustion,
+  or an attacker probing function behavior.
+severity: medium
+event_class: api_activity
+limit: 1000
+threshold: 5
+tags:
+  - lambda
+  - availability
+  - error-monitoring
+mitre_attack:
+  - T1499
+data_sources:
+  - lambda-execution
+filters:
+  - field: status
+    equals: Failure

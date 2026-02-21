@@ -2,57 +2,62 @@
 
 ## Security Design
 
-secdashboards is designed for use as an internal security analytics tool. The primary threat model assumes trusted operators deploying in controlled AWS environments with proper IAM boundaries.
+iris is designed for use as an internal security analytics tool. The primary threat model assumes trusted operators deploying in controlled AWS environments with proper IAM boundaries.
 
-### SQL Injection Protection
+### Query Construction
 
-All Security Lake and Athena queries use parameterized construction via `connectors/sql_utils.py`:
+All Security Lake queries are constructed safely in Rust:
 
-- **`sanitize_string()`** — escapes quotes, removes null bytes and SQL comment sequences
-- **`validate_identifier()`** — enforces `^[a-zA-Z_][a-zA-Z0-9_]*$` for SQL identifiers
-- **`quote_identifier()` / `quote_table()`** — ANSI double-quoting for identifiers
-- **`validate_ipv4()` / `validate_arn()`** — format validation for common AWS types
-- **Destructive keyword blocklist** — rejects queries containing DROP, DELETE, INSERT, UPDATE, TRUNCATE, ALTER, CREATE
+- **Athena queries** (`iris-aws`): Parameterized SQL templates with identifier validation — database/table names enforced via `^[a-zA-Z_][a-zA-Z0-9_]*$` regex, timestamps formatted via `chrono` (no string interpolation)
+- **Iceberg queries** (`iris-aws`): Direct Parquet reads via `iceberg-rust` + `arrow-rs` — no SQL construction at all; predicates are Arrow filter expressions
+- **Destructive keyword blocklist**: Ad-hoc queries reject DROP, DELETE, INSERT, UPDATE, TRUNCATE, ALTER, CREATE
 
 ### Detection Rule Isolation
 
-Detection rules are loaded from YAML by default. The `S3RuleStore` enforces:
+Detection rules are loaded exclusively from YAML files at startup:
 
-- YAML-only parsing (no arbitrary code execution)
-- Pydantic schema validation on rule structure
-- SQL keyword blocklist on rule queries
-- Rule ID format validation (`^[a-zA-Z0-9_-]+$`)
+- **YAML-only parsing** via `serde_yaml` — no arbitrary code execution
+- **Schema validation** via Rust type system — `DetectionRule` struct enforces required fields, valid `FilterOp` variants, and `OCSFEventClass` enum values
+- **No dynamic rule loading** — rules are bundled into the Lambda zip at deploy time from `iris-rs/rules/`
+- **Filter operators** are a closed enum: `Equals`, `NotEquals`, `Contains`, `In`, `Regex` — no arbitrary expressions
+- **30-second query timeout** — `tokio::time::timeout` prevents hung connectors from blocking indefinitely
 
-### Authentication
+### Authentication & Authorization
 
-- **Neptune**: IAM authentication via SigV4-signed requests (default: `use_iam_auth=True`)
-- **Health Dashboard**: OIDC/Cognito authentication via ALB integration
-- **AWS APIs**: Standard boto3 credential chain (no hardcoded credentials)
+- **Cognito OAuth**: Server-side authorization code flow with `client_secret` (confidential client). No direct password auth (`USER_PASSWORD_AUTH` disabled). Session cookies managed by `l42-token-handler`
+- **Cedar RBAC**: 5 groups (admin, detection-engineer, soc-analyst, incident-responder, read-only) with 20 fine-grained actions in the `Secdash::` namespace. Policy evaluation runs on every API request via axum middleware
+- **Session storage**: DynamoDB `secdash_sessions` table with server-side session state
+- **AWS APIs**: Standard AWS SDK for Rust credential chain (no hardcoded credentials)
+
+### Network Architecture
+
+- **CloudFront** → S3 (static frontend) + API Gateway v2 (Lambda)
+- **API Gateway**: HTTP API with Lambda proxy integration, no public endpoints bypass auth
+- **Host header stripping**: `ALL_VIEWER_EXCEPT_HOST_HEADER` cache policy — Lambda sees API Gateway hostname, `SECDASH_COGNITO_REDIRECT_URI` set explicitly
 
 ## Known Sharp Edges
 
 These are design decisions with security trade-offs that operators should understand:
 
-### Python Rule Loading (Critical — Default Off)
+### Threshold=0 Always Triggers
 
-Setting `SECDASH_ALLOW_PYTHON_RULES=1` enables loading arbitrary Python code as detection rules. This is **disabled by default** and logs a warning when enabled. Only enable in trusted development environments.
+A detection rule with `threshold: 0` triggers on any query result, even zero matches. This is by design (documented in proptest invariants) but may surprise operators. Set threshold >= 1 for meaningful detection.
 
-```bash
-# DO NOT set in production
-export SECDASH_ALLOW_PYTHON_RULES=1  # Allows arbitrary code execution
-```
+### NotEquals Filter on Missing Fields
 
-### SQL Construction in Base Connector
+`NotEquals` filter passes when the target field is missing from an OCSF event (missing != "value" is true). This means a `not_equals: "Root"` filter won't exclude events that lack the field entirely. Use `equals` for allowlisting instead.
 
-`DataConnector.query_time_range()` in `connectors/base.py` accepts `columns`, `time_column`, and `additional_filters` as string parameters without sanitization. These are safe when called from internal code but should not accept untrusted user input directly. The specialized connectors (`SecurityLakeConnector`, `AthenaConnector`) apply proper sanitization.
+### String-Only Filter Coercion
 
-### Webhook URL Handling
+All filter comparisons coerce OCSF values to strings via `serde_json::Value::to_string()`. Numeric fields like `status_id` must be quoted in rule YAML: `equals: "1"`, not `equals: 1`.
 
-`SlackNotifier` and `URLAnalyzer` accept URLs without validation. In the intended deployment model, URLs come from operator configuration (environment variables, constructor arguments), not from end users. If exposing URL parameters to untrusted input, add URL validation first.
+### Enrichment Query Amplification
 
-### Lambda Deployment Parameters
+`POST /api/investigations/{id}/enrich` runs N users x M event classes + N IPs x M event classes unfiltered Iceberg scans. For investigations with many entities, this can generate ~60 queries scanning hundreds of Parquet files. API Gateway's 29-second timeout will cut off large enrichments. Enrichment is currently disabled on the `from-detection` pipeline for this reason.
 
-`LambdaBuilder.deploy_lambda()` does not bounds-check `memory_mb` or `timeout_seconds`. Invalid values will be rejected by the AWS API at deploy time, but early validation would provide better error messages.
+### Session Secrets in Environment Variables
+
+`SECDASH_COGNITO_CLIENT_SECRET` and `SECDASH_SESSION_SECRET_KEY` are currently passed as plaintext Lambda environment variables. Migration to AWS Secrets Manager is planned.
 
 ## Reporting Security Issues
 

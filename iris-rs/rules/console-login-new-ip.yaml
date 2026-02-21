@@ -1,0 +1,22 @@
+id: detect-console-login
+name: AWS Console Login Detected
+description: >
+  Detects any AWS Console login event. In a small account with few operators,
+  every console login is a security-relevant event worth tracking.
+  Correlate with known admin IPs to identify anomalous access.
+severity: medium
+event_class: authentication
+limit: 1000
+threshold: 1
+tags:
+  - authentication
+  - console-access
+mitre_attack:
+  - T1078
+data_sources:
+  - cloudtrail
+filters:
+  - field: api.operation
+    equals: ConsoleLogin
+  - field: status_id
+    equals: "1"

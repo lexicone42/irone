@@ -1,0 +1,24 @@
+id: detect-cognito-auth-failure-spike
+name: Cognito Authentication Failure Spike
+description: >
+  Detects a spike in failed Cognito authentication events, which may indicate
+  credential stuffing or brute-force attacks against Cognito user pools.
+  Monitors CloudTrail Authentication events where the Cognito IdP reports failures.
+severity: high
+event_class: api_activity
+limit: 5000
+threshold: 10
+tags:
+  - authentication
+  - cognito
+  - brute-force
+mitre_attack:
+  - T1110
+  - T1110.001
+data_sources:
+  - cloudtrail
+filters:
+  - field: api.service.name
+    equals: cognito-idp.amazonaws.com
+  - field: status
+    equals: Failure
