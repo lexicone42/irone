@@ -51,6 +51,7 @@ pub struct SourceSummary {
     pub name: String,
     pub source_type: String,
     pub description: String,
+    pub region: String,
     pub tags: Vec<String>,
 }
 
@@ -60,6 +61,7 @@ impl From<&DataSource> for SourceSummary {
             name: s.name.clone(),
             source_type: s.source_type.to_string(),
             description: s.description.clone(),
+            region: s.region.clone(),
             tags: s.tags.clone(),
         }
     }
