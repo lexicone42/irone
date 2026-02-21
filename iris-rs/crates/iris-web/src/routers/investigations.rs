@@ -211,21 +211,26 @@ async fn create_from_detection(
     State(state): State<AppState>,
     Json(body): Json<CreateFromDetectionRequest>,
 ) -> Result<Json<CreateFromDetectionResponse>, WebError> {
-    // 1. Check rule exists
-    if state.runner.get_rule(&body.rule_id).is_none() {
-        return Err(WebError::NotFound(format!(
-            "rule '{}' not found",
-            body.rule_id
-        )));
-    }
+    // 1. Check rule exists and get its preferred data source
+    let rule = state
+        .runner
+        .get_rule(&body.rule_id)
+        .ok_or_else(|| WebError::NotFound(format!("rule '{}' not found", body.rule_id)))?;
+    let rule_data_sources = rule.metadata().data_sources.clone();
 
-    // 2. Resolve source: explicit name or first Security Lake source
+    // 2. Resolve source: explicit name, rule's preferred data_source, or first SL source
     let catalog = state.catalog.read().await;
     let source = if let Some(ref name) = body.source_name {
         catalog
             .get_source(name)
             .cloned()
             .ok_or_else(|| WebError::NotFound(format!("source '{name}' not found")))?
+    } else if let Some(preferred) = rule_data_sources.first() {
+        catalog.get_source(preferred).cloned().ok_or_else(|| {
+            WebError::BadRequest(format!(
+                "rule requires source '{preferred}' but it is not registered"
+            ))
+        })?
     } else {
         catalog
             .filter_by_tag("security-lake")
@@ -267,12 +272,14 @@ async fn create_from_detection(
         }));
     }
 
-    // 3. Build graph from detection
+    // 3. Build graph from detection matches only (no enrichment).
+    //    Enrichment scans too many Parquet files for the API Gateway 29s limit.
+    //    Use POST /investigations/{id}/enrich for enrichment after creation.
     let mut builder = GraphBuilder::new();
     builder
-        .build_from_detection(
+        .build_from_detection::<iris_aws::ConnectorKind>(
             &result,
-            Some(&connector),
+            None,
             body.enrichment_window_minutes,
             1000,
             true,
