@@ -291,6 +291,8 @@ const EDGE_STYLES = {
     TRIGGERED_BY:       "#FF4757",
     PERFORMED_BY:       "#FF6B6B",
     TARGETED:           "#45B7D1",
+    COMMUNICATED_WITH:  "#F39C12",
+    RESOLVED_TO:        "#9B59B6",
 };
 
 function investigationsApp() {
@@ -437,12 +439,40 @@ function investigationsApp() {
                     {
                         selector: "edge",
                         style: {
-                            width: 2,
+                            width: (ele) => {
+                                const ec = ele.data("event_count") || 1;
+                                return Math.max(1, Math.min(8, 1 + Math.log2(ec)));
+                            },
                             "line-color": (ele) => EDGE_STYLES[ele.data("edge_type")] || "#888",
                             "target-arrow-color": (ele) => EDGE_STYLES[ele.data("edge_type")] || "#888",
                             "target-arrow-shape": "triangle",
                             "curve-style": "bezier",
                             opacity: 0.7,
+                        },
+                    },
+                    {
+                        selector: "edge[edge_type='COMMUNICATED_WITH']",
+                        style: {
+                            "line-style": "solid",
+                            "target-arrow-shape": "triangle",
+                        },
+                    },
+                    {
+                        selector: "edge[edge_type='RESOLVED_TO']",
+                        style: {
+                            "line-style": "dashed",
+                        },
+                    },
+                    {
+                        selector: "edge:selected",
+                        style: {
+                            "line-color": "#00ff9c",
+                            "target-arrow-color": "#00ff9c",
+                            width: (ele) => {
+                                const ec = ele.data("event_count") || 1;
+                                return Math.max(2, Math.min(10, 2 + Math.log2(ec)));
+                            },
+                            opacity: 1.0,
                         },
                     },
                     {
@@ -461,10 +491,27 @@ function investigationsApp() {
             this.cy.on("tap", "node", (evt) => {
                 const data = evt.target.data();
                 this.selectedNode = data;
+                this.selectedEdge = null;
+            });
+
+            // Click handler: show edge details
+            this.cy.on("tap", "edge", (evt) => {
+                const data = evt.target.data();
+                this.selectedEdge = data;
+                this.selectedNode = null;
+            });
+
+            // Click background to deselect
+            this.cy.on("tap", (evt) => {
+                if (evt.target === this.cy) {
+                    this.selectedNode = null;
+                    this.selectedEdge = null;
+                }
             });
         },
 
         selectedNode: null,
+        selectedEdge: null,
 
         async deleteInv(invId) {
             try {

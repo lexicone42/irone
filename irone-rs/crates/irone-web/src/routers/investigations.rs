@@ -412,6 +412,25 @@ async fn get_graph(
             serde_json::Value::String(edge.edge_type.to_string()),
         );
         data.insert("weight".into(), serde_json::json!(edge.weight));
+        data.insert(
+            "event_count".into(),
+            serde_json::Value::Number(edge.event_count.into()),
+        );
+        if !edge.properties.is_empty() {
+            data.insert("properties".into(), serde_json::json!(edge.properties));
+        }
+        if let Some(t) = edge.first_seen {
+            data.insert(
+                "first_seen".into(),
+                serde_json::Value::String(t.to_rfc3339()),
+            );
+        }
+        if let Some(t) = edge.last_seen {
+            data.insert(
+                "last_seen".into(),
+                serde_json::Value::String(t.to_rfc3339()),
+            );
+        }
         elements.push(CytoscapeElement {
             group: "edges",
             data,

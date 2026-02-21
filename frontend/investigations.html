@@ -178,7 +178,7 @@
                             <div class="card-header">
                                 Investigation Graph
                                 <span style="float: right; font-size: 0.75rem; color: var(--text-muted);">
-                                    Click nodes to inspect. Scroll to zoom. Drag to pan.
+                                    Click nodes or edges to inspect. Scroll to zoom. Drag to pan.
                                 </span>
                             </div>
                             <div id="cy-graph" style="height: 500px; background: #0d1117; border-radius: 4px;"></div>
@@ -191,6 +191,10 @@
                                 <span><span style="color: #96CEB4;">&#9650;</span> API Operation</span>
                                 <span><span style="color: #FF4757;">&#9733;</span> Finding</span>
                                 <span><span style="color: #A8A8A8;">&#9679;</span> Event</span>
+                                <span style="margin-left: 0.5rem; border-left: 1px solid var(--border); padding-left: 0.75rem;">
+                                    <span style="color: #F39C12;">&#8212;</span> Network Flow
+                                </span>
+                                <span><span style="color: #9B59B6;">- -</span> DNS</span>
                             </div>
                         </div>
 
@@ -221,6 +225,67 @@
                                             <tr>
                                                 <td style="color: var(--text-muted);">Last Seen</td>
                                                 <td x-text="selectedNode.last_seen"></td>
+                                            </tr>
+                                        </template>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </template>
+
+                        <!-- Selected Edge Details -->
+                        <template x-if="selectedEdge">
+                            <div class="card">
+                                <div class="card-header">
+                                    Edge: <span x-text="selectedEdge.edge_type" style="color: var(--primary);"></span>
+                                </div>
+                                <table class="data-table">
+                                    <tbody>
+                                        <tr>
+                                            <td style="color: var(--text-muted);">Source</td>
+                                            <td x-text="selectedEdge.source" style="font-family: monospace; font-size: 0.8rem;"></td>
+                                        </tr>
+                                        <tr>
+                                            <td style="color: var(--text-muted);">Target</td>
+                                            <td x-text="selectedEdge.target" style="font-family: monospace; font-size: 0.8rem;"></td>
+                                        </tr>
+                                        <tr>
+                                            <td style="color: var(--text-muted);">Flow Records</td>
+                                            <td x-text="selectedEdge.event_count"></td>
+                                        </tr>
+                                        <template x-if="selectedEdge.properties?.bytes_in != null">
+                                            <tr>
+                                                <td style="color: var(--text-muted);">Bytes In</td>
+                                                <td x-text="Number(selectedEdge.properties.bytes_in).toLocaleString()"></td>
+                                            </tr>
+                                        </template>
+                                        <template x-if="selectedEdge.properties?.bytes_out != null">
+                                            <tr>
+                                                <td style="color: var(--text-muted);">Bytes Out</td>
+                                                <td x-text="Number(selectedEdge.properties.bytes_out).toLocaleString()"></td>
+                                            </tr>
+                                        </template>
+                                        <template x-if="selectedEdge.properties?.dst_port">
+                                            <tr>
+                                                <td style="color: var(--text-muted);">Ports</td>
+                                                <td x-text="Array.isArray(selectedEdge.properties.dst_port) ? selectedEdge.properties.dst_port.join(', ') : selectedEdge.properties.dst_port"></td>
+                                            </tr>
+                                        </template>
+                                        <template x-if="selectedEdge.properties?.protocol">
+                                            <tr>
+                                                <td style="color: var(--text-muted);">Protocol</td>
+                                                <td x-text="selectedEdge.properties.protocol"></td>
+                                            </tr>
+                                        </template>
+                                        <template x-if="selectedEdge.first_seen">
+                                            <tr>
+                                                <td style="color: var(--text-muted);">First Seen</td>
+                                                <td x-text="selectedEdge.first_seen"></td>
+                                            </tr>
+                                        </template>
+                                        <template x-if="selectedEdge.last_seen">
+                                            <tr>
+                                                <td style="color: var(--text-muted);">Last Seen</td>
+                                                <td x-text="selectedEdge.last_seen"></td>
                                             </tr>
                                         </template>
                                     </tbody>

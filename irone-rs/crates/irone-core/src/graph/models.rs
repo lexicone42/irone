@@ -478,6 +478,49 @@ impl GraphEdge {
         }
         self.event_count += 1;
     }
+
+    /// Merge properties from another edge into this one.
+    ///
+    /// Accumulative keys (`bytes_in`, `bytes_out`) are summed.
+    /// Set keys (`dst_port`) collect unique values into an array.
+    /// Other keys keep the existing value (first-write-wins).
+    pub fn merge_properties(&mut self, incoming: &HashMap<String, Value>) {
+        const ACCUMULATE: &[&str] = &["bytes_in", "bytes_out"];
+        const COLLECT: &[&str] = &["dst_port"];
+
+        for (key, new_val) in incoming {
+            if ACCUMULATE.contains(&key.as_str()) {
+                let existing_n = self
+                    .properties
+                    .get(key)
+                    .and_then(Value::as_u64)
+                    .unwrap_or(0);
+                let incoming_n = new_val.as_u64().unwrap_or(0);
+                self.properties
+                    .insert(key.clone(), Value::from(existing_n + incoming_n));
+            } else if COLLECT.contains(&key.as_str()) {
+                let entry = self
+                    .properties
+                    .entry(key.clone())
+                    .or_insert_with(|| Value::Array(Vec::new()));
+                if let Some(arr) = entry.as_array_mut() {
+                    if !arr.contains(new_val) {
+                        arr.push(new_val.clone());
+                    }
+                } else {
+                    // First value wasn't an array — convert it
+                    let prev = entry.clone();
+                    let mut arr = vec![prev];
+                    if !arr.contains(new_val) {
+                        arr.push(new_val.clone());
+                    }
+                    *entry = Value::Array(arr);
+                }
+            } else if !self.properties.contains_key(key) {
+                self.properties.insert(key.clone(), new_val.clone());
+            }
+        }
+    }
 }
 
 /// Container for the complete security investigation graph.
@@ -522,15 +565,46 @@ impl SecurityGraph {
         }
     }
 
-    /// Add an edge, merging timestamps if it already exists.
+    /// Add an edge, merging timestamps and properties if it already exists.
+    ///
+    /// For duplicate edges (same ID), timestamps are updated, properties are
+    /// merged (bytes accumulated, ports collected), and weight is recalculated
+    /// from total bytes transferred.
     pub fn add_edge(&mut self, edge: GraphEdge) {
         if let Some(&idx) = self.edge_index.get(&edge.id) {
             let existing = &mut self.edges[idx];
+            // Update timestamps without double-counting events
             if let Some(t) = edge.first_seen {
-                existing.update_timestamps(t);
+                match existing.first_seen {
+                    None => existing.first_seen = Some(t),
+                    Some(e) if t < e => existing.first_seen = Some(t),
+                    _ => {}
+                }
             }
             if let Some(t) = edge.last_seen {
-                existing.update_timestamps(t);
+                match existing.last_seen {
+                    None => existing.last_seen = Some(t),
+                    Some(e) if t > e => existing.last_seen = Some(t),
+                    _ => {}
+                }
+            }
+            existing.event_count += 1;
+            existing.merge_properties(&edge.properties);
+            // Recalculate weight from total bytes for network flow edges
+            let total_bytes = existing
+                .properties
+                .get("bytes_in")
+                .and_then(Value::as_u64)
+                .unwrap_or(0)
+                + existing
+                    .properties
+                    .get("bytes_out")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(0);
+            if total_bytes > 0 {
+                #[allow(clippy::cast_precision_loss)] // log-scale weight, precision irrelevant
+                let w = (total_bytes as f64).log2();
+                existing.weight = w;
             }
         } else {
             let idx = self.edges.len();
@@ -647,6 +721,7 @@ pub struct GraphSummary {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::TimeZone;
     use serde_json::json;
 
     fn make_node(id: &str, node_type: NodeType) -> GraphNode {
@@ -1080,5 +1155,91 @@ mod tests {
         let g2: SecurityGraph = serde_json::from_str(&json).unwrap();
         assert_eq!(g2.node_count(), 2);
         assert_eq!(g2.edge_count(), 1);
+    }
+
+    #[test]
+    fn merge_properties_accumulates_bytes() {
+        let mut edge = make_edge(EdgeType::CommunicatedWith, "a", "b");
+        edge.properties.insert("bytes_in".into(), json!(1000_u64));
+        edge.properties.insert("bytes_out".into(), json!(2000_u64));
+
+        let mut incoming = HashMap::new();
+        incoming.insert("bytes_in".into(), json!(500_u64));
+        incoming.insert("bytes_out".into(), json!(1500_u64));
+
+        edge.merge_properties(&incoming);
+
+        assert_eq!(edge.properties["bytes_in"], json!(1500_u64));
+        assert_eq!(edge.properties["bytes_out"], json!(3500_u64));
+    }
+
+    #[test]
+    fn merge_properties_collects_unique_ports() {
+        let mut edge = make_edge(EdgeType::CommunicatedWith, "a", "b");
+        edge.properties.insert("dst_port".into(), json!([443_u64]));
+
+        // Add port 80 — should be added
+        let mut incoming1 = HashMap::new();
+        incoming1.insert("dst_port".into(), json!(80_u64));
+        edge.merge_properties(&incoming1);
+
+        // Add port 443 again — should be deduped
+        let mut incoming2 = HashMap::new();
+        incoming2.insert("dst_port".into(), json!(443_u64));
+        edge.merge_properties(&incoming2);
+
+        let ports = edge.properties["dst_port"].as_array().unwrap();
+        assert_eq!(ports.len(), 2);
+        assert!(ports.contains(&json!(443_u64)));
+        assert!(ports.contains(&json!(80_u64)));
+    }
+
+    #[test]
+    fn merge_properties_first_write_wins_for_protocol() {
+        let mut edge = make_edge(EdgeType::CommunicatedWith, "a", "b");
+        edge.properties.insert("protocol".into(), json!("TCP"));
+
+        let mut incoming = HashMap::new();
+        incoming.insert("protocol".into(), json!("UDP"));
+        edge.merge_properties(&incoming);
+
+        assert_eq!(edge.properties["protocol"], json!("TCP"));
+    }
+
+    #[test]
+    fn add_edge_aggregates_network_flows() {
+        let mut g = SecurityGraph::new();
+        let ts1 = Utc.with_ymd_and_hms(2024, 1, 15, 10, 0, 0).unwrap();
+        let ts2 = Utc.with_ymd_and_hms(2024, 1, 15, 10, 5, 0).unwrap();
+
+        let mut e1 = make_edge(EdgeType::CommunicatedWith, "IP:10.0.0.1", "IP:8.8.8.8");
+        e1.first_seen = Some(ts1);
+        e1.last_seen = Some(ts1);
+        e1.properties.insert("bytes_in".into(), json!(1000_u64));
+        e1.properties.insert("bytes_out".into(), json!(5000_u64));
+        e1.properties.insert("dst_port".into(), json!([443_u64]));
+        g.add_edge(e1);
+
+        let mut e2 = make_edge(EdgeType::CommunicatedWith, "IP:10.0.0.1", "IP:8.8.8.8");
+        e2.first_seen = Some(ts2);
+        e2.last_seen = Some(ts2);
+        e2.properties.insert("bytes_in".into(), json!(2000_u64));
+        e2.properties.insert("bytes_out".into(), json!(3000_u64));
+        e2.properties.insert("dst_port".into(), json!(80_u64));
+        g.add_edge(e2);
+
+        assert_eq!(g.edge_count(), 1);
+        let edge = &g.edges[0];
+        assert_eq!(edge.event_count, 2);
+        assert_eq!(edge.first_seen, Some(ts1));
+        assert_eq!(edge.last_seen, Some(ts2));
+        assert_eq!(edge.properties["bytes_in"], json!(3000_u64));
+        assert_eq!(edge.properties["bytes_out"], json!(8000_u64));
+
+        let ports = edge.properties["dst_port"].as_array().unwrap();
+        assert_eq!(ports.len(), 2);
+
+        // Weight should be log2(3000 + 8000) = log2(11000) ≈ 13.43
+        assert!(edge.weight > 13.0 && edge.weight < 14.0);
     }
 }

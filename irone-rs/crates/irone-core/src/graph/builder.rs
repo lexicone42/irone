@@ -515,7 +515,6 @@ impl GraphBuilder {
             let edge_id = GraphEdge::create_id(&EdgeType::CommunicatedWith, sid, did);
             let mut properties = HashMap::new();
 
-            // Extract port/protocol/bytes metadata
             if let Some(port) = get_nested_value(event, "dst_endpoint.port") {
                 properties.insert("dst_port".into(), port);
             }
@@ -531,13 +530,29 @@ impl GraphBuilder {
                 properties.insert("bytes_out".into(), bytes_out);
             }
 
+            // Initial weight from bytes (log-scale)
+            let total_bytes = properties
+                .get("bytes_in")
+                .and_then(Value::as_u64)
+                .unwrap_or(0)
+                + properties
+                    .get("bytes_out")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(0);
+            #[allow(clippy::cast_precision_loss)] // log-scale weight, precision irrelevant
+            let weight = if total_bytes > 0 {
+                (total_bytes as f64).log2()
+            } else {
+                1.0
+            };
+
             let edge = GraphEdge {
                 id: edge_id,
                 edge_type: EdgeType::CommunicatedWith,
                 source_id: sid.clone(),
                 target_id: did.clone(),
                 properties,
-                weight: 1.0,
+                weight,
                 first_seen: Some(event_time),
                 last_seen: Some(event_time),
                 event_count: 1,
@@ -1094,5 +1109,61 @@ mod tests {
 
         builder.reset();
         assert_eq!(builder.get_graph().node_count(), 0);
+    }
+
+    #[test]
+    fn network_flows_aggregate_across_events() {
+        let mut builder = GraphBuilder::new();
+        // Two flow records between the same src/dst on different ports
+        let records = vec![
+            json_row!(
+                "class_uid" => 4001_u64,
+                "src_endpoint.ip" => "10.0.0.1",
+                "dst_endpoint.ip" => "203.0.113.50",
+                "dst_endpoint.port" => 443_u64,
+                "connection_info.protocol_name" => "TCP",
+                "traffic.bytes_in" => 1000_u64,
+                "traffic.bytes_out" => 5000_u64,
+                "time_dt" => "2024-01-15T10:00:00Z"
+            ),
+            json_row!(
+                "class_uid" => 4001_u64,
+                "src_endpoint.ip" => "10.0.0.1",
+                "dst_endpoint.ip" => "203.0.113.50",
+                "dst_endpoint.port" => 80_u64,
+                "connection_info.protocol_name" => "TCP",
+                "traffic.bytes_in" => 500_u64,
+                "traffic.bytes_out" => 2000_u64,
+                "time_dt" => "2024-01-15T10:05:00Z"
+            ),
+        ];
+
+        let qr = QueryResult::from_maps(records);
+        builder.process_query_result(&qr, false);
+
+        let cw_edges: Vec<_> = builder
+            .graph
+            .edges
+            .iter()
+            .filter(|e| e.edge_type == EdgeType::CommunicatedWith)
+            .collect();
+
+        // Should be a single aggregated edge
+        assert_eq!(cw_edges.len(), 1);
+        let edge = cw_edges[0];
+        assert_eq!(edge.event_count, 2);
+
+        // Bytes accumulated
+        assert_eq!(edge.properties["bytes_in"], json!(1500_u64));
+        assert_eq!(edge.properties["bytes_out"], json!(7000_u64));
+
+        // Ports collected
+        let ports = edge.properties["dst_port"].as_array().unwrap();
+        assert_eq!(ports.len(), 2);
+        assert!(ports.contains(&json!(443_u64)));
+        assert!(ports.contains(&json!(80_u64)));
+
+        // Weight reflects total bytes (log2(1500+7000) = log2(8500) ≈ 13.05)
+        assert!(edge.weight > 13.0);
     }
 }
