@@ -437,6 +437,115 @@ impl<'a, S: SecurityLakeQueries> SecurityLakeEnricher<'a, S> {
         }
     }
 
+    /// Get all events involving a specific resource ARN.
+    ///
+    /// Uses Athena's `any_match()` on the OCSF `resources` array to find events
+    /// that reference the given ARN. Queries `ApiActivity` only since API calls
+    /// are the primary source of resource-level audit events.
+    pub async fn enrich_by_resource(
+        &self,
+        arn: &str,
+        start: DateTime<Utc>,
+        end: DateTime<Utc>,
+        limit: usize,
+    ) -> QueryResult {
+        if !arn.starts_with("arn:") {
+            warn!(
+                arn = arn,
+                "invalid ARN format, skipping resource enrichment"
+            );
+            return QueryResult::empty();
+        }
+
+        let safe_arn = sanitize_string(arn);
+        let filter = format!("any_match(\"resources\", x -> x.\"uid\" = '{safe_arn}')");
+
+        match self
+            .connector
+            .query_by_event_class(
+                OCSFEventClass::ApiActivity,
+                start,
+                end,
+                limit,
+                Some(&filter),
+            )
+            .await
+        {
+            Ok(qr) if !qr.is_empty() => {
+                debug!(
+                    arn = arn,
+                    count = qr.len(),
+                    "enrichment found events by resource"
+                );
+                qr
+            }
+            Ok(_) => QueryResult::empty(),
+            Err(e) => {
+                warn!(arn = arn, error = %e, "enrichment by resource failed");
+                QueryResult::empty()
+            }
+        }
+    }
+
+    /// Get all events involving a batch of resource ARNs.
+    ///
+    /// Uses Athena's `any_match()` with `IN (...)` to query multiple ARNs
+    /// in a single query. Only queries `ApiActivity`.
+    pub async fn enrich_resources_batch(
+        &self,
+        arns: &[String],
+        start: DateTime<Utc>,
+        end: DateTime<Utc>,
+        limit: usize,
+    ) -> QueryResult {
+        let valid_arns: Vec<&str> = arns
+            .iter()
+            .filter(|a| a.starts_with("arn:"))
+            .map(String::as_str)
+            .collect();
+
+        if valid_arns.is_empty() {
+            return QueryResult::empty();
+        }
+
+        let in_list = valid_arns
+            .iter()
+            .map(|a| format!("'{}'", sanitize_string(a)))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let filter = format!("any_match(\"resources\", x -> x.\"uid\" IN ({in_list}))");
+
+        match self
+            .connector
+            .query_by_event_class(
+                OCSFEventClass::ApiActivity,
+                start,
+                end,
+                limit,
+                Some(&filter),
+            )
+            .await
+        {
+            Ok(qr) if !qr.is_empty() => {
+                debug!(
+                    arn_count = valid_arns.len(),
+                    count = qr.len(),
+                    "batch enrichment found events by resources"
+                );
+                qr
+            }
+            Ok(_) => QueryResult::empty(),
+            Err(e) => {
+                warn!(
+                    arn_count = valid_arns.len(),
+                    error = %e,
+                    "batch enrichment by resources failed"
+                );
+                QueryResult::empty()
+            }
+        }
+    }
+
     /// Find all principals that have accessed from a specific IP.
     pub async fn find_related_principals(
         &self,
@@ -720,5 +829,86 @@ mod tests {
             .await;
 
         assert!(!result.is_empty());
+    }
+
+    #[tokio::test]
+    async fn enrich_by_resource_returns_events() {
+        let api_rows = vec![json_row!(
+            "actor.user.name" => "alice",
+            "api.operation" => "GetObject",
+            "api.service.name" => "s3"
+        )];
+
+        let mock = MockSecurityLake::new().with_result(
+            OCSFEventClass::ApiActivity,
+            QueryResult::from_maps(api_rows),
+        );
+
+        let enricher = SecurityLakeEnricher::new(&mock);
+        let (start, end) = time_window();
+        let result = enricher
+            .enrich_by_resource("arn:aws:s3:::my-bucket", start, end, 500)
+            .await;
+
+        assert_eq!(result.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn enrich_by_resource_rejects_invalid_arn() {
+        let mock = MockSecurityLake::new();
+        let enricher = SecurityLakeEnricher::new(&mock);
+        let (start, end) = time_window();
+        let result = enricher
+            .enrich_by_resource("not-an-arn", start, end, 500)
+            .await;
+        assert!(result.is_empty());
+    }
+
+    #[tokio::test]
+    async fn enrich_resources_batch_queries_valid_arns() {
+        let api_rows = vec![json_row!(
+            "actor.user.name" => "bob",
+            "api.operation" => "PutObject",
+            "api.service.name" => "s3"
+        )];
+
+        let mock = MockSecurityLake::new().with_result(
+            OCSFEventClass::ApiActivity,
+            QueryResult::from_maps(api_rows),
+        );
+
+        let enricher = SecurityLakeEnricher::new(&mock);
+        let (start, end) = time_window();
+        let arns = vec![
+            "arn:aws:s3:::bucket-1".to_string(),
+            "not-an-arn".to_string(),
+            "arn:aws:s3:::bucket-2".to_string(),
+        ];
+        let result = enricher
+            .enrich_resources_batch(&arns, start, end, 500)
+            .await;
+
+        assert_eq!(result.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn enrich_resources_batch_empty_input() {
+        let mock = MockSecurityLake::new();
+        let enricher = SecurityLakeEnricher::new(&mock);
+        let (start, end) = time_window();
+        let result = enricher.enrich_resources_batch(&[], start, end, 500).await;
+        assert!(result.is_empty());
+    }
+
+    #[tokio::test]
+    async fn enrich_resources_batch_all_invalid() {
+        let mock = MockSecurityLake::new();
+        let enricher = SecurityLakeEnricher::new(&mock);
+        let (start, end) = time_window();
+        let arns = vec!["nope".to_string(), "also-bad".to_string()];
+        let result = enricher
+            .enrich_resources_batch(&arns, start, end, 500)
+            .await;
+        assert!(result.is_empty());
     }
 }

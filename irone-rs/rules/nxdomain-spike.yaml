@@ -1,0 +1,24 @@
+id: detect-nxdomain-spike
+name: NXDOMAIN Response Spike
+description: >
+  Detects a spike in DNS NXDOMAIN responses (rcode_id=3), which may indicate
+  domain generation algorithm (DGA) activity from malware. Compromised hosts
+  running DGA-based malware generate many DNS queries for randomly generated
+  domains, most of which return NXDOMAIN. A threshold of 100 NXDOMAIN
+  responses in the lookback window is well above normal error rates.
+severity: medium
+event_class: dns_activity
+limit: 5000
+threshold: 100
+tags:
+  - dns
+  - malware
+  - dga
+mitre_attack:
+  - T1568.002
+  - T1071.004
+data_sources:
+  - route53-resolver
+filters:
+  - field: rcode_id
+    equals: "3"

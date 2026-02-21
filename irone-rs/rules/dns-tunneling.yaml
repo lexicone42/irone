@@ -1,0 +1,23 @@
+id: detect-dns-tunneling
+name: Potential DNS Tunneling Activity
+description: >
+  Detects a high volume of DNS queries, which may indicate DNS tunneling for
+  data exfiltration or C2 communication. DNS tunneling tools encode data in
+  subdomain labels, generating many queries to attacker-controlled domains.
+  OCSF DnsActivity events from Route 53 Resolver logs capture each query.
+  Threshold of 500 queries in the lookback window significantly exceeds
+  normal resolver activity for most VPCs.
+severity: high
+event_class: dns_activity
+limit: 5000
+threshold: 500
+tags:
+  - dns
+  - exfiltration
+  - tunneling
+mitre_attack:
+  - T1071.004
+  - T1048.003
+data_sources:
+  - route53-resolver
+filters: []

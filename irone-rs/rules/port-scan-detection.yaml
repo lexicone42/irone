@@ -1,0 +1,22 @@
+id: detect-port-scan
+name: Network Port Scan Activity
+description: >
+  Detects a high volume of rejected network connections from a single source,
+  indicative of port scanning or network reconnaissance. Triggers when 50+
+  rejected flows are observed in the lookback window. VPC Flow Logs report
+  rejected connections with status_id=2 in OCSF NetworkActivity events.
+severity: high
+event_class: network_activity
+limit: 5000
+threshold: 50
+tags:
+  - network
+  - reconnaissance
+  - port-scan
+mitre_attack:
+  - T1046
+data_sources:
+  - vpc-flow-logs
+filters:
+  - field: status_id
+    equals: "2"

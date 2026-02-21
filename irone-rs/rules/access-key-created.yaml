@@ -1,0 +1,27 @@
+id: detect-access-key-created
+name: IAM Access Key Created
+description: >
+  Detects creation of new IAM access keys. Access key creation is a common
+  persistence technique — after compromising an account, attackers create
+  long-lived access keys for programmatic access that survives password
+  resets or session revocation. Any access key creation should be correlated
+  with expected provisioning activity. OCSF AccountChange events capture
+  CreateAccessKey operations.
+severity: medium
+event_class: account_change
+limit: 1000
+threshold: 1
+tags:
+  - iam
+  - access-key
+  - persistence
+mitre_attack:
+  - T1098.001
+data_sources:
+  - cloudtrail
+filters:
+  - field: api.operation
+    in:
+      - CreateAccessKey
+      - CreateLoginProfile
+      - UpdateLoginProfile

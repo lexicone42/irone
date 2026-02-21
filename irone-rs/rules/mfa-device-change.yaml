@@ -1,0 +1,29 @@
+id: detect-mfa-device-change
+name: MFA Device Modification
+description: >
+  Detects changes to MFA devices on IAM users — creation, deletion, or
+  deactivation. Attackers who compromise credentials often disable or replace
+  MFA devices to maintain persistent access. Any MFA device change is a
+  high-severity signal that warrants investigation. OCSF AccountChange
+  events from CloudTrail capture IAM MFA operations.
+severity: high
+event_class: account_change
+limit: 1000
+threshold: 1
+tags:
+  - iam
+  - mfa
+  - persistence
+mitre_attack:
+  - T1556.006
+  - T1098
+data_sources:
+  - cloudtrail
+filters:
+  - field: api.operation
+    in:
+      - CreateVirtualMFADevice
+      - DeleteVirtualMFADevice
+      - DeactivateMFADevice
+      - EnableMFADevice
+      - ResyncMFADevice

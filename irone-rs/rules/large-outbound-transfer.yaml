@@ -1,0 +1,27 @@
+id: detect-large-outbound-transfer
+name: Large Outbound Data Transfer
+description: >
+  Detects network flows with unusually large outbound byte counts, which may
+  indicate data exfiltration. Focuses on successful connections (status_id=1)
+  to external destinations. OCSF NetworkActivity events from VPC Flow Logs
+  include traffic.bytes_out for each flow record. Threshold of 1 means any
+  matching event triggers — the regex filter on bytes_out selects flows
+  above ~100MB (9+ digit byte counts).
+severity: high
+event_class: network_activity
+limit: 5000
+threshold: 1
+tags:
+  - network
+  - exfiltration
+  - data-transfer
+mitre_attack:
+  - T1048
+  - T1041
+data_sources:
+  - vpc-flow-logs
+filters:
+  - field: status_id
+    equals: "1"
+  - field: traffic.bytes_out
+    regex: "^[0-9]{9,}"
