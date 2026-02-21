@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use axum::extract::{Path, State};
@@ -7,7 +8,8 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use irone_core::graph::{
-    EventTag, GraphBuilder, NodeType, SecurityGraph, extract_timeline_from_graph,
+    EdgeType, EventTag, GraphBuilder, GraphEdge, GraphNode, NodeType, SecurityGraph,
+    extract_timeline_from_graph,
 };
 use irone_core::reports::graph_to_report_data;
 
@@ -39,6 +41,7 @@ pub fn router() -> Router<AppState> {
             "/investigations/{inv_id}/timeline/tag",
             post(tag_timeline_event),
         )
+        .route("/investigations/seed", post(seed_investigation))
 }
 
 // -- Request / Response types --
@@ -615,6 +618,421 @@ async fn delete_investigation(
 }
 
 // -- Helpers --
+
+/// `POST /api/investigations/seed` — create a demo investigation with synthetic data.
+///
+/// Builds a realistic graph with all node/edge types for testing and demos.
+/// No Security Lake connection required.
+async fn seed_investigation(
+    State(state): State<AppState>,
+    Json(body): Json<SeedInvestigationRequest>,
+) -> Result<Json<InvestigationSummary>, WebError> {
+    let inv_id = uuid::Uuid::new_v4().to_string();
+    let name = body
+        .name
+        .unwrap_or_else(|| "Demo: Console Login Investigation".into());
+    let now = Utc::now();
+
+    let graph = build_seed_graph(now);
+    let timeline = extract_timeline_from_graph(&graph, true, true);
+
+    let inv = Investigation {
+        id: inv_id.clone(),
+        name: name.clone(),
+        graph,
+        timeline,
+        created_at: now,
+        status: "active".into(),
+    };
+
+    persist_investigation(&state, &inv).await;
+    let summary = InvestigationSummary {
+        id: inv_id.clone(),
+        name,
+        created_at: now.to_rfc3339(),
+        status: "active".into(),
+        node_count: inv.graph.node_count(),
+        edge_count: inv.graph.edge_count(),
+    };
+    state.investigations.write().await.insert(inv_id, inv);
+
+    Ok(Json(summary))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SeedInvestigationRequest {
+    pub name: Option<String>,
+}
+
+/// Build a realistic demo graph simulating a console login investigation.
+#[allow(clippy::too_many_lines)]
+fn build_seed_graph(now: DateTime<Utc>) -> SecurityGraph {
+    use chrono::Duration;
+
+    let mut graph = SecurityGraph::new();
+
+    let t0 = now - Duration::hours(6);
+    let _t1 = now - Duration::hours(5);
+    let t2 = now - Duration::hours(4);
+    let t3 = now - Duration::hours(3);
+    let t4 = now - Duration::hours(2);
+    let t5 = now - Duration::hours(1);
+
+    // --- Principals ---
+    let bryan = GraphNode {
+        id: "Principal:bryan".into(),
+        node_type: NodeType::Principal,
+        label: "bryan".into(),
+        properties: HashMap::new(),
+        first_seen: Some(t0),
+        last_seen: Some(t5),
+        event_count: 12,
+    };
+    let attacker = GraphNode {
+        id: "Principal:unknown-actor".into(),
+        node_type: NodeType::Principal,
+        label: "unknown-actor".into(),
+        properties: HashMap::new(),
+        first_seen: Some(t2),
+        last_seen: Some(t4),
+        event_count: 5,
+    };
+
+    // --- IPs ---
+    let home_ip = GraphNode {
+        id: "IP:73.162.45.100".into(),
+        node_type: NodeType::IPAddress,
+        label: "73.162.45.100".into(),
+        properties: HashMap::new(),
+        first_seen: Some(t0),
+        last_seen: Some(t5),
+        event_count: 10,
+    };
+    let suspicious_ip = GraphNode {
+        id: "IP:185.220.101.42".into(),
+        node_type: NodeType::IPAddress,
+        label: "185.220.101.42".into(),
+        properties: HashMap::new(),
+        first_seen: Some(t2),
+        last_seen: Some(t4),
+        event_count: 8,
+    };
+    let internal_ip = GraphNode {
+        id: "IP:10.0.1.50".into(),
+        node_type: NodeType::IPAddress,
+        label: "10.0.1.50".into(),
+        properties: HashMap::new(),
+        first_seen: Some(t3),
+        last_seen: Some(t5),
+        event_count: 20,
+    };
+    let c2_ip = GraphNode {
+        id: "IP:203.0.113.66".into(),
+        node_type: NodeType::IPAddress,
+        label: "203.0.113.66".into(),
+        properties: HashMap::new(),
+        first_seen: Some(t3),
+        last_seen: Some(t4),
+        event_count: 150,
+    };
+
+    // --- API Operations ---
+    let console_login = GraphNode {
+        id: "API:ConsoleLogin".into(),
+        node_type: NodeType::APIOperation,
+        label: "ConsoleLogin".into(),
+        properties: HashMap::new(),
+        first_seen: Some(t0),
+        last_seen: Some(t2),
+        event_count: 3,
+    };
+    let create_key = GraphNode {
+        id: "API:CreateAccessKey".into(),
+        node_type: NodeType::APIOperation,
+        label: "CreateAccessKey".into(),
+        properties: HashMap::new(),
+        first_seen: Some(t3),
+        last_seen: Some(t3),
+        event_count: 1,
+    };
+    let get_object = GraphNode {
+        id: "API:GetObject".into(),
+        node_type: NodeType::APIOperation,
+        label: "s3:GetObject".into(),
+        properties: HashMap::new(),
+        first_seen: Some(t3),
+        last_seen: Some(t4),
+        event_count: 45,
+    };
+    let deactivate_mfa = GraphNode {
+        id: "API:DeactivateMFADevice".into(),
+        node_type: NodeType::APIOperation,
+        label: "DeactivateMFADevice".into(),
+        properties: HashMap::new(),
+        first_seen: Some(t2),
+        last_seen: Some(t2),
+        event_count: 1,
+    };
+
+    // --- Resources ---
+    let s3_bucket = GraphNode {
+        id: "Resource:arn:aws:s3:::customer-data-prod".into(),
+        node_type: NodeType::Resource,
+        label: "s3://customer-data-prod".into(),
+        properties: HashMap::new(),
+        first_seen: Some(t3),
+        last_seen: Some(t4),
+        event_count: 45,
+    };
+    let iam_user = GraphNode {
+        id: "Resource:arn:aws:iam::651804262336:user/bryan".into(),
+        node_type: NodeType::Resource,
+        label: "iam:user/bryan".into(),
+        properties: HashMap::new(),
+        first_seen: Some(t0),
+        last_seen: Some(t3),
+        event_count: 3,
+    };
+    let domain_node = GraphNode {
+        id: "Resource:domain:c2-callback.evil.com".into(),
+        node_type: NodeType::Resource,
+        label: "c2-callback.evil.com".into(),
+        properties: {
+            let mut p = HashMap::new();
+            p.insert("resource_type".into(), serde_json::json!("domain"));
+            p
+        },
+        first_seen: Some(t3),
+        last_seen: Some(t4),
+        event_count: 150,
+    };
+
+    // --- Security Finding ---
+    let finding = GraphNode {
+        id: "Finding:detect-access-key-created-001".into(),
+        node_type: NodeType::SecurityFinding,
+        label: "IAM Access Key Created".into(),
+        properties: {
+            let mut p = HashMap::new();
+            p.insert("severity".into(), serde_json::json!("medium"));
+            p.insert(
+                "rule_id".into(),
+                serde_json::json!("detect-access-key-created"),
+            );
+            p
+        },
+        first_seen: Some(t3),
+        last_seen: Some(t3),
+        event_count: 1,
+    };
+    let finding2 = GraphNode {
+        id: "Finding:detect-mfa-device-change-001".into(),
+        node_type: NodeType::SecurityFinding,
+        label: "MFA Device Modification".into(),
+        properties: {
+            let mut p = HashMap::new();
+            p.insert("severity".into(), serde_json::json!("high"));
+            p.insert(
+                "rule_id".into(),
+                serde_json::json!("detect-mfa-device-change"),
+            );
+            p
+        },
+        first_seen: Some(t2),
+        last_seen: Some(t2),
+        event_count: 1,
+    };
+
+    // Add all nodes
+    for node in [
+        bryan,
+        attacker,
+        home_ip,
+        suspicious_ip,
+        internal_ip,
+        c2_ip,
+        console_login,
+        create_key,
+        get_object,
+        deactivate_mfa,
+        s3_bucket,
+        iam_user,
+        domain_node,
+        finding,
+        finding2,
+    ] {
+        graph.add_node(node);
+    }
+
+    // --- Edges ---
+    // Bryan's normal activity
+    graph.add_edge(make_seed_edge(
+        EdgeType::AuthenticatedFrom,
+        "Principal:bryan",
+        "IP:73.162.45.100",
+        t0,
+    ));
+    graph.add_edge(make_seed_edge(
+        EdgeType::CalledApi,
+        "Principal:bryan",
+        "API:ConsoleLogin",
+        t0,
+    ));
+
+    // Attacker's activity from suspicious IP
+    graph.add_edge(make_seed_edge(
+        EdgeType::AuthenticatedFrom,
+        "Principal:unknown-actor",
+        "IP:185.220.101.42",
+        t2,
+    ));
+    graph.add_edge(make_seed_edge(
+        EdgeType::CalledApi,
+        "Principal:unknown-actor",
+        "API:DeactivateMFADevice",
+        t2,
+    ));
+    graph.add_edge(make_seed_edge(
+        EdgeType::CalledApi,
+        "Principal:unknown-actor",
+        "API:CreateAccessKey",
+        t3,
+    ));
+    graph.add_edge(make_seed_edge(
+        EdgeType::CalledApi,
+        "Principal:unknown-actor",
+        "API:GetObject",
+        t3,
+    ));
+
+    // API → Resource edges
+    graph.add_edge(make_seed_edge(
+        EdgeType::AccessedResource,
+        "API:GetObject",
+        "Resource:arn:aws:s3:::customer-data-prod",
+        t3,
+    ));
+    graph.add_edge(make_seed_edge(
+        EdgeType::AccessedResource,
+        "API:CreateAccessKey",
+        "Resource:arn:aws:iam::651804262336:user/bryan",
+        t3,
+    ));
+    graph.add_edge(make_seed_edge(
+        EdgeType::AccessedResource,
+        "API:DeactivateMFADevice",
+        "Resource:arn:aws:iam::651804262336:user/bryan",
+        t2,
+    ));
+
+    // Finding edges
+    graph.add_edge(make_seed_edge(
+        EdgeType::TriggeredBy,
+        "Finding:detect-access-key-created-001",
+        "API:CreateAccessKey",
+        t3,
+    ));
+    graph.add_edge(make_seed_edge(
+        EdgeType::PerformedBy,
+        "Finding:detect-access-key-created-001",
+        "Principal:unknown-actor",
+        t3,
+    ));
+    graph.add_edge(make_seed_edge(
+        EdgeType::TriggeredBy,
+        "Finding:detect-mfa-device-change-001",
+        "API:DeactivateMFADevice",
+        t2,
+    ));
+    graph.add_edge(make_seed_edge(
+        EdgeType::PerformedBy,
+        "Finding:detect-mfa-device-change-001",
+        "Principal:unknown-actor",
+        t2,
+    ));
+
+    // Network flows (CommunicatedWith with aggregated properties)
+    let mut flow1_props = HashMap::new();
+    flow1_props.insert("bytes_in".into(), serde_json::json!(45_000_u64));
+    flow1_props.insert("bytes_out".into(), serde_json::json!(150_000_000_u64));
+    flow1_props.insert("dst_port".into(), serde_json::json!([443, 8443]));
+    flow1_props.insert("protocol".into(), serde_json::json!("TCP"));
+    let flow1 = GraphEdge {
+        id: GraphEdge::create_id(
+            &EdgeType::CommunicatedWith,
+            "IP:10.0.1.50",
+            "IP:203.0.113.66",
+        ),
+        edge_type: EdgeType::CommunicatedWith,
+        source_id: "IP:10.0.1.50".into(),
+        target_id: "IP:203.0.113.66".into(),
+        properties: flow1_props,
+        weight: (150_045_000_f64).log2(), // ~27.2
+        first_seen: Some(t3),
+        last_seen: Some(t4),
+        event_count: 85,
+    };
+    graph.add_edge(flow1);
+
+    let mut flow2_props = HashMap::new();
+    flow2_props.insert("bytes_in".into(), serde_json::json!(2000_u64));
+    flow2_props.insert("bytes_out".into(), serde_json::json!(500_u64));
+    flow2_props.insert("dst_port".into(), serde_json::json!([22]));
+    flow2_props.insert("protocol".into(), serde_json::json!("TCP"));
+    let flow2 = GraphEdge {
+        id: GraphEdge::create_id(
+            &EdgeType::CommunicatedWith,
+            "IP:185.220.101.42",
+            "IP:10.0.1.50",
+        ),
+        edge_type: EdgeType::CommunicatedWith,
+        source_id: "IP:185.220.101.42".into(),
+        target_id: "IP:10.0.1.50".into(),
+        properties: flow2_props,
+        weight: (2500_f64).log2(),
+        first_seen: Some(t2),
+        last_seen: Some(t3),
+        event_count: 3,
+    };
+    graph.add_edge(flow2);
+
+    // DNS resolution (ResolvedTo)
+    graph.add_edge(make_seed_edge(
+        EdgeType::ResolvedTo,
+        "IP:10.0.1.50",
+        "Resource:domain:c2-callback.evil.com",
+        t3,
+    ));
+
+    // RelatedTo: suspicious IP and attacker linked to compromised host
+    graph.add_edge(make_seed_edge(
+        EdgeType::RelatedTo,
+        "IP:185.220.101.42",
+        "IP:10.0.1.50",
+        t2,
+    ));
+
+    graph
+}
+
+fn make_seed_edge(
+    edge_type: EdgeType,
+    source_id: &str,
+    target_id: &str,
+    time: DateTime<Utc>,
+) -> GraphEdge {
+    GraphEdge {
+        id: GraphEdge::create_id(&edge_type, source_id, target_id),
+        edge_type,
+        source_id: source_id.to_string(),
+        target_id: target_id.to_string(),
+        properties: HashMap::new(),
+        weight: 1.0,
+        first_seen: Some(time),
+        last_seen: Some(time),
+        event_count: 1,
+    }
+}
 
 async fn persist_investigation(state: &AppState, inv: &Investigation) {
     if let Some(ref store) = state.investigation_store {

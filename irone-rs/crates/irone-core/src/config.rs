@@ -51,6 +51,9 @@ pub struct AppConfig {
     // Cedar authorization
     pub cedar_enabled: bool,
 
+    // Service token for headless API access (bypasses session auth)
+    pub service_token: String,
+
     // Frontend
     pub frontend_url: String,
 }
@@ -92,6 +95,8 @@ impl Default for AppConfig {
             session_max_age: 30 * 24 * 3600,
 
             cedar_enabled: true,
+
+            service_token: String::new(),
 
             frontend_url: String::new(),
         }

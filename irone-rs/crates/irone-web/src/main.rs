@@ -10,6 +10,9 @@ async fn main() -> Result<(), lambda_http::Error> {
     let config = load_config().expect("failed to load config");
     tracing::info!(region = %config.region, lambda = config.is_lambda, auth = config.auth_enabled, "starting irone-web");
 
+    // Init service token for headless API access
+    irone_auth::middleware::set_service_token(config.service_token.clone());
+
     // Init auth (l42 token handler) if enabled
     let auth = build_auth(&config).await;
 

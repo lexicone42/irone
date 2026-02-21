@@ -3,6 +3,9 @@
 //! When auth is enabled, the session middleware (from l42-token-handler) handles
 //! cookie-based sessions on `/auth/*` routes. This module provides a lighter
 //! guard for `/api/*` routes that checks whether the session has valid tokens.
+//!
+//! A service token (`X-Service-Token` header) can bypass session auth for
+//! headless/programmatic API access (CI, scripts, testing).
 
 use axum::extract::Request;
 use axum::middleware::Next;
@@ -10,11 +13,32 @@ use axum::response::Response;
 use http::StatusCode;
 use l42_token_handler::session::middleware::SessionHandle;
 
+/// The expected service token, set once at startup.
+static SERVICE_TOKEN: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
+/// Initialize the service token. Call once at app startup.
+pub fn set_service_token(token: String) {
+    if !token.is_empty() {
+        let _ = SERVICE_TOKEN.set(token);
+    }
+}
+
 /// Guard middleware for API routes.
 ///
-/// Checks that the request has a session with tokens (set by the session middleware).
-/// Returns 401 if no valid session exists.
+/// Checks (in order):
+/// 1. `X-Service-Token` header matches configured service token → allow
+/// 2. Session has valid tokens → allow
+/// 3. No session middleware (auth not enabled) → allow
+/// 4. Otherwise → 401
 pub async fn require_auth(request: Request, next: Next) -> Result<Response, StatusCode> {
+    // Check service token header first
+    if let Some(configured) = SERVICE_TOKEN.get()
+        && let Some(provided) = request.headers().get("x-service-token")
+        && provided.as_bytes() == configured.as_bytes()
+    {
+        return Ok(next.run(request).await);
+    }
+
     let session = request.extensions().get::<SessionHandle>().cloned();
 
     match session {
