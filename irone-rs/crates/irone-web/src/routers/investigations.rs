@@ -160,17 +160,16 @@ async fn create_investigation(
             irone_aws::create_connector(source, &state.sdk_config, state.config.use_direct_query)
                 .await;
         let mut builder = GraphBuilder::new();
-        builder
-            .build_from_identifiers(
-                &connector,
-                &body.users,
-                &body.ips,
-                body.start,
-                body.end,
-                1000,
-                true,
-            )
-            .await;
+        Box::pin(builder.build_from_identifiers(
+            &connector,
+            &body.users,
+            &body.ips,
+            body.start,
+            body.end,
+            1000,
+            true,
+        ))
+        .await;
         builder.into_graph()
     } else {
         SecurityGraph::new()
@@ -276,15 +275,14 @@ async fn create_from_detection(
     //    Enrichment scans too many Parquet files for the API Gateway 29s limit.
     //    Use POST /investigations/{id}/enrich for enrichment after creation.
     let mut builder = GraphBuilder::new();
-    builder
-        .build_from_detection::<irone_aws::ConnectorKind>(
-            &result,
-            None,
-            body.enrichment_window_minutes,
-            1000,
-            true,
-        )
-        .await;
+    Box::pin(builder.build_from_detection::<irone_aws::ConnectorKind>(
+        &result,
+        None,
+        body.enrichment_window_minutes,
+        1000,
+        true,
+    ))
+    .await;
     let graph = builder.into_graph();
 
     // 4. Extract timeline
@@ -493,8 +491,7 @@ async fn enrich_investigation(
     let (start, end) = inv.timeline.time_range();
 
     let mut builder = GraphBuilder::new();
-    builder
-        .build_from_identifiers(&connector, &principals, &ips, start, end, 1000, true)
+    Box::pin(builder.build_from_identifiers(&connector, &principals, &ips, start, end, 1000, true))
         .await;
     let graph = builder.into_graph();
     let timeline = extract_timeline_from_graph(&graph, true, true);

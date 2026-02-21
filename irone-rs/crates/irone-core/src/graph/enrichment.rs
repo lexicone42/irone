@@ -282,6 +282,161 @@ impl<'a, S: SecurityLakeQueries> SecurityLakeEnricher<'a, S> {
         }
     }
 
+    /// Get all events for a batch of users within a time window.
+    ///
+    /// Uses SQL `IN (...)` clauses to query multiple users per event class,
+    /// reducing Athena round-trips from `N_users × 3` to just 3.
+    pub async fn enrich_users_batch(
+        &self,
+        user_names: &[String],
+        start: DateTime<Utc>,
+        end: DateTime<Utc>,
+        event_classes: Option<&[OCSFEventClass]>,
+        limit: usize,
+    ) -> QueryResult {
+        if user_names.is_empty() {
+            return QueryResult::empty();
+        }
+
+        let default_classes = [
+            OCSFEventClass::ApiActivity,
+            OCSFEventClass::Authentication,
+            OCSFEventClass::AccountChange,
+        ];
+        let classes = event_classes.unwrap_or(&default_classes);
+
+        let safe_users: Vec<String> = user_names.iter().map(|u| sanitize_string(u)).collect();
+        let in_list = safe_users
+            .iter()
+            .map(|s| format!("'{s}'"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let filter = format!("\"actor\".\"user\".\"name\" IN ({in_list})");
+
+        let mut all_results = Vec::new();
+
+        for &event_class in classes {
+            match self
+                .connector
+                .query_by_event_class(event_class, start, end, limit, Some(&filter))
+                .await
+            {
+                Ok(qr) if !qr.is_empty() => {
+                    debug!(
+                        user_count = user_names.len(),
+                        event_class = %event_class,
+                        count = qr.len(),
+                        "batch enrichment found events by users"
+                    );
+                    all_results.push(qr);
+                }
+                Ok(_) => {}
+                Err(e) => {
+                    warn!(
+                        user_count = user_names.len(),
+                        event_class = %event_class,
+                        error = %e,
+                        "batch enrichment query by users failed"
+                    );
+                }
+            }
+        }
+
+        if all_results.is_empty() {
+            QueryResult::empty()
+        } else {
+            QueryResult::concat(all_results)
+        }
+    }
+
+    /// Get all events involving a batch of IP addresses.
+    ///
+    /// Uses SQL `IN (...)` clauses to query multiple IPs per event class,
+    /// reducing Athena round-trips from `N_ips × 3` to just 3.
+    pub async fn enrich_ips_batch(
+        &self,
+        ip_addresses: &[String],
+        start: DateTime<Utc>,
+        end: DateTime<Utc>,
+        limit: usize,
+    ) -> QueryResult {
+        // Filter to valid IPs only
+        let valid_ips: Vec<&str> = ip_addresses
+            .iter()
+            .filter(|ip| validate_ipv4(ip).is_ok())
+            .map(String::as_str)
+            .collect();
+
+        if valid_ips.is_empty() {
+            return QueryResult::empty();
+        }
+
+        let in_list = valid_ips
+            .iter()
+            .map(|ip| format!("'{ip}'"))
+            .collect::<Vec<_>>()
+            .join(", ");
+
+        let mut all_results = Vec::new();
+
+        // NetworkActivity: match either src or dst endpoint
+        let net_filter = format!(
+            "(\"src_endpoint\".\"ip\" IN ({in_list}) OR \"dst_endpoint\".\"ip\" IN ({in_list}))"
+        );
+        match self
+            .connector
+            .query_by_event_class(
+                OCSFEventClass::NetworkActivity,
+                start,
+                end,
+                limit,
+                Some(&net_filter),
+            )
+            .await
+        {
+            Ok(qr) if !qr.is_empty() => all_results.push(qr),
+            Ok(_) => {}
+            Err(e) => {
+                warn!(ip_count = valid_ips.len(), error = %e, "batch network enrichment failed");
+            }
+        }
+
+        // ApiActivity + Authentication: source IP only
+        let src_filter = format!("\"src_endpoint\".\"ip\" IN ({in_list})");
+        for event_class in [OCSFEventClass::ApiActivity, OCSFEventClass::Authentication] {
+            match self
+                .connector
+                .query_by_event_class(event_class, start, end, limit, Some(&src_filter))
+                .await
+            {
+                Ok(qr) if !qr.is_empty() => {
+                    debug!(
+                        ip_count = valid_ips.len(),
+                        event_class = %event_class,
+                        count = qr.len(),
+                        "batch enrichment found events by IPs"
+                    );
+                    all_results.push(qr);
+                }
+                Ok(_) => {}
+                Err(e) => {
+                    warn!(
+                        ip_count = valid_ips.len(),
+                        event_class = %event_class,
+                        error = %e,
+                        "batch enrichment query by IPs failed"
+                    );
+                }
+            }
+        }
+
+        if all_results.is_empty() {
+            QueryResult::empty()
+        } else {
+            QueryResult::concat(all_results)
+        }
+    }
+
     /// Find all principals that have accessed from a specific IP.
     pub async fn find_related_principals(
         &self,
@@ -471,6 +626,80 @@ mod tests {
         let result = enricher
             .enrich_by_ip("not-an-ip", start, end, "both", 500)
             .await;
+        assert!(result.is_empty());
+    }
+
+    #[tokio::test]
+    async fn enrich_users_batch_combines_results() {
+        let api_rows = vec![
+            json_row!("actor.user.name" => "alice", "api.operation" => "GetObject"),
+            json_row!("actor.user.name" => "bob", "api.operation" => "PutObject"),
+        ];
+
+        let mock = MockSecurityLake::new().with_result(
+            OCSFEventClass::ApiActivity,
+            QueryResult::from_maps(api_rows),
+        );
+
+        let enricher = SecurityLakeEnricher::new(&mock);
+        let (start, end) = time_window();
+        let users = vec!["alice".to_string(), "bob".to_string()];
+        let result = enricher
+            .enrich_users_batch(&users, start, end, None, 500)
+            .await;
+
+        assert_eq!(result.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn enrich_users_batch_empty_input() {
+        let mock = MockSecurityLake::new();
+        let enricher = SecurityLakeEnricher::new(&mock);
+        let (start, end) = time_window();
+        let result = enricher
+            .enrich_users_batch(&[], start, end, None, 500)
+            .await;
+        assert!(result.is_empty());
+    }
+
+    #[tokio::test]
+    async fn enrich_ips_batch_filters_invalid() {
+        let net_rows =
+            vec![json_row!("src_endpoint.ip" => "10.0.0.1", "dst_endpoint.ip" => "8.8.8.8")];
+
+        let mock = MockSecurityLake::new().with_result(
+            OCSFEventClass::NetworkActivity,
+            QueryResult::from_maps(net_rows),
+        );
+
+        let enricher = SecurityLakeEnricher::new(&mock);
+        let (start, end) = time_window();
+        let ips = vec![
+            "10.0.0.1".to_string(),
+            "not-an-ip".to_string(),
+            "8.8.8.8".to_string(),
+        ];
+        let result = enricher.enrich_ips_batch(&ips, start, end, 500).await;
+
+        assert!(!result.is_empty());
+    }
+
+    #[tokio::test]
+    async fn enrich_ips_batch_empty_input() {
+        let mock = MockSecurityLake::new();
+        let enricher = SecurityLakeEnricher::new(&mock);
+        let (start, end) = time_window();
+        let result = enricher.enrich_ips_batch(&[], start, end, 500).await;
+        assert!(result.is_empty());
+    }
+
+    #[tokio::test]
+    async fn enrich_ips_batch_all_invalid() {
+        let mock = MockSecurityLake::new();
+        let enricher = SecurityLakeEnricher::new(&mock);
+        let (start, end) = time_window();
+        let ips = vec!["not-an-ip".to_string(), "also-bad".to_string()];
+        let result = enricher.enrich_ips_batch(&ips, start, end, 500).await;
         assert!(result.is_empty());
     }
 

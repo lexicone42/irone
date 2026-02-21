@@ -289,6 +289,27 @@ pub fn get_nested_value(data: &serde_json::Map<String, Value>, path: &str) -> Op
     }
 }
 
+/// Extract an array of JSON objects from OCSF event data using a dot-notation path.
+///
+/// Like [`get_nested_value`] but expects the target to be a JSON array,
+/// and returns only the elements that are JSON objects (non-object elements
+/// are silently skipped).
+#[must_use]
+pub fn get_nested_array(
+    data: &serde_json::Map<String, Value>,
+    path: &str,
+) -> Option<Vec<serde_json::Map<String, Value>>> {
+    let val = get_nested_value(data, path)?;
+    let arr = val.as_array()?;
+    let objects: Vec<serde_json::Map<String, Value>> =
+        arr.iter().filter_map(|v| v.as_object().cloned()).collect();
+    if objects.is_empty() {
+        None
+    } else {
+        Some(objects)
+    }
+}
+
 /// Extract a string value from OCSF event data, trying multiple paths.
 #[must_use]
 pub fn get_nested_str(data: &serde_json::Map<String, Value>, paths: &[&str]) -> Option<String> {
@@ -398,5 +419,36 @@ mod tests {
         data.insert("user_name".to_string(), json!("charlie"));
         let result = get_nested_str(&data, &["actor.user.name", "user_name"]);
         assert_eq!(result, Some("charlie".to_string()));
+    }
+
+    #[test]
+    fn get_nested_array_extracts_objects() {
+        let data: serde_json::Map<String, Value> = serde_json::from_str(
+            r#"{"resources": [{"uid": "arn:aws:s3:::bucket1", "type": "AWS::S3::Bucket"}, {"uid": "arn:aws:s3:::bucket2", "type": "AWS::S3::Bucket"}]}"#,
+        )
+        .unwrap();
+        let result = get_nested_array(&data, "resources").unwrap();
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0].get("uid").unwrap(), "arn:aws:s3:::bucket1");
+    }
+
+    #[test]
+    fn get_nested_array_skips_non_objects() {
+        let data: serde_json::Map<String, Value> =
+            serde_json::from_str(r#"{"tags": ["tag1", "tag2"]}"#).unwrap();
+        assert!(get_nested_array(&data, "tags").is_none());
+    }
+
+    #[test]
+    fn get_nested_array_missing_path() {
+        let data = serde_json::Map::new();
+        assert!(get_nested_array(&data, "resources").is_none());
+    }
+
+    #[test]
+    fn get_nested_array_empty_array() {
+        let data: serde_json::Map<String, Value> =
+            serde_json::from_str(r#"{"resources": []}"#).unwrap();
+        assert!(get_nested_array(&data, "resources").is_none());
     }
 }

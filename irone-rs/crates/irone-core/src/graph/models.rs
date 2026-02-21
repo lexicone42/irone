@@ -4,7 +4,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::connectors::ocsf::get_nested_str;
+use crate::connectors::ocsf::{get_nested_array, get_nested_str, get_nested_value};
 
 /// Types of nodes in the security graph.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -44,6 +44,8 @@ pub enum EdgeType {
     TriggeredBy,
     PerformedBy,
     Targeted,
+    CommunicatedWith,
+    ResolvedTo,
 }
 
 impl std::fmt::Display for EdgeType {
@@ -57,6 +59,8 @@ impl std::fmt::Display for EdgeType {
             Self::TriggeredBy => write!(f, "TRIGGERED_BY"),
             Self::PerformedBy => write!(f, "PERFORMED_BY"),
             Self::Targeted => write!(f, "TARGETED"),
+            Self::CommunicatedWith => write!(f, "COMMUNICATED_WITH"),
+            Self::ResolvedTo => write!(f, "RESOLVED_TO"),
         }
     }
 }
@@ -191,6 +195,89 @@ impl ResourceNode {
     #[must_use]
     pub fn create_id(resource_type: &str, resource_id: &str) -> String {
         format!("Resource:{resource_type}:{resource_id}")
+    }
+
+    /// Extract resources from an OCSF event's `resources[]` array.
+    ///
+    /// Each resource object is expected to have a `uid` field (often an ARN)
+    /// and optionally a `type` field. ARN-shaped UIDs are delegated to
+    /// [`Self::from_arn`]; non-ARN UIDs produce simpler resource nodes.
+    #[must_use]
+    pub fn from_ocsf(event: &serde_json::Map<String, Value>) -> Vec<(GraphNode, Self)> {
+        let Some(resources) = get_nested_array(event, "resources") else {
+            return Vec::new();
+        };
+
+        let mut results = Vec::new();
+        for res in &resources {
+            let uid = res
+                .get("uid")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty());
+
+            if let Some(uid) = uid {
+                if uid.starts_with("arn:") {
+                    if let Some(pair) = Self::from_arn(uid) {
+                        results.push(pair);
+                    }
+                } else {
+                    // Non-ARN resource UID
+                    let resource_type = res
+                        .get("type")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("unknown");
+                    let id = Self::create_id(resource_type, uid);
+                    let label = if uid.len() > 30 {
+                        format!("{}...", &uid[..30])
+                    } else {
+                        uid.to_string()
+                    };
+                    let node = GraphNode {
+                        id: id.clone(),
+                        node_type: NodeType::Resource,
+                        label,
+                        properties: HashMap::new(),
+                        first_seen: None,
+                        last_seen: None,
+                        event_count: 0,
+                    };
+                    let resource = Self {
+                        resource_type: resource_type.to_string(),
+                        resource_id: uid.to_string(),
+                        arn: None,
+                        region: get_nested_value(event, "cloud.region")
+                            .and_then(|v| v.as_str().map(String::from)),
+                        account_id: get_nested_value(event, "cloud.account.uid")
+                            .and_then(|v| v.as_str().map(String::from)),
+                    };
+                    results.push((node, resource));
+                }
+            }
+        }
+        results
+    }
+
+    /// Create a domain resource node from a hostname string.
+    #[must_use]
+    pub fn from_domain(hostname: &str) -> (GraphNode, Self) {
+        let id = Self::create_id("domain", hostname);
+        let node = GraphNode {
+            id: id.clone(),
+            node_type: NodeType::Resource,
+            label: hostname.to_string(),
+            properties: HashMap::new(),
+            first_seen: None,
+            last_seen: None,
+            event_count: 0,
+        };
+        let resource = Self {
+            resource_type: "domain".to_string(),
+            resource_id: hostname.to_string(),
+            arn: None,
+            region: None,
+            account_id: None,
+        };
+        (node, resource)
     }
 
     /// Create from an ARN string.
@@ -904,6 +991,82 @@ mod tests {
         assert_eq!(node.label, "s3:PutObject");
         assert_eq!(op.service, "s3");
         assert_eq!(op.operation, "PutObject");
+    }
+
+    #[test]
+    fn edge_type_communicated_with_display() {
+        assert_eq!(EdgeType::CommunicatedWith.to_string(), "COMMUNICATED_WITH");
+    }
+
+    #[test]
+    fn edge_type_resolved_to_display() {
+        assert_eq!(EdgeType::ResolvedTo.to_string(), "RESOLVED_TO");
+    }
+
+    #[test]
+    fn edge_type_new_variants_serde_roundtrip() {
+        let cw = EdgeType::CommunicatedWith;
+        let json = serde_json::to_string(&cw).unwrap();
+        assert_eq!(json, "\"COMMUNICATED_WITH\"");
+        let back: EdgeType = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, EdgeType::CommunicatedWith);
+
+        let rt = EdgeType::ResolvedTo;
+        let json = serde_json::to_string(&rt).unwrap();
+        assert_eq!(json, "\"RESOLVED_TO\"");
+        let back: EdgeType = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, EdgeType::ResolvedTo);
+    }
+
+    #[test]
+    fn resource_from_ocsf_extracts_arns() {
+        let mut event = serde_json::Map::new();
+        event.insert(
+            "resources".into(),
+            json!([
+                {"uid": "arn:aws:s3:::my-bucket", "type": "AWS::S3::Bucket"},
+                {"uid": "arn:aws:iam::123456789012:role/admin-role", "type": "AWS::IAM::Role"}
+            ]),
+        );
+
+        let results = ResourceNode::from_ocsf(&event);
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].1.resource_type, "s3");
+        assert_eq!(results[0].1.resource_id, "my-bucket");
+        assert_eq!(results[1].1.resource_type, "role");
+        assert_eq!(results[1].1.resource_id, "admin-role");
+    }
+
+    #[test]
+    fn resource_from_ocsf_handles_non_arn_uid() {
+        let mut event = serde_json::Map::new();
+        event.insert(
+            "resources".into(),
+            json!([{"uid": "i-0123456789abcdef0", "type": "AWS::EC2::Instance"}]),
+        );
+
+        let results = ResourceNode::from_ocsf(&event);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].1.resource_type, "AWS::EC2::Instance");
+        assert_eq!(results[0].1.resource_id, "i-0123456789abcdef0");
+        assert!(results[0].1.arn.is_none());
+    }
+
+    #[test]
+    fn resource_from_ocsf_empty_resources() {
+        let event = serde_json::Map::new();
+        let results = ResourceNode::from_ocsf(&event);
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn resource_from_domain() {
+        let (node, resource) = ResourceNode::from_domain("evil.example.com");
+        assert_eq!(node.node_type, NodeType::Resource);
+        assert_eq!(node.label, "evil.example.com");
+        assert_eq!(resource.resource_type, "domain");
+        assert_eq!(resource.resource_id, "evil.example.com");
+        assert!(resource.arn.is_none());
     }
 
     #[test]

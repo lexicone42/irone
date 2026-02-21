@@ -7,9 +7,9 @@ use tracing::{debug, info};
 use super::enrichment::SecurityLakeEnricher;
 use super::models::{
     APIOperationNode, EdgeType, GraphEdge, GraphNode, IPAddressNode, NodeType, PrincipalNode,
-    SecurityFindingNode, SecurityGraph,
+    ResourceNode, SecurityFindingNode, SecurityGraph,
 };
-use crate::connectors::ocsf::{SecurityLakeQueries, get_nested_value};
+use crate::connectors::ocsf::{SecurityLakeQueries, get_nested_str, get_nested_value};
 use crate::connectors::result::QueryResult;
 use crate::detections::DetectionResult;
 
@@ -95,6 +95,8 @@ impl GraphBuilder {
             users = identifiers.users.len(),
             ips = identifiers.ips.len(),
             operations = identifiers.operations.len(),
+            arns = identifiers.arns.len(),
+            domains = identifiers.domains.len(),
             "extracted identifiers"
         );
 
@@ -243,6 +245,22 @@ impl GraphBuilder {
             {
                 ids.services.insert(s.to_string());
             }
+
+            // Resource ARNs from resources[] array
+            if let Some(resources) = crate::connectors::ocsf::get_nested_array(m, "resources") {
+                for res in &resources {
+                    if let Some(uid) = res.get("uid").and_then(|v| v.as_str())
+                        && uid.starts_with("arn:")
+                    {
+                        ids.arns.insert(uid.to_string());
+                    }
+                }
+            }
+
+            // DNS hostnames
+            if let Some(hostname) = get_nested_str(m, &["query.hostname", "dns.query.hostname"]) {
+                ids.domains.insert(hostname);
+            }
         }
 
         ids
@@ -282,6 +300,15 @@ impl GraphBuilder {
                 self.add_edge(EdgeType::CalledApi, pid, aid, event_time);
             }
 
+            // Resource nodes from resources[] array
+            let resource_ids = self.add_resources_from_ocsf(m, event_time);
+            for rid in &resource_ids {
+                self.add_edge(EdgeType::RelatedTo, rid, finding_id, event_time);
+                if let Some(aid) = &api_id {
+                    self.add_edge(EdgeType::AccessedResource, aid, rid, event_time);
+                }
+            }
+
             // Event node
             if include_events {
                 let event_id = self.add_event_from_ocsf(m, event_time);
@@ -291,9 +318,17 @@ impl GraphBuilder {
     }
 
     /// Process enrichment query results, creating nodes and edges.
+    ///
+    /// Routes events to appropriate extractors based on OCSF `class_uid`:
+    /// - `4001` (`NetworkActivity`) → `add_network_flow_from_ocsf` for `CommunicatedWith` edges
+    /// - `4003` (`DnsActivity`) → `add_dns_from_ocsf` for domain Resource nodes
+    /// - All events → `add_resources_from_ocsf` for resource extraction
     fn process_query_result(&mut self, qr: &QueryResult, include_events: bool) {
         for record in qr.rows() {
             let event_time = parse_timestamp(record.get("time_dt"));
+
+            #[allow(clippy::cast_possible_truncation)] // OCSF class_uid is always u16-range
+            let class_uid = record.get("class_uid").and_then(Value::as_u64).unwrap_or(0) as u32;
 
             let principal_id = self.add_principal_from_ocsf(record, event_time);
 
@@ -304,19 +339,39 @@ impl GraphBuilder {
                 self.add_edge(EdgeType::AuthenticatedFrom, pid, iid, event_time);
             }
 
-            // Destination IP
-            let dst_ip_id = self.add_ip_from_ocsf(record, "dst_endpoint.ip", event_time);
-
-            if let (Some(sid), Some(did)) = (&src_ip_id, &dst_ip_id)
-                && sid != did
-            {
-                self.add_edge(EdgeType::RelatedTo, sid, did, event_time);
+            // Class-specific processing
+            match class_uid {
+                4001 => {
+                    // NetworkActivity: create CommunicatedWith edge with flow metadata
+                    self.add_network_flow_from_ocsf(record, event_time);
+                }
+                4003 => {
+                    // DnsActivity: create domain Resource node
+                    self.add_dns_from_ocsf(record, event_time);
+                }
+                _ => {
+                    // Default: extract dst IP with generic RelatedTo
+                    let dst_ip_id = self.add_ip_from_ocsf(record, "dst_endpoint.ip", event_time);
+                    if let (Some(sid), Some(did)) = (&src_ip_id, &dst_ip_id)
+                        && sid != did
+                    {
+                        self.add_edge(EdgeType::RelatedTo, sid, did, event_time);
+                    }
+                }
             }
 
             // API operation
             let api_id = self.add_api_from_ocsf(record, event_time);
             if let (Some(pid), Some(aid)) = (&principal_id, &api_id) {
                 self.add_edge(EdgeType::CalledApi, pid, aid, event_time);
+            }
+
+            // Resource extraction for all events
+            let resource_ids = self.add_resources_from_ocsf(record, event_time);
+            for rid in &resource_ids {
+                if let Some(aid) = &api_id {
+                    self.add_edge(EdgeType::AccessedResource, aid, rid, event_time);
+                }
             }
 
             // Event node
@@ -423,6 +478,98 @@ impl GraphBuilder {
         id
     }
 
+    /// Extract resource nodes from an OCSF event's `resources[]` array.
+    ///
+    /// Returns the IDs of all created resource nodes.
+    fn add_resources_from_ocsf(
+        &mut self,
+        event: &serde_json::Map<String, Value>,
+        event_time: DateTime<Utc>,
+    ) -> Vec<String> {
+        let pairs = ResourceNode::from_ocsf(event);
+        let mut ids = Vec::with_capacity(pairs.len());
+        for (mut node, _resource) in pairs {
+            node.update_timestamps(event_time);
+            let id = node.id.clone();
+            self.graph.add_node(node);
+            ids.push(id);
+        }
+        ids
+    }
+
+    /// Create a `CommunicatedWith` edge from a network flow OCSF event.
+    ///
+    /// Extracts src/dst endpoints and creates a directional edge with
+    /// port, protocol, and byte count properties.
+    fn add_network_flow_from_ocsf(
+        &mut self,
+        event: &serde_json::Map<String, Value>,
+        event_time: DateTime<Utc>,
+    ) {
+        let src_ip_id = self.add_ip_from_ocsf(event, "src_endpoint.ip", event_time);
+        let dst_ip_id = self.add_ip_from_ocsf(event, "dst_endpoint.ip", event_time);
+
+        if let (Some(sid), Some(did)) = (&src_ip_id, &dst_ip_id)
+            && sid != did
+        {
+            let edge_id = GraphEdge::create_id(&EdgeType::CommunicatedWith, sid, did);
+            let mut properties = HashMap::new();
+
+            // Extract port/protocol/bytes metadata
+            if let Some(port) = get_nested_value(event, "dst_endpoint.port") {
+                properties.insert("dst_port".into(), port);
+            }
+            if let Some(proto) = get_nested_value(event, "connection_info.protocol_name")
+                .or_else(|| get_nested_value(event, "protocol_name"))
+            {
+                properties.insert("protocol".into(), proto);
+            }
+            if let Some(bytes_in) = get_nested_value(event, "traffic.bytes_in") {
+                properties.insert("bytes_in".into(), bytes_in);
+            }
+            if let Some(bytes_out) = get_nested_value(event, "traffic.bytes_out") {
+                properties.insert("bytes_out".into(), bytes_out);
+            }
+
+            let edge = GraphEdge {
+                id: edge_id,
+                edge_type: EdgeType::CommunicatedWith,
+                source_id: sid.clone(),
+                target_id: did.clone(),
+                properties,
+                weight: 1.0,
+                first_seen: Some(event_time),
+                last_seen: Some(event_time),
+                event_count: 1,
+            };
+            self.graph.add_edge(edge);
+        }
+    }
+
+    /// Extract a DNS domain from an OCSF DNS activity event.
+    ///
+    /// Creates a domain Resource node and links it to the source IP
+    /// via a `ResolvedTo` edge.
+    fn add_dns_from_ocsf(
+        &mut self,
+        event: &serde_json::Map<String, Value>,
+        event_time: DateTime<Utc>,
+    ) -> Option<String> {
+        let hostname = get_nested_str(event, &["query.hostname", "dns.query.hostname"])?;
+
+        let (mut node, _resource) = ResourceNode::from_domain(&hostname);
+        node.update_timestamps(event_time);
+        let domain_id = node.id.clone();
+        self.graph.add_node(node);
+
+        // Link source IP -> domain via ResolvedTo
+        if let Some(src_ip_id) = self.add_ip_from_ocsf(event, "src_endpoint.ip", event_time) {
+            self.add_edge(EdgeType::ResolvedTo, &src_ip_id, &domain_id, event_time);
+        }
+
+        Some(domain_id)
+    }
+
     /// Add an edge to the graph.
     fn add_edge(
         &mut self,
@@ -446,10 +593,11 @@ impl GraphBuilder {
         self.graph.add_edge(edge);
     }
 
-    /// Run all enrichment queries in parallel, returning results.
+    /// Run batched enrichment queries for users and IPs in parallel.
     ///
-    /// Queries for all users and IPs run concurrently via `futures::future::join_all`,
-    /// then the caller processes results sequentially into the graph.
+    /// Uses `IN (...)` clauses to batch multiple entities per query,
+    /// reducing Athena round-trips from `(N_users + N_ips) × 3` to just 6
+    /// (3 event classes × 2 entity types).
     async fn run_enrichment_parallel<S: SecurityLakeQueries>(
         enricher: &SecurityLakeEnricher<'_, S>,
         identifiers: &ExtractedIdentifiers,
@@ -457,32 +605,32 @@ impl GraphBuilder {
         end: DateTime<Utc>,
         limit: usize,
     ) -> Vec<QueryResult> {
-        let user_futures = identifiers.users.iter().take(10).map(|user| {
-            let user = user.clone();
-            async move {
-                let qr = enricher
-                    .enrich_by_user(&user, start, end, None, limit)
-                    .await;
-                if !qr.is_empty() {
-                    debug!(user = %user, events = qr.len(), "enriched by user");
-                }
-                qr
-            }
-        });
+        let users: Vec<String> = identifiers.users.iter().take(10).cloned().collect();
+        let ips: Vec<String> = identifiers.ips.iter().take(10).cloned().collect();
 
-        let ip_futures = identifiers.ips.iter().take(10).map(|ip| {
-            let ip = ip.clone();
-            async move {
-                let qr = enricher.enrich_by_ip(&ip, start, end, "both", limit).await;
-                if !qr.is_empty() {
-                    debug!(ip = %ip, events = qr.len(), "enriched by IP");
-                }
-                qr
-            }
-        });
+        debug!(
+            users = users.len(),
+            ips = ips.len(),
+            "running batched enrichment"
+        );
 
-        let mut results = futures::future::join_all(user_futures).await;
-        results.extend(futures::future::join_all(ip_futures).await);
+        let (user_result, ip_result) = futures::join!(
+            enricher.enrich_users_batch(&users, start, end, None, limit),
+            enricher.enrich_ips_batch(&ips, start, end, limit),
+        );
+
+        let mut results = Vec::new();
+        if !user_result.is_empty() {
+            debug!(
+                events = user_result.len(),
+                "batched user enrichment complete"
+            );
+            results.push(user_result);
+        }
+        if !ip_result.is_empty() {
+            debug!(events = ip_result.len(), "batched IP enrichment complete");
+            results.push(ip_result);
+        }
         results
     }
 }
@@ -494,6 +642,8 @@ struct ExtractedIdentifiers {
     ips: HashSet<String>,
     operations: HashSet<String>,
     services: HashSet<String>,
+    arns: HashSet<String>,
+    domains: HashSet<String>,
 }
 
 /// Parse a timestamp from a JSON value (ISO-8601 string or epoch).
@@ -754,6 +904,168 @@ mod tests {
         // Should be recent (within last second)
         let diff = Utc::now() - ts;
         assert!(diff.num_seconds() < 2);
+    }
+
+    #[test]
+    fn extract_identifiers_finds_arns_and_domains() {
+        let matches = vec![
+            {
+                let mut m = serde_json::Map::new();
+                m.insert("actor.user.name".into(), json!("alice"));
+                m.insert(
+                    "resources".into(),
+                    json!([{"uid": "arn:aws:s3:::my-bucket", "type": "AWS::S3::Bucket"}]),
+                );
+                m
+            },
+            {
+                let mut m = serde_json::Map::new();
+                m.insert("query.hostname".into(), json!("evil.example.com"));
+                m
+            },
+        ];
+
+        let ids = GraphBuilder::extract_identifiers(&matches);
+        assert!(ids.arns.contains("arn:aws:s3:::my-bucket"));
+        assert!(ids.domains.contains("evil.example.com"));
+    }
+
+    #[test]
+    fn process_matches_creates_resource_nodes() {
+        let matches = vec![{
+            let mut m = serde_json::Map::new();
+            m.insert("actor.user.name".into(), json!("alice"));
+            m.insert("api.operation".into(), json!("PutObject"));
+            m.insert("api.service.name".into(), json!("s3"));
+            m.insert(
+                "resources".into(),
+                json!([{"uid": "arn:aws:s3:::my-bucket", "type": "AWS::S3::Bucket"}]),
+            );
+            m.insert("time_dt".into(), json!("2024-01-15T10:30:00Z"));
+            m
+        }];
+
+        let mut builder = GraphBuilder::new();
+        // Create a finding node first
+        let finding_id = "Finding:TEST:20240115103000";
+        builder.graph.add_node(GraphNode {
+            id: finding_id.into(),
+            node_type: NodeType::SecurityFinding,
+            label: "Test".into(),
+            properties: HashMap::new(),
+            first_seen: None,
+            last_seen: None,
+            event_count: 0,
+        });
+
+        builder.process_matches(&matches, finding_id, false);
+
+        let resources = builder.graph.get_nodes_by_type(&NodeType::Resource);
+        assert_eq!(resources.len(), 1, "expected 1 resource node");
+
+        // Check AccessedResource edge from API op to resource
+        let accessed_edges: Vec<_> = builder
+            .graph
+            .edges
+            .iter()
+            .filter(|e| e.edge_type == EdgeType::AccessedResource)
+            .collect();
+        assert_eq!(accessed_edges.len(), 1);
+    }
+
+    #[test]
+    fn process_query_result_network_activity_creates_communicated_with() {
+        let mut builder = GraphBuilder::new();
+        let records = vec![json_row!(
+            "class_uid" => 4001_u64,
+            "src_endpoint.ip" => "10.0.0.1",
+            "dst_endpoint.ip" => "8.8.8.8",
+            "dst_endpoint.port" => 443_u64,
+            "connection_info.protocol_name" => "TCP",
+            "time_dt" => "2024-01-15T10:30:00Z"
+        )];
+
+        let qr = QueryResult::from_maps(records);
+        builder.process_query_result(&qr, false);
+
+        // Should have CommunicatedWith edge, not RelatedTo
+        let cw_edges: Vec<_> = builder
+            .graph
+            .edges
+            .iter()
+            .filter(|e| e.edge_type == EdgeType::CommunicatedWith)
+            .collect();
+        assert_eq!(cw_edges.len(), 1);
+        assert_eq!(
+            cw_edges[0].properties.get("dst_port"),
+            Some(&json!(443_u64))
+        );
+        assert_eq!(cw_edges[0].properties.get("protocol"), Some(&json!("TCP")));
+
+        // Should NOT have RelatedTo between the IPs
+        let rt_edges: Vec<_> = builder
+            .graph
+            .edges
+            .iter()
+            .filter(|e| e.edge_type == EdgeType::RelatedTo)
+            .collect();
+        assert!(rt_edges.is_empty());
+    }
+
+    #[test]
+    fn process_query_result_dns_activity_creates_domain_node() {
+        let mut builder = GraphBuilder::new();
+        let records = vec![json_row!(
+            "class_uid" => 4003_u64,
+            "query.hostname" => "evil.example.com",
+            "src_endpoint.ip" => "10.0.0.5",
+            "time_dt" => "2024-01-15T10:30:00Z"
+        )];
+
+        let qr = QueryResult::from_maps(records);
+        builder.process_query_result(&qr, false);
+
+        // Should have a domain Resource node
+        let resources = builder.graph.get_nodes_by_type(&NodeType::Resource);
+        assert_eq!(resources.len(), 1);
+        assert_eq!(resources[0].label, "evil.example.com");
+
+        // Should have ResolvedTo edge
+        let rt_edges: Vec<_> = builder
+            .graph
+            .edges
+            .iter()
+            .filter(|e| e.edge_type == EdgeType::ResolvedTo)
+            .collect();
+        assert_eq!(rt_edges.len(), 1);
+    }
+
+    #[test]
+    fn process_query_result_enrichment_resources() {
+        let mut builder = GraphBuilder::new();
+        let records = vec![json_row!(
+            "class_uid" => 6003_u64,
+            "actor.user.name" => "alice",
+            "api.operation" => "GetObject",
+            "api.service.name" => "s3",
+            "resources" => json!([{"uid": "arn:aws:s3:::data-bucket", "type": "AWS::S3::Bucket"}]),
+            "time_dt" => "2024-01-15T10:30:00Z"
+        )];
+
+        let qr = QueryResult::from_maps(records);
+        builder.process_query_result(&qr, false);
+
+        let resources = builder.graph.get_nodes_by_type(&NodeType::Resource);
+        assert_eq!(resources.len(), 1);
+
+        // Check AccessedResource edge
+        let accessed: Vec<_> = builder
+            .graph
+            .edges
+            .iter()
+            .filter(|e| e.edge_type == EdgeType::AccessedResource)
+            .collect();
+        assert_eq!(accessed.len(), 1);
     }
 
     #[test]
