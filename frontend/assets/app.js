@@ -149,22 +149,6 @@ function detectionsApp() {
         detectionResult: null,
         investigating: false,
 
-        // Server query explorer state
-        sql: "",
-        queryResult: null,
-        querying: false,
-        queryError: null,
-
-        // DuckDB-WASM local query state
-        wasmReady: false,
-        wasmError: null,
-        wasmDb: null,
-        wasmConn: null,
-        localSql: "",
-        localResult: null,
-        localQuerying: false,
-        localError: null,
-
         async init() {
             try {
                 this.rules = await apiFetch("/rules?enabled_only=false");
@@ -173,8 +157,6 @@ function detectionsApp() {
             } finally {
                 this.loading = false;
             }
-            // Initialize DuckDB-WASM in background (non-blocking)
-            this.initWasm();
         },
 
         async runDetection(ruleId) {
@@ -209,7 +191,7 @@ function detectionsApp() {
                 if (resp.triggered && resp.investigation_id) {
                     window.location.href = `/investigations.html#${resp.investigation_id}`;
                 } else if (!resp.triggered) {
-                    this.error = "Detection did not trigger — no investigation created";
+                    this.error = "Detection did not trigger \u2014 no investigation created";
                 } else {
                     this.error = resp.error || "Investigation not created";
                 }
@@ -224,79 +206,40 @@ function detectionsApp() {
             this.detectionResult = null;
         },
 
-        async initWasm() {
-            try {
-                /* global duckdb */
-                if (typeof duckdb === "undefined") {
-                    this.wasmError = "DuckDB-WASM not loaded";
-                    return;
-                }
-                const JSDELIVR_BUNDLES = duckdb.getJsDelivrBundles();
-                const bundle = await duckdb.selectBundle(JSDELIVR_BUNDLES);
-                const worker = new Worker(bundle.mainWorker);
-                const logger = new duckdb.ConsoleLogger();
-                this.wasmDb = new duckdb.AsyncDuckDB(logger, worker);
-                await this.wasmDb.instantiate(bundle.mainModule, bundle.pthreadWorker);
-                this.wasmConn = await this.wasmDb.connect();
-                this.wasmReady = true;
-            } catch (e) {
-                this.wasmError = "Failed to load DuckDB-WASM: " + e.message;
-            }
+        // Extract a dot-path value from nested OCSF objects (e.g. "actor.user.name")
+        extractNested(obj, path) {
+            return path.split(".").reduce((o, k) => (o && o[k] != null ? o[k] : null), obj);
         },
 
-        async runQuery() {
-            if (!this.sql.trim()) return;
-            this.querying = true;
-            this.queryError = null;
-            this.queryResult = null;
+        // Format match timestamp for display
+        formatMatchTime(t) {
+            if (!t) return "\u2014";
             try {
-                this.queryResult = await apiFetch("/query", {
-                    method: "POST",
-                    body: JSON.stringify({ sql: this.sql }),
-                });
-                if (this.queryResult.error) {
-                    this.queryError = this.queryResult.error;
-                    this.queryResult = null;
-                } else if (this.wasmReady && this.queryResult.rows.length > 0) {
-                    // Auto-load server results into DuckDB-WASM as "results" table
-                    await this.loadResultsIntoWasm(this.queryResult);
-                }
-            } catch (e) {
-                this.queryError = e.message;
-            } finally {
-                this.querying = false;
-            }
-        },
-
-        async loadResultsIntoWasm(result) {
-            if (!this.wasmConn || !result.rows || result.rows.length === 0) return;
-            try {
-                const json = JSON.stringify(result.rows);
-                await this.wasmDb.registerFileText("results.json", json);
-                await this.wasmConn.query("DROP TABLE IF EXISTS results");
-                await this.wasmConn.query(
-                    "CREATE TABLE results AS SELECT * FROM read_json_auto('results.json')"
-                );
+                const d = new Date(typeof t === "number" && t > 1e12 ? t : t);
+                return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
             } catch {
-                // Non-critical — local query just won't work for this result set
+                return String(t).substring(0, 19);
             }
         },
 
-        async runLocalQuery() {
-            if (!this.localSql.trim() || !this.wasmConn) return;
-            this.localQuerying = true;
-            this.localError = null;
-            this.localResult = null;
-            try {
-                const arrow = await this.wasmConn.query(this.localSql);
-                const rows = arrow.toArray().map((r) => r.toJSON());
-                const columns = arrow.schema.fields.map((f) => f.name);
-                this.localResult = { columns, rows, row_count: rows.length };
-            } catch (e) {
-                this.localError = e.message;
-            } finally {
-                this.localQuerying = false;
+        // Format execution time nicely
+        formatExecTime(ms) {
+            if (ms == null) return "\u2014";
+            if (ms < 1) return (ms * 1000).toFixed(0) + "\u00b5s";
+            if (ms < 1000) return ms.toFixed(1) + "ms";
+            return (ms / 1000).toFixed(2) + "s";
+        },
+
+        // Extract resource info from OCSF match
+        extractResources(m) {
+            const resources = m.resources;
+            if (Array.isArray(resources) && resources.length > 0) {
+                return resources.map(r => r.name || r.uid || r.type || "").filter(Boolean).join(", ");
             }
+            const apiOp = this.extractNested(m, "api.operation");
+            const svc = this.extractNested(m, "api.service.name");
+            if (svc && apiOp) return svc + ":" + apiOp;
+            return null;
         },
 
         severityClass(severity) {

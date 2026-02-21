@@ -131,17 +131,25 @@ async fn run_detection(
     Json(body): Json<RunDetectionRequest>,
 ) -> Result<Json<DetectionResponse>, WebError> {
     // Check rule exists before building a connector
-    if state.runner.get_rule(&rule_id).is_none() {
-        return Err(WebError::NotFound(format!("rule '{rule_id}' not found")));
-    }
+    let rule = state
+        .runner
+        .get_rule(&rule_id)
+        .ok_or_else(|| WebError::NotFound(format!("rule '{rule_id}' not found")))?;
+    let rule_data_sources = rule.metadata().data_sources.clone();
 
-    // Resolve source: explicit name or first Security Lake source
+    // Resolve source: explicit name, rule's preferred data_source, or first SL source
     let catalog = state.catalog.read().await;
     let source = if let Some(ref name) = body.source_name {
         catalog
             .get_source(name)
             .cloned()
             .ok_or_else(|| WebError::NotFound(format!("source '{name}' not found")))?
+    } else if let Some(preferred) = rule_data_sources.first() {
+        catalog.get_source(preferred).cloned().ok_or_else(|| {
+            WebError::BadRequest(format!(
+                "rule requires source '{preferred}' but it is not registered"
+            ))
+        })?
     } else {
         catalog
             .filter_by_tag("security-lake")
