@@ -272,27 +272,47 @@ function sourcesApp() {
 
 // ─── Investigations ──────────────────────────────────────────────
 
-// Node type → Cytoscape.js style (matches server-side visualization.py)
+// Tag color mapping (matches server-side TAG_COLORS in timeline.rs)
+const TAG_COLORS = {
+    unreviewed:          "#636D87",
+    important:           "#FFB224",
+    suspicious:          "#FF4D6A",
+    benign:              "#00D4AA",
+    attack_phase:        "#FF4D6A",
+    initial_access:      "#FF4D6A",
+    persistence:         "#A78BFA",
+    privilege_escalation:"#FF4D6A",
+    lateral_movement:    "#FB923C",
+    data_exfiltration:   "#FF4D6A",
+    impact:              "#A78BFA",
+};
+
+const SUSPICIOUS_TAGS = new Set([
+    "suspicious", "attack_phase", "initial_access", "persistence",
+    "privilege_escalation", "lateral_movement", "data_exfiltration", "impact"
+]);
+
+// Node type → Cytoscape.js style
 const NODE_STYLES = {
-    Principal:       { color: "#FF6B6B", shape: "ellipse" },
-    IPAddress:       { color: "#4ECDC4", shape: "diamond" },
-    Resource:        { color: "#45B7D1", shape: "rectangle" },
-    APIOperation:    { color: "#96CEB4", shape: "triangle" },
-    SecurityFinding: { color: "#FF4757", shape: "star" },
-    Event:           { color: "#A8A8A8", shape: "ellipse" },
+    Principal:       { color: "#FF4D6A", shape: "ellipse" },
+    IPAddress:       { color: "#00D4AA", shape: "diamond" },
+    Resource:        { color: "#4D9BFF", shape: "round-rectangle" },
+    APIOperation:    { color: "#7DD3A0", shape: "triangle" },
+    SecurityFinding: { color: "#FF4D6A", shape: "star" },
+    Event:           { color: "#636D87", shape: "ellipse" },
 };
 
 const EDGE_STYLES = {
-    AUTHENTICATED_FROM: "#FF6B6B",
-    CALLED_API:         "#96CEB4",
-    ACCESSED_RESOURCE:  "#45B7D1",
-    ORIGINATED_FROM:    "#4ECDC4",
-    RELATED_TO:         "#888888",
-    TRIGGERED_BY:       "#FF4757",
-    PERFORMED_BY:       "#FF6B6B",
-    TARGETED:           "#45B7D1",
-    COMMUNICATED_WITH:  "#F39C12",
-    RESOLVED_TO:        "#9B59B6",
+    AUTHENTICATED_FROM: "#FF4D6A",
+    CALLED_API:         "#7DD3A0",
+    ACCESSED_RESOURCE:  "#4D9BFF",
+    ORIGINATED_FROM:    "#00D4AA",
+    RELATED_TO:         "#3D4663",
+    TRIGGERED_BY:       "#FF4D6A",
+    PERFORMED_BY:       "#FF4D6A",
+    TARGETED:           "#4D9BFF",
+    COMMUNICATED_WITH:  "#FB923C",
+    RESOLVED_TO:        "#A78BFA",
 };
 
 function investigationsApp() {
@@ -316,12 +336,32 @@ function investigationsApp() {
         reportData: null,
         reportLoading: false,
 
+        // Timeline
+        timelineData: null,
+        timelineLoading: false,
+        timelineFilter: "all",   // "all" | "suspicious" | "unreviewed"
+        selectedTimelineEvent: null,
+
+        // Source dropdown
+        availableSources: [],
+        newSourceName: "",
+
         async init() {
             await this.loadList();
+            this.loadSources();
             // Deep-link: open investigation from URL hash (e.g. #inv-abc123)
             const hash = window.location.hash.slice(1);
             if (hash && hash.startsWith("inv-")) {
                 await this.openDetail(hash);
+            }
+        },
+
+        async loadSources() {
+            try {
+                this.availableSources = await apiFetch("/sources");
+            } catch {
+                // Sources are optional — if endpoint fails, dropdown won't show
+                this.availableSources = [];
             }
         },
 
@@ -343,13 +383,16 @@ function investigationsApp() {
             try {
                 const users = this.newUsers.split(",").map((s) => s.trim()).filter(Boolean);
                 const ips = this.newIps.split(",").map((s) => s.trim()).filter(Boolean);
+                const payload = { name: this.newName, users, ips };
+                if (this.newSourceName) payload.source_name = this.newSourceName;
                 const inv = await apiFetch("/investigations", {
                     method: "POST",
-                    body: JSON.stringify({ name: this.newName, users, ips }),
+                    body: JSON.stringify(payload),
                 });
                 this.newName = "";
                 this.newUsers = "";
                 this.newIps = "";
+                this.newSourceName = "";
                 await this.loadList();
                 await this.openDetail(inv.id);
             } catch (e) {
@@ -363,10 +406,16 @@ function investigationsApp() {
             this.detailLoading = true;
             this.detailTab = "graph";
             this.reportData = null;
+            this.timelineData = null;
+            this.selectedTimelineEvent = null;
+            this.timelineFilter = "all";
             this.error = null;
             try {
                 this.activeInv = await apiFetch(`/investigations/${invId}`);
-                const graphResp = await apiFetch(`/investigations/${invId}/graph`);
+                const [graphResp] = await Promise.all([
+                    apiFetch(`/investigations/${invId}/graph`),
+                    this.loadTimeline(invId),
+                ]);
                 this.graphData = graphResp;
                 this.$nextTick(() => this.renderGraph(graphResp.elements));
             } catch (e) {
@@ -420,17 +469,23 @@ function investigationsApp() {
                             label: "data(label)",
                             "text-valign": "bottom",
                             "text-halign": "center",
+                            "font-family": "Inter, sans-serif",
                             "font-size": "10px",
-                            color: "#c9d1d9",
-                            "text-outline-color": "#0d1117",
-                            "text-outline-width": 1,
+                            color: "#E1E4ED",
+                            "text-outline-color": "#0B0E14",
+                            "text-outline-width": 2,
                             "background-color": (ele) => {
                                 const s = NODE_STYLES[ele.data("node_type")];
-                                return s ? s.color : "#888";
+                                return s ? s.color : "#636D87";
                             },
                             shape: (ele) => {
                                 const s = NODE_STYLES[ele.data("node_type")];
                                 return s ? s.shape : "ellipse";
+                            },
+                            "border-width": 2,
+                            "border-color": (ele) => {
+                                const s = NODE_STYLES[ele.data("node_type")];
+                                return s ? s.color + "66" : "#636D8766";
                             },
                             width: (ele) => Math.max(20, Math.min(60, 15 + ele.data("event_count") * 3)),
                             height: (ele) => Math.max(20, Math.min(60, 15 + ele.data("event_count") * 3)),
@@ -443,8 +498,8 @@ function investigationsApp() {
                                 const ec = ele.data("event_count") || 1;
                                 return Math.max(1, Math.min(8, 1 + Math.log2(ec)));
                             },
-                            "line-color": (ele) => EDGE_STYLES[ele.data("edge_type")] || "#888",
-                            "target-arrow-color": (ele) => EDGE_STYLES[ele.data("edge_type")] || "#888",
+                            "line-color": (ele) => EDGE_STYLES[ele.data("edge_type")] || "#3D4663",
+                            "target-arrow-color": (ele) => EDGE_STYLES[ele.data("edge_type")] || "#3D4663",
                             "target-arrow-shape": "triangle",
                             "curve-style": "bezier",
                             opacity: 0.7,
@@ -466,8 +521,8 @@ function investigationsApp() {
                     {
                         selector: "edge:selected",
                         style: {
-                            "line-color": "#00ff9c",
-                            "target-arrow-color": "#00ff9c",
+                            "line-color": "#4D9BFF",
+                            "target-arrow-color": "#4D9BFF",
                             width: (ele) => {
                                 const ec = ele.data("event_count") || 1;
                                 return Math.max(2, Math.min(10, 2 + Math.log2(ec)));
@@ -479,7 +534,9 @@ function investigationsApp() {
                         selector: "node:selected",
                         style: {
                             "border-width": 3,
-                            "border-color": "#00ff9c",
+                            "border-color": "#4D9BFF",
+                            "overlay-color": "#4D9BFF",
+                            "overlay-opacity": 0.1,
                         },
                     },
                 ],
@@ -487,18 +544,36 @@ function investigationsApp() {
                 wheelSensitivity: 0.3,
             });
 
-            // Click handler: show node details
+            // Click handler: show node details + sync timeline
             this.cy.on("tap", "node", (evt) => {
                 const data = evt.target.data();
                 this.selectedNode = data;
                 this.selectedEdge = null;
+                // Find matching timeline events for this node
+                if (this.timelineData?.events && data.id) {
+                    const match = this.timelineData.events.find(
+                        e => e.entity_id === data.id
+                    );
+                    if (match) {
+                        this.selectedTimelineEvent = match;
+                    }
+                }
             });
 
-            // Click handler: show edge details
+            // Click handler: show edge details + sync timeline
             this.cy.on("tap", "edge", (evt) => {
                 const data = evt.target.data();
                 this.selectedEdge = data;
                 this.selectedNode = null;
+                // Find matching timeline events for this edge
+                if (this.timelineData?.events && data.id) {
+                    const match = this.timelineData.events.find(
+                        e => e.entity_id === data.id
+                    );
+                    if (match) {
+                        this.selectedTimelineEvent = match;
+                    }
+                }
             });
 
             // Click background to deselect
@@ -506,8 +581,101 @@ function investigationsApp() {
                 if (evt.target === this.cy) {
                     this.selectedNode = null;
                     this.selectedEdge = null;
+                    this.selectedTimelineEvent = null;
                 }
             });
+        },
+
+        // ─── Timeline methods ──────────────────────────
+
+        async loadTimeline(invId) {
+            this.timelineLoading = true;
+            try {
+                this.timelineData = await apiFetch(`/investigations/${invId || this.activeInv?.id}/timeline`);
+            } catch (e) {
+                console.warn("Timeline load failed:", e);
+                this.timelineData = null;
+            } finally {
+                this.timelineLoading = false;
+            }
+        },
+
+        filteredTimeline() {
+            if (!this.timelineData?.events) return [];
+            const events = this.timelineData.events;
+            if (this.timelineFilter === "all") return events;
+            if (this.timelineFilter === "suspicious") {
+                return events.filter(e => SUSPICIOUS_TAGS.has(e.tag));
+            }
+            if (this.timelineFilter === "unreviewed") {
+                return events.filter(e => !e.tag || e.tag === "unreviewed");
+            }
+            return events;
+        },
+
+        selectTimelineEvent(evt) {
+            this.selectedTimelineEvent = evt;
+            // Highlight corresponding graph node
+            if (this.cy && evt.entity_id) {
+                this.cy.elements().unselect();
+                const node = this.cy.getElementById(evt.entity_id);
+                if (node.length > 0) {
+                    node.select();
+                    this.cy.animate({ center: { eles: node }, duration: 300 });
+                    this.selectedNode = node.data();
+                    this.selectedEdge = null;
+                }
+            }
+        },
+
+        tagColor(tag) {
+            return TAG_COLORS[tag] || TAG_COLORS.unreviewed;
+        },
+
+        formatTimelineTime(ts) {
+            if (!ts) return "—";
+            try {
+                const d = new Date(ts);
+                const h = String(d.getHours()).padStart(2, "0");
+                const m = String(d.getMinutes()).padStart(2, "0");
+                const s = String(d.getSeconds()).padStart(2, "0");
+                const mon = d.toLocaleString("en", { month: "short" });
+                const day = d.getDate();
+                return `${h}:${m}:${s} ${mon} ${day}`;
+            } catch {
+                return String(ts).substring(11, 19);
+            }
+        },
+
+        formatTimelineClock(ts) {
+            if (!ts) return "—";
+            try {
+                const d = new Date(ts);
+                const h = String(d.getHours()).padStart(2, "0");
+                const m = String(d.getMinutes()).padStart(2, "0");
+                const s = String(d.getSeconds()).padStart(2, "0");
+                return `${h}:${m}:${s}`;
+            } catch {
+                return String(ts).substring(11, 19);
+            }
+        },
+
+        formatTimelineDate(ts) {
+            if (!ts) return "";
+            try {
+                const d = new Date(ts);
+                const mon = d.toLocaleString("en", { month: "short" });
+                const day = d.getDate();
+                return `${mon} ${day}`;
+            } catch {
+                return "";
+            }
+        },
+
+        // Scroll a timeline event into view
+        scrollTimelineToEvent(eventId) {
+            const el = document.querySelector(`[data-timeline-id="${eventId}"]`);
+            if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
         },
 
         selectedNode: null,
@@ -533,7 +701,10 @@ function investigationsApp() {
             this.activeInv = null;
             this.graphData = null;
             this.selectedNode = null;
+            this.selectedEdge = null;
             this.reportData = null;
+            this.timelineData = null;
+            this.selectedTimelineEvent = null;
             this.detailTab = "graph";
             if (this.cy) {
                 this.cy.destroy();

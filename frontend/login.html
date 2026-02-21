@@ -5,21 +5,23 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Sign In — irone</title>
     <link rel="stylesheet" href="/assets/terminal.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
     <script src="/assets/auth.js"></script>
 </head>
 <body>
-    <div style="display: flex; align-items: center; justify-content: center; min-height: 100vh;">
-        <div class="card" style="max-width: 400px; text-align: center;">
-            <div class="nav-brand" style="font-size: 2rem; margin-bottom: 1.5rem;">&gt; iris_</div>
-            <p style="color: var(--text-secondary); margin-bottom: 1.5rem;">
+    <div class="auth-page">
+        <div class="auth-card">
+            <div class="auth-brand">&gt; irone_</div>
+            <p class="text-secondary mb-4">
                 Security Lake Monitoring &amp; Investigation
             </p>
-            <button id="login-btn" class="btn btn-primary" style="width: 100%;">
+            <button id="login-btn" class="btn btn-primary w-full">
                 Sign In with SSO
             </button>
             <div id="error" style="display: none; margin-top: 1rem;" class="alert alert-error"></div>
             <p id="no-auth" style="display: none; margin-top: 1rem;">
-                <a href="/" style="color: var(--green);">Continue without auth →</a>
+                <a href="/" class="back-link">Continue without auth &rarr;</a>
             </p>
         </div>
     </div>

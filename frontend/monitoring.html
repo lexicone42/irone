@@ -5,6 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Health Monitor — irone</title>
     <link rel="stylesheet" href="/assets/terminal.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
     <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
     <script src="/assets/auth.js"></script>
     <script src="/assets/app.js"></script>
@@ -12,25 +14,25 @@
 <body>
     <div class="layout" x-data="navApp()">
         <nav class="sidebar">
-            <div class="nav-brand">&gt; iris_</div>
+            <div class="nav-brand">&gt; irone_</div>
 
             <div class="nav-section">Overview</div>
-            <a href="/" class="nav-link" :class="isActive('/') && 'active'">Dashboard</a>
+            <a href="/" class="nav-link" :class="isActive('/') && 'active'"><i class="fa-solid fa-gauge-high"></i> Dashboard</a>
 
             <div class="nav-section">Operations</div>
-            <a href="/monitoring.html" class="nav-link" :class="isActive('/monitoring') && 'active'">Health Monitor</a>
-            <a href="/sources.html" class="nav-link" :class="isActive('/sources') && 'active'">Sources</a>
+            <a href="/monitoring.html" class="nav-link" :class="isActive('/monitoring') && 'active'"><i class="fa-solid fa-heart-pulse"></i> Health Monitor</a>
+            <a href="/sources.html" class="nav-link" :class="isActive('/sources') && 'active'"><i class="fa-solid fa-database"></i> Sources</a>
 
             <div class="nav-section">Detection</div>
-            <a href="/detections.html" class="nav-link" :class="isActive('/detections') && 'active'">Rules & Queries</a>
+            <a href="/detections.html" class="nav-link" :class="isActive('/detections') && 'active'"><i class="fa-solid fa-shield-halved"></i> Rules &amp; Queries</a>
 
             <div class="nav-section">Investigation</div>
-            <a href="/investigations.html" class="nav-link" :class="isActive('/investigations') && 'active'">Investigations</a>
+            <a href="/investigations.html" class="nav-link" :class="isActive('/investigations') && 'active'"><i class="fa-solid fa-magnifying-glass"></i> Investigations</a>
 
             <template x-if="authEnabled && userEmail">
-                <div style="margin-top: auto; padding-top: 1rem; border-top: 1px solid var(--border);">
-                    <div style="color: var(--text-muted); font-size: 0.75rem; padding: 0.25rem 0.75rem;" x-text="userEmail"></div>
-                    <a href="#" class="nav-link" @click.prevent="doLogout()">Sign Out</a>
+                <div class="sidebar-footer">
+                    <div class="sidebar-footer-email" x-text="userEmail"></div>
+                    <a href="#" class="nav-link" @click.prevent="doLogout()"><i class="fa-solid fa-right-from-bracket"></i> Sign Out</a>
                 </div>
             </template>
         </nav>
@@ -39,11 +41,11 @@
             <h1>Health Monitor</h1>
 
             <div class="card">
-                <div class="card-header">
-                    Source Health
-                    <span style="float: right;">
+                <div class="card-header flex-between">
+                    <span>Source Health</span>
+                    <span class="flex items-center gap-3">
                         <template x-if="lastChecked">
-                            <span style="color: var(--text-muted); font-size: 0.75rem; margin-right: 1rem;"
+                            <span class="text-muted text-sm mr-4"
                                   x-text="'Last check: ' + timeAgo(lastChecked)"></span>
                         </template>
                         <button class="btn btn-primary" @click="refresh()" :disabled="refreshing">
@@ -58,29 +60,29 @@
                 </template>
 
                 <template x-if="loading">
-                    <div style="text-align: center; padding: 1rem;">
+                    <div class="text-center" style="padding: 1rem;">
                         <span class="spinner"></span> Loading cached health data...
                     </div>
                 </template>
 
                 <template x-if="!loading && sources.length === 0 && !error">
-                    <p style="color: var(--text-muted);">
+                    <p class="text-muted">
                         No health data cached yet. Click "Run Health Checks" to check all sources.
                     </p>
                 </template>
 
                 <template x-if="!loading && sources.length > 0">
                     <div>
-                        <div class="grid grid-3" style="margin-bottom: 1rem;">
-                            <div class="card" style="text-align: center;">
+                        <div class="grid grid-3 mb-4">
+                            <div class="card stat-card">
                                 <div class="stat-label">Total</div>
                                 <div class="stat-value" x-text="sources.length"></div>
                             </div>
-                            <div class="card" style="text-align: center;">
+                            <div class="card stat-card">
                                 <div class="stat-label">Healthy</div>
                                 <div class="stat-value status-ok" x-text="healthyCount"></div>
                             </div>
-                            <div class="card" style="text-align: center;">
+                            <div class="card stat-card">
                                 <div class="stat-label">Unhealthy</div>
                                 <div class="stat-value" :class="unhealthyCount > 0 ? 'status-error' : 'status-ok'" x-text="unhealthyCount"></div>
                             </div>
@@ -109,7 +111,7 @@
                                         <td x-text="s.record_count"></td>
                                         <td x-text="formatLatency(s.latency_seconds)"></td>
                                         <td x-text="formatAge(s.data_age_minutes)"></td>
-                                        <td style="color: var(--red);" x-text="s.error || ''"></td>
+                                        <td class="text-danger" x-text="s.error || ''"></td>
                                     </tr>
                                 </template>
                             </tbody>
