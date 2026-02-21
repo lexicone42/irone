@@ -6,7 +6,6 @@
     <title>Detection Rules — iris</title>
     <link rel="stylesheet" href="/assets/terminal.css">
     <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@1.29.0/dist/duckdb-browser-blocking.js"></script>
     <script src="/assets/auth.js"></script>
     <script src="/assets/app.js"></script>
 </head>
@@ -76,12 +75,20 @@
                         <tbody>
                             <template x-for="rule in rules" :key="rule.id">
                                 <tr>
-                                    <td x-text="rule.name"></td>
+                                    <td>
+                                        <div x-text="rule.name"></div>
+                                        <div style="color: var(--text-muted); font-size: 0.75rem; margin-top: 0.15rem;"
+                                             x-text="rule.description"></div>
+                                    </td>
                                     <td>
                                         <span class="badge" :class="severityClass(rule.severity)"
                                               x-text="rule.severity"></span>
                                     </td>
-                                    <td x-text="(rule.tags || []).join(', ')"></td>
+                                    <td>
+                                        <template x-for="tag in (rule.tags || [])" :key="tag">
+                                            <span class="rule-tag" x-text="tag"></span>
+                                        </template>
+                                    </td>
                                     <td>
                                         <span :class="rule.enabled ? 'status-ok' : 'status-error'"
                                               x-text="rule.enabled ? 'yes' : 'no'"></span>
@@ -107,54 +114,55 @@
 
             <!-- Detection Result Panel -->
             <template x-if="detectionResult">
-                <div class="card">
-                    <div class="card-header">
-                        Detection Result: <span x-text="detectionResult.rule_name"></span>
-                        <span style="float: right;">
-                            <button class="btn" style="padding: 0.1rem 0.4rem; font-size: 0.7rem;"
-                                    @click="dismissResult()">Dismiss</button>
+                <div class="card" :class="detectionResult.triggered ? 'card-triggered' : ''">
+                    <div class="card-header" style="display: flex; justify-content: space-between; align-items: center;">
+                        <span>
+                            Detection Result: <span x-text="detectionResult.rule_name" style="color: var(--text-primary);"></span>
                         </span>
+                        <button class="btn" style="padding: 0.1rem 0.4rem; font-size: 0.7rem;"
+                                @click="dismissResult()">Dismiss</button>
                     </div>
 
-                    <!-- Status badge -->
-                    <div style="margin-bottom: 0.75rem;">
+                    <!-- Status badge row -->
+                    <div style="display: flex; align-items: center; gap: 1rem; margin-bottom: 1rem;">
                         <template x-if="detectionResult.triggered">
-                            <span class="badge badge-error">TRIGGERED</span>
+                            <span class="badge badge-error" style="font-size: 0.85rem; padding: 0.25rem 0.75rem;">TRIGGERED</span>
                         </template>
                         <template x-if="!detectionResult.triggered && !detectionResult.error">
-                            <span class="badge badge-ok">CLEAN</span>
+                            <span class="badge badge-ok" style="font-size: 0.85rem; padding: 0.25rem 0.75rem;">CLEAN</span>
                         </template>
                         <template x-if="detectionResult.error">
-                            <span class="badge badge-warn">ERROR</span>
+                            <span class="badge badge-warn" style="font-size: 0.85rem; padding: 0.25rem 0.75rem;">ERROR</span>
                         </template>
-                        <span style="color: var(--text-muted); margin-left: 0.5rem; font-size: 0.8rem;"
-                              x-text="detectionResult.executed_at"></span>
+                        <span style="color: var(--text-muted); font-size: 0.8rem;"
+                              x-text="new Date(detectionResult.executed_at).toLocaleString()"></span>
                     </div>
 
                     <!-- Summary stats -->
                     <template x-if="!detectionResult.error">
-                        <div class="grid grid-4" style="margin-bottom: 0.75rem;">
-                            <div style="text-align: center;">
+                        <div class="grid grid-4" style="margin-bottom: 1rem;">
+                            <div class="result-stat">
                                 <div class="stat-label">Matches</div>
                                 <div class="stat-value" style="font-size: 1.5rem;"
+                                     :style="detectionResult.match_count > 0 ? 'color: var(--red)' : ''"
                                      x-text="detectionResult.match_count"></div>
                             </div>
-                            <div style="text-align: center;">
+                            <div class="result-stat">
                                 <div class="stat-label">Severity</div>
-                                <div style="font-size: 1.2rem;">
+                                <div style="font-size: 1.1rem; margin-top: 0.25rem;">
                                     <span class="badge" :class="severityClass(detectionResult.severity)"
                                           x-text="detectionResult.severity"></span>
                                 </div>
                             </div>
-                            <div style="text-align: center;">
+                            <div class="result-stat">
                                 <div class="stat-label">Exec Time</div>
-                                <div style="font-size: 1rem; color: var(--text-primary);"
-                                     x-text="(detectionResult.execution_time_ms || 0) + 'ms'"></div>
+                                <div style="font-size: 1rem; color: var(--cyan); margin-top: 0.25rem;"
+                                     x-text="formatExecTime(detectionResult.execution_time_ms)"></div>
                             </div>
-                            <div style="text-align: center;">
+                            <div class="result-stat">
                                 <div class="stat-label">Message</div>
-                                <div style="font-size: 0.8rem; color: var(--text-secondary);"
-                                     x-text="detectionResult.message || '—'"></div>
+                                <div style="font-size: 0.75rem; color: var(--text-secondary); margin-top: 0.25rem;"
+                                     x-text="detectionResult.message || '\u2014'"></div>
                             </div>
                         </div>
                     </template>
@@ -164,28 +172,45 @@
                         <div class="alert alert-error" x-text="detectionResult.error"></div>
                     </template>
 
-                    <!-- Sample matches table -->
+                    <!-- Sample matches table — curated OCSF fields -->
                     <template x-if="detectionResult.matches && detectionResult.matches.length > 0">
-                        <div style="margin-bottom: 0.75rem;">
+                        <div style="margin-bottom: 1rem;">
                             <div style="color: var(--text-secondary); font-size: 0.8rem; margin-bottom: 0.5rem;">
-                                Sample Matches (showing <span x-text="detectionResult.matches.length"></span>)
+                                Sample Matches (showing <span x-text="Math.min(detectionResult.matches.length, 10)"></span>
+                                of <span x-text="detectionResult.match_count"></span>)
                             </div>
-                            <div style="overflow-x: auto; max-height: 300px; overflow-y: auto;">
-                                <table class="data-table">
+                            <div style="overflow-x: auto; max-height: 350px; overflow-y: auto;">
+                                <table class="data-table match-table">
                                     <thead>
                                         <tr>
-                                            <template x-for="key in Object.keys(detectionResult.matches[0] || {})" :key="key">
-                                                <th x-text="key"></th>
-                                            </template>
+                                            <th>Time</th>
+                                            <th>Activity</th>
+                                            <th>Actor</th>
+                                            <th>Source IP</th>
+                                            <th>Status</th>
+                                            <th>Resources</th>
                                         </tr>
                                     </thead>
                                     <tbody>
-                                        <template x-for="(match, i) in detectionResult.matches.slice(0, 10)" :key="i">
+                                        <template x-for="(m, i) in detectionResult.matches.slice(0, 10)" :key="i">
                                             <tr>
-                                                <template x-for="key in Object.keys(detectionResult.matches[0] || {})" :key="key">
-                                                    <td style="font-size: 0.75rem;"
-                                                        x-text="match[key] != null ? String(match[key]).substring(0, 80) : '—'"></td>
-                                                </template>
+                                                <td style="white-space: nowrap;" x-text="formatMatchTime(m.time_dt || m.time)"></td>
+                                                <td>
+                                                    <span style="color: var(--cyan);" x-text="extractNested(m, 'api.operation') || m.activity_name || '\u2014'"></span>
+                                                    <template x-if="extractNested(m, 'api.service.name')">
+                                                        <span style="color: var(--text-muted); font-size: 0.75rem;"
+                                                              x-text="' \u2014 ' + extractNested(m, 'api.service.name')"></span>
+                                                    </template>
+                                                </td>
+                                                <td x-text="extractNested(m, 'actor.user.name') || extractNested(m, 'actor.session.uid') || '\u2014'"></td>
+                                                <td style="font-family: var(--font-mono); font-size: 0.8rem;"
+                                                    x-text="extractNested(m, 'src_endpoint.ip') || '\u2014'"></td>
+                                                <td>
+                                                    <span :class="m.status === 'Success' ? 'status-ok' : (m.status === 'Failure' ? 'status-error' : '')"
+                                                          x-text="m.status || '\u2014'"></span>
+                                                </td>
+                                                <td style="max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;"
+                                                    x-text="extractResources(m) || '\u2014'"></td>
                                             </tr>
                                         </template>
                                     </tbody>
@@ -196,7 +221,8 @@
 
                     <!-- Investigate button -->
                     <template x-if="detectionResult.triggered">
-                        <button class="btn btn-primary" @click="investigate()" :disabled="investigating">
+                        <button class="btn btn-primary" @click="investigate()" :disabled="investigating"
+                                style="font-size: 0.9rem; padding: 0.5rem 1.25rem;">
                             <template x-if="!investigating"><span>Create Investigation</span></template>
                             <template x-if="investigating">
                                 <span><span class="spinner"></span> Building graph...</span>
@@ -205,126 +231,6 @@
                     </template>
                 </div>
             </template>
-
-            <!-- Query Explorer Section -->
-            <div class="card">
-                <div class="card-header">Query Explorer (DuckDB)</div>
-                <div style="margin-bottom: 0.75rem;">
-                    <textarea x-model="sql" rows="6"
-                              style="width: 100%; font-size: 0.8rem;"
-                              placeholder="SELECT * FROM information_schema.tables;"></textarea>
-                </div>
-                <button class="btn btn-primary" @click="runQuery()" :disabled="querying">
-                    <template x-if="!querying"><span>Run Query</span></template>
-                    <template x-if="querying"><span><span class="spinner"></span> Executing...</span></template>
-                </button>
-
-                <template x-if="queryError">
-                    <div class="alert alert-error" style="margin-top: 1rem;" x-text="queryError"></div>
-                </template>
-
-                <template x-if="queryResult">
-                    <div style="margin-top: 1rem;">
-                        <p style="color: var(--text-secondary); margin-bottom: 0.5rem;"
-                           x-text="queryResult.row_count + ' row(s) returned'"></p>
-                        <div style="overflow-x: auto;">
-                            <table class="data-table">
-                                <thead>
-                                    <tr>
-                                        <template x-for="col in queryResult.columns" :key="col">
-                                            <th x-text="col"></th>
-                                        </template>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    <template x-for="(row, i) in queryResult.rows" :key="i">
-                                        <tr>
-                                            <template x-for="col in queryResult.columns" :key="col">
-                                                <td x-text="row[col] != null ? String(row[col]) : '—'"></td>
-                                            </template>
-                                        </tr>
-                                    </template>
-                                </tbody>
-                            </table>
-                        </div>
-                    </div>
-                </template>
-            </div>
-
-            <!-- Local Query (DuckDB-WASM) Section -->
-            <div class="card">
-                <div class="card-header">
-                    Local Query (DuckDB-WASM)
-                    <template x-if="wasmReady">
-                        <span class="badge badge-ok" style="margin-left: 0.5rem;">ready</span>
-                    </template>
-                    <template x-if="!wasmReady && !wasmError">
-                        <span style="color: var(--text-muted); margin-left: 0.5rem;">
-                            <span class="spinner"></span> loading...
-                        </span>
-                    </template>
-                </div>
-
-                <template x-if="wasmError">
-                    <div class="alert alert-error" x-text="wasmError"></div>
-                </template>
-
-                <template x-if="wasmReady">
-                    <div>
-                        <p style="color: var(--text-muted); font-size: 0.8rem; margin-bottom: 0.75rem;">
-                            Query cached results locally with SQL. Server results are loaded
-                            as <code>results</code> table.
-                        </p>
-                        <div style="margin-bottom: 0.75rem;">
-                            <textarea x-model="localSql" rows="4"
-                                      style="width: 100%; font-size: 0.8rem;"
-                                      placeholder="SELECT * FROM results LIMIT 10;"></textarea>
-                        </div>
-                        <button class="btn btn-primary" @click="runLocalQuery()"
-                                :disabled="localQuerying">
-                            <template x-if="!localQuerying"><span>Run Local</span></template>
-                            <template x-if="localQuerying">
-                                <span><span class="spinner"></span> Querying...</span>
-                            </template>
-                        </button>
-
-                        <template x-if="localError">
-                            <div class="alert alert-error" style="margin-top: 1rem;"
-                                 x-text="localError"></div>
-                        </template>
-
-                        <template x-if="localResult">
-                            <div style="margin-top: 1rem;">
-                                <p style="color: var(--text-secondary); margin-bottom: 0.5rem;"
-                                   x-text="localResult.row_count + ' row(s)'"></p>
-                                <div style="overflow-x: auto;">
-                                    <table class="data-table">
-                                        <thead>
-                                            <tr>
-                                                <template x-for="col in localResult.columns"
-                                                          :key="col">
-                                                    <th x-text="col"></th>
-                                                </template>
-                                            </tr>
-                                        </thead>
-                                        <tbody>
-                                            <template x-for="(row, i) in localResult.rows"
-                                                      :key="i">
-                                                <tr>
-                                                    <template x-for="col in localResult.columns"
-                                                              :key="col">
-                                                        <td x-text="row[col] != null ? String(row[col]) : '—'"></td>
-                                                    </template>
-                                                </tr>
-                                            </template>
-                                        </tbody>
-                                    </table>
-                                </div>
-                            </div>
-                        </template>
-                    </div>
-                </template>
-            </div>
         </main>
     </div>
 </body>
