@@ -65,10 +65,18 @@
                         <tbody>
                             <template x-for="src in sources" :key="src.name">
                                 <tr>
-                                    <td x-text="src.name"></td>
-                                    <td><span class="badge badge-ok" x-text="src.type"></span></td>
+                                    <td>
+                                        <div x-text="src.name"></div>
+                                        <div style="color: var(--text-muted); font-size: 0.75rem; margin-top: 0.15rem;"
+                                             x-text="src.description"></div>
+                                    </td>
+                                    <td><span class="badge badge-ok" x-text="src.source_type"></span></td>
                                     <td x-text="src.region"></td>
-                                    <td x-text="(src.tags || []).join(', ')"></td>
+                                    <td>
+                                        <template x-for="tag in (src.tags || [])" :key="tag">
+                                            <span class="rule-tag" x-text="tag"></span>
+                                        </template>
+                                    </td>
                                 </tr>
                             </template>
                         </tbody>
