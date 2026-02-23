@@ -1,0 +1,34 @@
+id: detect-ecr-image-push
+name: ECR Image Push from Unexpected Principal
+description: >
+  Detects Docker image pushes to ECR from principals that may not be part of
+  the CI/CD pipeline. Attackers who gain access can pull an image, inject
+  malicious code, and push it back with the same tag — the next deployment
+  pulls the compromised image. Any PutImage from a non-automation principal
+  warrants investigation.
+author: irone contributors
+severity: high
+event_class: api_activity
+limit: 1000
+threshold: 1
+tags:
+  - lateral-movement
+  - ecr
+  - container
+  - supply-chain
+mitre_attack:
+  - T1525
+references:
+  - https://attack.mitre.org/techniques/T1525/
+  - https://hackingthe.cloud/aws/exploitation/ecr_image_poisoning/ # Nick Frichette
+data_sources:
+  - cloudtrail
+filters:
+  - field: api.operation
+    in:
+      - PutImage
+      - BatchCheckLayerAvailability
+      - InitiateLayerUpload
+      - CompleteLayerUpload
+  - field: api.service.name
+    equals: ecr.amazonaws.com

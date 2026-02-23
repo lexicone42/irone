@@ -297,9 +297,9 @@ Based on impact, feasibility, and gap severity:
 5. ~~**Role Chain Juggling**~~ — **IMPLEMENTED** → `role-chain-juggling.yaml`
 6. ~~**Rogue OIDC Provider**~~ — **IMPLEMENTED** → `rogue-oidc-provider.yaml`
 7. ~~**IAM Roles Anywhere Abuse**~~ — **IMPLEMENTED** → `iam-roles-anywhere-abuse.yaml`
-8. **ECR Image Poisoning** — important for container workloads
-9. **SSM Command Execution** — post-exploitation detection
-10. **S3 ACL Backdoor** — persistence mechanism
+8. ~~**ECR Image Poisoning**~~ — **IMPLEMENTED** → `ecr-image-poisoning.yaml`
+9. ~~**SSM Command Execution**~~ — **IMPLEMENTED** → `ssm-command-execution.yaml`
+10. ~~**S3 ACL Backdoor**~~ — **IMPLEMENTED** → `s3-acl-backdoor.yaml`
 
 ---
 

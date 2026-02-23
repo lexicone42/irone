@@ -1,0 +1,31 @@
+id: detect-ssm-command-execution
+name: SSM Remote Command Execution
+description: >
+  Detects SSM SendCommand and StartSession calls, which allow remote
+  command execution on EC2 instances. Critically, the actual command
+  content is hidden in CloudTrail (marked HIDDEN_DUE_TO_SECURITY_REASONS).
+  SSM commands from human IAM users rather than automation roles are
+  especially suspicious as post-exploitation activity.
+author: irone contributors
+severity: high
+event_class: api_activity
+limit: 1000
+threshold: 1
+tags:
+  - execution
+  - ssm
+  - post-exploitation
+mitre_attack:
+  - T1059
+references:
+  - https://attack.mitre.org/techniques/T1059/
+  - https://hackingthe.cloud/aws/post_exploitation/run_shell_commands_on_ec2/ # Nick Frichette
+data_sources:
+  - cloudtrail
+filters:
+  - field: api.operation
+    in:
+      - SendCommand
+      - StartSession
+  - field: api.service.name
+    equals: ssm.amazonaws.com

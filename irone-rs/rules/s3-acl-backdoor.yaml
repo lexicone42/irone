@@ -1,0 +1,34 @@
+id: detect-s3-acl-modification
+name: S3 ACL Modification
+description: >
+  Detects S3 bucket or object ACL modifications. ACLs are disabled by default
+  since April 2023, making any ACL write suspicious in modern AWS accounts.
+  Attackers modify ACLs to grant cross-account access, maintaining persistent
+  data access even after IAM policy remediation. Especially flag grants to
+  external accounts or "AuthenticatedUsers" / "AllUsers" groups.
+author: irone contributors
+severity: high
+event_class: api_activity
+limit: 1000
+threshold: 1
+tags:
+  - persistence
+  - s3
+  - acl
+  - data-access
+mitre_attack:
+  - T1098
+references:
+  - https://attack.mitre.org/techniques/T1098/
+  - https://hackingthe.cloud/aws/exploitation/s3_acl_persistence/ # Nick Frichette
+data_sources:
+  - cloudtrail
+filters:
+  - field: api.operation
+    in:
+      - PutBucketAcl
+      - PutObjectAcl
+      - PutObjectVersionAcl
+      - PutBucketPolicy
+  - field: api.service.name
+    equals: s3.amazonaws.com
