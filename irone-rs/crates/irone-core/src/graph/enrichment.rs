@@ -660,6 +660,102 @@ impl<'a, S: SecurityLakeQueries> SecurityLakeEnricher<'a, S> {
         }
     }
 
+    /// Get DNS activity events for a specific domain.
+    ///
+    /// Queries `DnsActivity` events where `query.hostname` matches.
+    pub async fn enrich_by_domain(
+        &self,
+        domain: &str,
+        start: DateTime<Utc>,
+        end: DateTime<Utc>,
+        limit: usize,
+    ) -> QueryResult {
+        if domain.is_empty() {
+            return QueryResult::empty();
+        }
+
+        let filters = [ColumnFilter::StringEquals {
+            path: "query.hostname".into(),
+            value: domain.to_string(),
+        }];
+
+        match self
+            .connector
+            .query_by_event_class(
+                OCSFEventClass::DnsActivity,
+                start,
+                end,
+                limit,
+                Some(&filters),
+            )
+            .await
+        {
+            Ok(qr) if !qr.is_empty() => {
+                debug!(
+                    domain = domain,
+                    count = qr.len(),
+                    "enrichment found DNS events"
+                );
+                qr
+            }
+            Ok(_) => QueryResult::empty(),
+            Err(e) => {
+                warn!(domain = domain, error = %e, "DNS enrichment failed");
+                QueryResult::empty()
+            }
+        }
+    }
+
+    /// Get DNS activity events for a batch of domains.
+    ///
+    /// Uses `IN (...)` to query multiple domains in a single request.
+    pub async fn enrich_domains_batch(
+        &self,
+        domains: &[String],
+        start: DateTime<Utc>,
+        end: DateTime<Utc>,
+        limit: usize,
+    ) -> QueryResult {
+        if domains.is_empty() {
+            return QueryResult::empty();
+        }
+
+        let filters = [ColumnFilter::StringIn {
+            path: "query.hostname".into(),
+            values: domains.to_vec(),
+        }];
+
+        match self
+            .connector
+            .query_by_event_class(
+                OCSFEventClass::DnsActivity,
+                start,
+                end,
+                limit,
+                Some(&filters),
+            )
+            .await
+        {
+            Ok(qr) if !qr.is_empty() => {
+                debug!(
+                    domain_count = domains.len(),
+                    count = qr.len(),
+                    "batch DNS enrichment found events"
+                );
+                qr
+            }
+            Ok(_) => QueryResult::empty(),
+            Err(e) => {
+                warn!(
+                    domain_count = domains.len(),
+                    error = %e,
+                    "batch DNS enrichment failed"
+                );
+                QueryResult::empty()
+            }
+        }
+    }
+
     /// Trace lateral movement starting from a seed IP address.
     ///
     /// Performs a multi-hop correlation:
@@ -1167,6 +1263,70 @@ mod tests {
         let result = enricher
             .enrich_resources_batch(&arns, start, end, 500)
             .await;
+        assert!(result.is_empty());
+    }
+
+    // --- Domain enrichment tests ---
+
+    #[tokio::test]
+    async fn enrich_by_domain_returns_dns_events() {
+        let dns_rows = vec![json_row!(
+            "query.hostname" => "evil.example.com",
+            "src_endpoint.ip" => "10.0.0.5",
+            "class_uid" => 4003_u64
+        )];
+
+        let mock = MockSecurityLake::new().with_result(
+            OCSFEventClass::DnsActivity,
+            QueryResult::from_maps(dns_rows),
+        );
+
+        let enricher = SecurityLakeEnricher::new(&mock);
+        let (start, end) = time_window();
+        let result = enricher
+            .enrich_by_domain("evil.example.com", start, end, 500)
+            .await;
+
+        assert_eq!(result.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn enrich_by_domain_empty_string() {
+        let mock = MockSecurityLake::new();
+        let enricher = SecurityLakeEnricher::new(&mock);
+        let (start, end) = time_window();
+        let result = enricher.enrich_by_domain("", start, end, 500).await;
+        assert!(result.is_empty());
+    }
+
+    #[tokio::test]
+    async fn enrich_domains_batch_returns_events() {
+        let dns_rows = vec![
+            json_row!("query.hostname" => "evil.example.com", "src_endpoint.ip" => "10.0.0.5"),
+            json_row!("query.hostname" => "c2.badguy.net", "src_endpoint.ip" => "10.0.0.5"),
+        ];
+
+        let mock = MockSecurityLake::new().with_result(
+            OCSFEventClass::DnsActivity,
+            QueryResult::from_maps(dns_rows),
+        );
+
+        let enricher = SecurityLakeEnricher::new(&mock);
+        let (start, end) = time_window();
+        let domains = vec!["evil.example.com".to_string(), "c2.badguy.net".to_string()];
+        let result = enricher
+            .enrich_domains_batch(&domains, start, end, 500)
+            .await;
+
+        assert_eq!(result.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn enrich_domains_batch_empty_input() {
+        let mock = MockSecurityLake::new();
+        let enricher = SecurityLakeEnricher::new(&mock);
+        let (start, end) = time_window();
+        let result = enricher.enrich_domains_batch(&[], start, end, 500).await;
         assert!(result.is_empty());
     }
 

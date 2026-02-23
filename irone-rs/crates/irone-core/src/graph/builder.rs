@@ -708,18 +708,21 @@ impl GraphBuilder {
         let users: Vec<String> = identifiers.users.iter().take(10).cloned().collect();
         let ips: Vec<String> = identifiers.ips.iter().take(10).cloned().collect();
         let arns: Vec<String> = identifiers.arns.iter().take(10).cloned().collect();
+        let domains: Vec<String> = identifiers.domains.iter().take(10).cloned().collect();
 
         debug!(
             users = users.len(),
             ips = ips.len(),
             arns = arns.len(),
+            domains = domains.len(),
             "running batched enrichment"
         );
 
-        let (user_result, ip_result, resource_result) = futures::join!(
+        let (user_result, ip_result, resource_result, domain_result) = futures::join!(
             enricher.enrich_users_batch(&users, start, end, None, limit),
             enricher.enrich_ips_batch(&ips, start, end, limit),
             enricher.enrich_resources_batch(&arns, start, end, limit),
+            enricher.enrich_domains_batch(&domains, start, end, limit),
         );
 
         let mut results = Vec::new();
@@ -740,6 +743,13 @@ impl GraphBuilder {
                 "batched resource enrichment complete"
             );
             results.push(resource_result);
+        }
+        if !domain_result.is_empty() {
+            debug!(
+                events = domain_result.len(),
+                "batched domain enrichment complete"
+            );
+            results.push(domain_result);
         }
         results
     }
