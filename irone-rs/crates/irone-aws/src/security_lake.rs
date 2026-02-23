@@ -275,10 +275,10 @@ impl SecurityLakeQueries for SecurityLakeConnector {
             });
         }
         if let Some(port) = dst_port {
-            // Port filtering uses RawSql since it's an integer comparison
-            filter_vec.push(ColumnFilter::RawSql(format!(
-                "\"dst_endpoint\".\"port\" = {port}"
-            )));
+            filter_vec.push(ColumnFilter::IntEquals {
+                path: "dst_endpoint.port".into(),
+                value: i64::from(port),
+            });
         }
         let filters = if filter_vec.is_empty() {
             None

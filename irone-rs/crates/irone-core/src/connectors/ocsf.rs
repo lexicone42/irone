@@ -202,6 +202,8 @@ pub enum ColumnFilter {
     Or(Vec<ColumnFilter>),
     /// Conjunction of filters.
     And(Vec<ColumnFilter>),
+    /// Exact integer match on a (possibly nested) OCSF column.
+    IntEquals { path: String, value: i64 },
     /// Raw SQL expression — used for Athena-specific features like `any_match()`.
     /// Iceberg ignores this variant gracefully.
     RawSql(String),
@@ -253,6 +255,10 @@ impl ColumnFilter {
                     .collect::<Vec<_>>()
                     .join(", ");
                 format!("{col} IN ({in_list})")
+            }
+            Self::IntEquals { path, value } => {
+                let col = Self::quote_ocsf_path(path);
+                format!("{col} = {value}")
             }
             Self::Or(filters) => {
                 if filters.is_empty() {
@@ -612,6 +618,15 @@ mod tests {
         let sql = f.to_sql();
         assert!(sql.contains("O''Brien"));
         assert!(!sql.contains("--"));
+    }
+
+    #[test]
+    fn column_filter_int_equals_sql() {
+        let f = ColumnFilter::IntEquals {
+            path: "dst_endpoint.port".into(),
+            value: 443,
+        };
+        assert_eq!(f.to_sql(), r#""dst_endpoint"."port" = 443"#);
     }
 
     #[test]

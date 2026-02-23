@@ -36,6 +36,7 @@ use irone_core::connectors::ocsf::{
     ColumnFilter, OCSFEventClass, SecurityLakeError, SecurityLakeQueries,
 };
 use irone_core::connectors::result::QueryResult;
+use irone_core::connectors::sql_utils::validate_ipv4;
 
 use crate::arrow_convert::record_batches_to_query_result;
 use crate::error::{AwsError, parse_s3_location};
@@ -60,6 +61,8 @@ enum ArrowRowFilter {
     Or(Vec<ArrowRowFilter>),
     /// Conjunction of filters.
     And(Vec<ArrowRowFilter>),
+    /// Filter rows where a nested integer column equals a specific value.
+    NestedIntEquals { path: Vec<String>, value: i64 },
     /// Match rows where a List<Struct> column contains an element with a field
     /// equal to the given value (Arrow equivalent of `any_match`).
     ListContains {
@@ -117,6 +120,8 @@ impl ArrowRowFilter {
                     .collect();
                 Ok(BooleanArray::from(bits))
             }
+
+            Self::NestedIntEquals { path, value } => resolve_nested_int_mask(batch, path, *value),
 
             Self::Or(filters) => {
                 if filters.is_empty() {
@@ -209,6 +214,41 @@ fn resolve_nested_column(
     }
 
     Ok(current)
+}
+
+/// Compute a boolean mask for a nested integer equality comparison.
+fn resolve_nested_int_mask(
+    batch: &RecordBatch,
+    path: &[String],
+    value: i64,
+) -> Result<BooleanArray, AwsError> {
+    let leaf = resolve_nested_column(batch, path)?;
+    let bits: Vec<bool> = match leaf.data_type() {
+        DataType::Int32 => {
+            let arr = leaf.as_primitive::<arrow_array::types::Int32Type>();
+            (0..batch.num_rows())
+                .map(|i| !arr.is_null(i) && i64::from(arr.value(i)) == value)
+                .collect()
+        }
+        DataType::Int64 => {
+            let arr = leaf.as_primitive::<arrow_array::types::Int64Type>();
+            (0..batch.num_rows())
+                .map(|i| !arr.is_null(i) && arr.value(i) == value)
+                .collect()
+        }
+        DataType::Int16 => {
+            let arr = leaf.as_primitive::<arrow_array::types::Int16Type>();
+            (0..batch.num_rows())
+                .map(|i| !arr.is_null(i) && i64::from(arr.value(i)) == value)
+                .collect()
+        }
+        dt => {
+            return Err(AwsError::QueryFailed(format!(
+                "expected integer column at end of path, got {dt:?}"
+            )));
+        }
+    };
+    Ok(BooleanArray::from(bits))
 }
 
 /// Traverse nested `StructArray` columns to resolve a string leaf.
@@ -393,6 +433,10 @@ fn single_column_filter_to_arrow(filter: &ColumnFilter) -> Option<ArrowRowFilter
                 Some(ArrowRowFilter::And(converted))
             }
         }
+        ColumnFilter::IntEquals { path, value } => Some(ArrowRowFilter::NestedIntEquals {
+            path: path.split('.').map(String::from).collect(),
+            value: *value,
+        }),
         ColumnFilter::RawSql(sql) => {
             warn!(
                 sql = &sql[..sql.len().min(80)],
@@ -771,13 +815,23 @@ impl SecurityLakeQueries for IcebergConnector {
         &self,
         start: DateTime<Utc>,
         end: DateTime<Utc>,
-        _status: Option<&str>,
+        status: Option<&str>,
         limit: usize,
     ) -> Result<QueryResult, SecurityLakeError> {
-        // Status filtering would require post-scan filtering since it's not
-        // an Iceberg partition column. For now, get all auth events and let
-        // the caller filter.
-        self.query_by_event_class(OCSFEventClass::Authentication, start, end, limit, None)
+        let filter_vec: Vec<ColumnFilter> = status
+            .map(|s| {
+                vec![ColumnFilter::StringEquals {
+                    path: "status".into(),
+                    value: s.to_string(),
+                }]
+            })
+            .unwrap_or_default();
+        let filters = if filter_vec.is_empty() {
+            None
+        } else {
+            Some(filter_vec.as_slice())
+        };
+        self.query_by_event_class(OCSFEventClass::Authentication, start, end, limit, filters)
             .await
     }
 
@@ -785,11 +839,29 @@ impl SecurityLakeQueries for IcebergConnector {
         &self,
         start: DateTime<Utc>,
         end: DateTime<Utc>,
-        _service: Option<&str>,
-        _operation: Option<&str>,
+        service: Option<&str>,
+        operation: Option<&str>,
         limit: usize,
     ) -> Result<QueryResult, SecurityLakeError> {
-        self.query_by_event_class(OCSFEventClass::ApiActivity, start, end, limit, None)
+        let mut filter_vec = Vec::new();
+        if let Some(svc) = service {
+            filter_vec.push(ColumnFilter::StringEquals {
+                path: "api.service.name".into(),
+                value: svc.to_string(),
+            });
+        }
+        if let Some(op) = operation {
+            filter_vec.push(ColumnFilter::StringEquals {
+                path: "api.operation".into(),
+                value: op.to_string(),
+            });
+        }
+        let filters = if filter_vec.is_empty() {
+            None
+        } else {
+            Some(filter_vec.as_slice())
+        };
+        self.query_by_event_class(OCSFEventClass::ApiActivity, start, end, limit, filters)
             .await
     }
 
@@ -797,12 +869,38 @@ impl SecurityLakeQueries for IcebergConnector {
         &self,
         start: DateTime<Utc>,
         end: DateTime<Utc>,
-        _src_ip: Option<&str>,
-        _dst_ip: Option<&str>,
-        _dst_port: Option<u16>,
+        src_ip: Option<&str>,
+        dst_ip: Option<&str>,
+        dst_port: Option<u16>,
         limit: usize,
     ) -> Result<QueryResult, SecurityLakeError> {
-        self.query_by_event_class(OCSFEventClass::NetworkActivity, start, end, limit, None)
+        let mut filter_vec = Vec::new();
+        if let Some(ip) = src_ip {
+            validate_ipv4(ip).map_err(|e| SecurityLakeError::InvalidParameter(e.to_string()))?;
+            filter_vec.push(ColumnFilter::StringEquals {
+                path: "src_endpoint.ip".into(),
+                value: ip.to_string(),
+            });
+        }
+        if let Some(ip) = dst_ip {
+            validate_ipv4(ip).map_err(|e| SecurityLakeError::InvalidParameter(e.to_string()))?;
+            filter_vec.push(ColumnFilter::StringEquals {
+                path: "dst_endpoint.ip".into(),
+                value: ip.to_string(),
+            });
+        }
+        if let Some(port) = dst_port {
+            filter_vec.push(ColumnFilter::IntEquals {
+                path: "dst_endpoint.port".into(),
+                value: i64::from(port),
+            });
+        }
+        let filters = if filter_vec.is_empty() {
+            None
+        } else {
+            Some(filter_vec.as_slice())
+        };
+        self.query_by_event_class(OCSFEventClass::NetworkActivity, start, end, limit, filters)
             .await
     }
 
@@ -810,10 +908,23 @@ impl SecurityLakeQueries for IcebergConnector {
         &self,
         start: DateTime<Utc>,
         end: DateTime<Utc>,
-        _severity: Option<&str>,
+        severity: Option<&str>,
         limit: usize,
     ) -> Result<QueryResult, SecurityLakeError> {
-        self.query_by_event_class(OCSFEventClass::SecurityFinding, start, end, limit, None)
+        let filter_vec: Vec<ColumnFilter> = severity
+            .map(|s| {
+                vec![ColumnFilter::StringEquals {
+                    path: "severity".into(),
+                    value: s.to_string(),
+                }]
+            })
+            .unwrap_or_default();
+        let filters = if filter_vec.is_empty() {
+            None
+        } else {
+            Some(filter_vec.as_slice())
+        };
+        self.query_by_event_class(OCSFEventClass::SecurityFinding, start, end, limit, filters)
             .await
     }
 
@@ -1475,5 +1586,34 @@ mod tests {
         }];
         let result = column_filters_to_arrow(&filters);
         assert!(result.is_some());
+    }
+
+    #[test]
+    fn nested_int_equals_filters_rows() {
+        use arrow_array::{Int32Array, RecordBatch, StructArray};
+        use arrow_schema::{Field, Schema};
+        use std::sync::Arc;
+
+        // Build dst_endpoint.port as a nested int column
+        let port_field = Field::new("port", DataType::Int32, true);
+        let endpoint_type = DataType::Struct(vec![port_field.clone()].into());
+        let endpoint_field = Field::new("dst_endpoint", endpoint_type, true);
+
+        let schema = Arc::new(Schema::new(vec![endpoint_field.clone()]));
+
+        let ports = Int32Array::from(vec![Some(443), Some(80), Some(443), Some(22)]);
+        let endpoint_struct = StructArray::from(vec![(
+            Arc::new(port_field),
+            Arc::new(ports) as Arc<dyn arrow_array::Array>,
+        )]);
+
+        let batch = RecordBatch::try_new(schema, vec![Arc::new(endpoint_struct)]).unwrap();
+
+        let filter = ArrowRowFilter::NestedIntEquals {
+            path: vec!["dst_endpoint".into(), "port".into()],
+            value: 443,
+        };
+        let filtered = filter.apply(&batch).unwrap();
+        assert_eq!(filtered.num_rows(), 2);
     }
 }
