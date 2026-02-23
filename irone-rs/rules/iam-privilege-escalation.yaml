@@ -31,3 +31,34 @@ filters:
       - PutGroupPolicy
   - field: status
     equals: Success
+
+test_cases:
+  - name: triggers on AttachUserPolicy success
+    events:
+      - api.operation: AttachUserPolicy
+        status: Success
+    expected:
+      triggered: true
+      match_count: 1
+
+  - name: does not trigger on non-escalation API call
+    events:
+      - api.operation: DeleteRole
+        status: Success
+    expected:
+      triggered: false
+      match_count: 0
+
+  - name: match_count with mixed events
+    events:
+      - api.operation: AttachUserPolicy
+        status: Success
+      - api.operation: ListBuckets
+        status: Success
+      - api.operation: PutRolePolicy
+        status: Success
+      - api.operation: AttachUserPolicy
+        status: Failure
+    expected:
+      triggered: true
+      match_count: 2

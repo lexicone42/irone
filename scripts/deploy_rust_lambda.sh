@@ -6,6 +6,7 @@
 #   ./scripts/deploy_rust_lambda.sh web           # deploy only irone-web
 #   ./scripts/deploy_rust_lambda.sh health        # deploy only irone-health-checker
 #   ./scripts/deploy_rust_lambda.sh worker        # deploy only irone-worker
+#   ./scripts/deploy_rust_lambda.sh web worker    # deploy web + worker
 #   ./scripts/deploy_rust_lambda.sh --skip-build  # reuse existing zips
 #
 # Override defaults via environment:
@@ -23,24 +24,31 @@ S3_KEY_PREFIX="${SECDASH_S3_KEY_PREFIX:-lambda/rust/}"
 PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 IRONE_RS_DIR="$PROJECT_ROOT/irone-rs"
 SKIP_BUILD=false
-DEPLOY_WEB=true
-DEPLOY_HEALTH=true
-DEPLOY_WORKER=true
+DEPLOY_WEB=false
+DEPLOY_HEALTH=false
+DEPLOY_WORKER=false
 TARGET_SPECIFIED=false
 
 for arg in "$@"; do
     case "$arg" in
         --skip-build) SKIP_BUILD=true ;;
-        web) DEPLOY_HEALTH=false; DEPLOY_WORKER=false; TARGET_SPECIFIED=true ;;
-        health) DEPLOY_WEB=false; DEPLOY_WORKER=false; TARGET_SPECIFIED=true ;;
-        worker) DEPLOY_WEB=false; DEPLOY_HEALTH=false; TARGET_SPECIFIED=true ;;
+        web) DEPLOY_WEB=true; TARGET_SPECIFIED=true ;;
+        health) DEPLOY_HEALTH=true; TARGET_SPECIFIED=true ;;
+        worker) DEPLOY_WORKER=true; TARGET_SPECIFIED=true ;;
         --help|-h)
-            head -15 "$0" | tail -13
+            head -16 "$0" | tail -14
             exit 0
             ;;
         *) echo "Unknown argument: $arg"; exit 1 ;;
     esac
 done
+
+# No targets specified → deploy all
+if [[ "$TARGET_SPECIFIED" == false ]]; then
+    DEPLOY_WEB=true
+    DEPLOY_HEALTH=true
+    DEPLOY_WORKER=true
+fi
 
 # --- Auto-detect Lambda function names ---
 if [[ "$DEPLOY_WEB" == true && -z "${SECDASH_WEB_LAMBDA_NAME:-}" ]]; then

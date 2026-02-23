@@ -23,3 +23,28 @@ filters:
     equals: Root
   - field: status
     equals: Success
+
+test_cases:
+  - name: triggers on root console login success
+    events:
+      - actor.user.type: Root
+        status: Success
+    expected:
+      triggered: true
+      match_count: 1
+
+  - name: does not trigger on root failure
+    events:
+      - actor.user.type: Root
+        status: Failure
+    expected:
+      triggered: false
+      match_count: 0
+
+  - name: does not trigger on IAMUser success
+    events:
+      - actor.user.type: IAMUser
+        status: Success
+    expected:
+      triggered: false
+      match_count: 0

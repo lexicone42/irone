@@ -26,3 +26,18 @@ data_sources:
 filters:
   - field: rcode_id
     equals: "3"
+
+test_cases:
+  - name: triggers on NXDOMAIN responses (threshold override)
+    events:
+      - rcode_id: 3
+    expected:
+      triggered: true
+      threshold_override: 1
+
+  - name: does not trigger on successful DNS response
+    events:
+      - rcode_id: 0
+    expected:
+      triggered: false
+      threshold_override: 1

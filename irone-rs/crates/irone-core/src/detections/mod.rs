@@ -1,5 +1,6 @@
 mod rule;
 mod runner;
+pub mod test_case;
 
 pub use rule::{
     DetectionMetadata, DetectionQuery, DetectionResult, DetectionRule, DualTargetDetectionRule,
