@@ -1,0 +1,62 @@
+id: detect-iam-user-role-creation
+name: IAM User or Role Creation
+description: >
+  Detects the creation of new IAM users, roles, or service-linked roles.
+  Attackers create new principals to establish persistent access that survives
+  credential rotation of the compromised account. In mature environments,
+  IAM principal creation is handled by IaC pipelines — manual creation via
+  console or CLI is inherently suspicious.
+author: irone contributors
+severity: high
+event_class: api_activity
+limit: 5000
+threshold: 1
+tags:
+  - persistence
+  - iam
+  - account-creation
+mitre_attack:
+  - T1136.003
+references:
+  - https://attack.mitre.org/techniques/T1136/003/
+  - https://docs.aws.amazon.com/IAM/latest/UserGuide/id_users_create.html
+data_sources:
+  - cloudtrail
+filters:
+  - field: api.operation
+    in:
+      - CreateUser
+      - CreateRole
+      - CreateServiceLinkedRole
+  - field: api.service.name
+    equals: iam.amazonaws.com
+  - field: status
+    equals: Success
+
+test_cases:
+  - name: triggers on CreateUser success
+    events:
+      - api.operation: CreateUser
+        api.service.name: iam.amazonaws.com
+        status: Success
+    expected:
+      triggered: true
+      match_count: 1
+
+  - name: does not trigger on CreateUser failure
+    events:
+      - api.operation: CreateUser
+        api.service.name: iam.amazonaws.com
+        status: Failure
+    expected:
+      triggered: false
+      match_count: 0
+
+  - name: does not trigger on DeleteUser success
+    events:
+      - api.operation: DeleteUser
+        api.service.name: iam.amazonaws.com
+        status: Success
+    expected:
+      triggered: false
+      match_count: 0

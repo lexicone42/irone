@@ -1,0 +1,50 @@
+id: detect-ebs-snapshot-sharing
+name: EBS Snapshot or AMI Sharing
+description: >
+  Detects modifications to EBS snapshot or AMI sharing attributes. Attackers
+  modify snapshot attributes to share them with external accounts for data
+  exfiltration — the snapshot is copied to an attacker-controlled account
+  where it can be mounted and read at leisure. This is a common late-stage
+  exfiltration technique because it leaves minimal traces compared to
+  network-based exfiltration.
+author: irone contributors
+severity: critical
+event_class: api_activity
+limit: 1000
+threshold: 1
+tags:
+  - exfiltration
+  - ec2
+  - ebs
+  - snapshot
+mitre_attack:
+  - T1578.002
+references:
+  - https://attack.mitre.org/techniques/T1578/002/
+  - https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/ebs-modifying-snapshot-permissions.html
+data_sources:
+  - cloudtrail
+filters:
+  - field: api.operation
+    in:
+      - ModifySnapshotAttribute
+      - ModifyImageAttribute
+  - field: api.service.name
+    equals: ec2.amazonaws.com
+
+test_cases:
+  - name: triggers on ModifySnapshotAttribute
+    events:
+      - api.operation: ModifySnapshotAttribute
+        api.service.name: ec2.amazonaws.com
+    expected:
+      triggered: true
+      match_count: 1
+
+  - name: does not trigger on CreateSnapshot
+    events:
+      - api.operation: CreateSnapshot
+        api.service.name: ec2.amazonaws.com
+    expected:
+      triggered: false
+      match_count: 0

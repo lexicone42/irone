@@ -1,0 +1,56 @@
+id: detect-s3-data-collection
+name: S3 Data Collection from IAM User
+description: >
+  Detects high-volume S3 read operations performed by a human IAM user.
+  Automated roles routinely read S3 objects, but a human principal issuing
+  large numbers of GetObject or ListObjects calls may indicate data
+  exfiltration or unauthorized reconnaissance of stored data. A threshold
+  of 100 operations in the lookback window distinguishes normal console
+  browsing from systematic data collection.
+author: irone contributors
+severity: high
+event_class: api_activity
+limit: 5000
+threshold: 100
+tags:
+  - collection
+  - s3
+  - data-exfiltration
+mitre_attack:
+  - T1530
+references:
+  - https://attack.mitre.org/techniques/T1530/
+  - https://docs.aws.amazon.com/AmazonS3/latest/userguide/security-best-practices.html
+data_sources:
+  - cloudtrail
+filters:
+  - field: api.operation
+    in:
+      - GetObject
+      - SelectObjectContent
+      - ListObjects
+      - ListObjectsV2
+      - ListBuckets
+  - field: api.service.name
+    equals: s3.amazonaws.com
+  - field: actor.user.type
+    equals: IAMUser
+
+test_cases:
+  - name: triggers on GetObject from IAMUser
+    events:
+      - api.operation: GetObject
+        api.service.name: s3.amazonaws.com
+        actor.user.type: IAMUser
+    expected:
+      triggered: true
+      threshold_override: 1
+
+  - name: does not trigger on GetObject from AssumedRole
+    events:
+      - api.operation: GetObject
+        api.service.name: s3.amazonaws.com
+        actor.user.type: AssumedRole
+    expected:
+      triggered: false
+      threshold_override: 1

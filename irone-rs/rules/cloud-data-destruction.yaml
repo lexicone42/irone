@@ -1,0 +1,63 @@
+id: detect-cloud-data-destruction
+name: Cloud Data Destruction
+description: >
+  Detects API calls that destroy or render inaccessible cloud data: deleting
+  S3 objects/buckets, scheduling KMS key deletion, or disabling encryption
+  keys. These actions are hallmarks of ransomware operators and disgruntled
+  insiders. Any single destructive call is critical — the damage is immediate
+  and often irreversible without backups.
+author: irone contributors
+severity: critical
+event_class: api_activity
+limit: 5000
+threshold: 1
+tags:
+  - impact
+  - data-destruction
+  - ransomware
+  - s3
+  - kms
+mitre_attack:
+  - T1485
+references:
+  - https://attack.mitre.org/techniques/T1485/
+  - https://docs.aws.amazon.com/kms/latest/developerguide/deleting-keys.html
+data_sources:
+  - cloudtrail
+filters:
+  - field: api.operation
+    in:
+      - DeleteObjects
+      - ScheduleKeyDeletion
+      - DisableKey
+      - DeleteBucket
+      - PutBucketVersioning
+  - field: api.service.name
+    in:
+      - s3.amazonaws.com
+      - kms.amazonaws.com
+
+test_cases:
+  - name: triggers on ScheduleKeyDeletion
+    events:
+      - api.operation: ScheduleKeyDeletion
+        api.service.name: kms.amazonaws.com
+    expected:
+      triggered: true
+      match_count: 1
+
+  - name: triggers on DeleteBucket
+    events:
+      - api.operation: DeleteBucket
+        api.service.name: s3.amazonaws.com
+    expected:
+      triggered: true
+      match_count: 1
+
+  - name: does not trigger on PutObject
+    events:
+      - api.operation: PutObject
+        api.service.name: s3.amazonaws.com
+    expected:
+      triggered: false
+      match_count: 0

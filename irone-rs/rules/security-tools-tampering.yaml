@@ -1,0 +1,57 @@
+id: detect-security-tools-tampering
+name: Security Tools Tampering
+description: >
+  Detects disabling or deleting AWS security monitoring tools: Config
+  recorders, Config rules, IAM Access Analyzer, and Macie. Attackers
+  disable these services to blind defenders before performing malicious
+  actions. Any single tampering call is critical — the attacker is actively
+  degrading the organization's detection capability.
+author: irone contributors
+severity: critical
+event_class: api_activity
+limit: 5000
+threshold: 1
+tags:
+  - defense-evasion
+  - config
+  - access-analyzer
+  - macie
+mitre_attack:
+  - T1562.001
+references:
+  - https://attack.mitre.org/techniques/T1562/001/
+  - https://docs.aws.amazon.com/config/latest/developerguide/stop-start-recorder.html
+data_sources:
+  - cloudtrail
+filters:
+  - field: api.operation
+    in:
+      - StopConfigurationRecorder
+      - DeleteConfigRule
+      - DeleteConfigurationRecorder
+      - DeleteDeliveryChannel
+      - DeleteAnalyzer
+      - ArchiveFindings
+      - DisableMacie
+  - field: api.service.name
+    in:
+      - config.amazonaws.com
+      - access-analyzer.amazonaws.com
+      - macie2.amazonaws.com
+
+test_cases:
+  - name: triggers on StopConfigurationRecorder
+    events:
+      - api.operation: StopConfigurationRecorder
+        api.service.name: config.amazonaws.com
+    expected:
+      triggered: true
+      match_count: 1
+
+  - name: does not trigger on DescribeConfigRules
+    events:
+      - api.operation: DescribeConfigRules
+        api.service.name: config.amazonaws.com
+    expected:
+      triggered: false
+      match_count: 0

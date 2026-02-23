@@ -1,0 +1,65 @@
+id: detect-ec2-instance-launch
+name: EC2 Instance Launch
+description: >
+  Detects successful EC2 instance launches including spot instances. Attackers
+  launch instances in unused regions for cryptomining or as C2 infrastructure.
+  In environments where instance launches are managed by IaC, any manual or
+  unexpected launch warrants investigation — especially in regions outside the
+  organization's normal footprint.
+author: irone contributors
+severity: medium
+event_class: api_activity
+limit: 5000
+threshold: 1
+tags:
+  - resource-development
+  - ec2
+  - cryptomining
+  - unused-regions
+mitre_attack:
+  - T1535
+references:
+  - https://attack.mitre.org/techniques/T1535/
+  - https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/ec2-resource-limits.html
+data_sources:
+  - cloudtrail
+filters:
+  - field: api.operation
+    in:
+      - RunInstances
+      - StartInstances
+      - RequestSpotInstances
+  - field: api.service.name
+    in:
+      - ec2.amazonaws.com
+      - autoscaling.amazonaws.com
+  - field: status
+    equals: Success
+
+test_cases:
+  - name: triggers on RunInstances success
+    events:
+      - api.operation: RunInstances
+        api.service.name: ec2.amazonaws.com
+        status: Success
+    expected:
+      triggered: true
+      match_count: 1
+
+  - name: does not trigger on RunInstances failure
+    events:
+      - api.operation: RunInstances
+        api.service.name: ec2.amazonaws.com
+        status: Failure
+    expected:
+      triggered: false
+      match_count: 0
+
+  - name: does not trigger on TerminateInstances success
+    events:
+      - api.operation: TerminateInstances
+        api.service.name: ec2.amazonaws.com
+        status: Success
+    expected:
+      triggered: false
+      match_count: 0

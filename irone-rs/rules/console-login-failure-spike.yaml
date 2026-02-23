@@ -1,0 +1,43 @@
+id: detect-console-login-failure-spike
+name: Console Login Failure Spike
+description: >
+  Detects a spike of failed console login attempts, indicating credential
+  stuffing or brute-force attacks against the AWS console. A threshold of
+  10 failures in the lookback window filters out occasional password typos
+  while catching automated attacks. Pair with IP analysis to distinguish
+  distributed attacks from a single user's login struggles.
+author: irone contributors
+severity: high
+event_class: authentication
+limit: 5000
+threshold: 10
+tags:
+  - credential-access
+  - brute-force
+  - credential-stuffing
+  - console
+mitre_attack:
+  - T1110.004
+references:
+  - https://attack.mitre.org/techniques/T1110/004/
+  - https://docs.aws.amazon.com/IAM/latest/UserGuide/id_credentials_passwords.html
+data_sources:
+  - cloudtrail
+filters:
+  - field: status
+    equals: Failure
+
+test_cases:
+  - name: triggers on login failure
+    events:
+      - status: Failure
+    expected:
+      triggered: true
+      threshold_override: 1
+
+  - name: does not trigger on login success
+    events:
+      - status: Success
+    expected:
+      triggered: false
+      threshold_override: 1

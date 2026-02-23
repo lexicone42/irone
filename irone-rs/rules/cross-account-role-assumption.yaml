@@ -1,0 +1,55 @@
+id: detect-cross-account-role-assumption
+name: Cross-Account Role Assumption
+description: >
+  Detects successful AssumeRole calls from non-service principals. While
+  cross-account role assumption is a legitimate pattern, attackers frequently
+  use stolen credentials to assume roles in other accounts for lateral
+  movement. Filtering out AWSService callers focuses the detection on human
+  or programmatic principals that should be scrutinized.
+author: irone contributors
+severity: high
+event_class: api_activity
+limit: 5000
+threshold: 1
+tags:
+  - initial-access
+  - lateral-movement
+  - sts
+  - cross-account
+mitre_attack:
+  - T1078.004
+references:
+  - https://attack.mitre.org/techniques/T1078/004/
+  - https://docs.aws.amazon.com/IAM/latest/UserGuide/id_roles_common-scenarios_aws-accounts.html
+data_sources:
+  - cloudtrail
+filters:
+  - field: api.operation
+    equals: AssumeRole
+  - field: api.service.name
+    equals: sts.amazonaws.com
+  - field: status
+    equals: Success
+  - field: actor.user.type
+    not_equals: AWSService
+
+test_cases:
+  - name: triggers on IAMUser successful AssumeRole
+    events:
+      - api.operation: AssumeRole
+        api.service.name: sts.amazonaws.com
+        status: Success
+        actor.user.type: IAMUser
+    expected:
+      triggered: true
+      match_count: 1
+
+  - name: does not trigger on AWSService AssumeRole
+    events:
+      - api.operation: AssumeRole
+        api.service.name: sts.amazonaws.com
+        status: Success
+        actor.user.type: AWSService
+    expected:
+      triggered: false
+      match_count: 0
