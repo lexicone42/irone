@@ -36,6 +36,13 @@ impl From<Box<dyn std::error::Error + Send + Sync>> for WebError {
     }
 }
 
+/// Convenience conversion: connector errors become internal errors.
+impl From<irone_core::connectors::base::ConnectorError> for WebError {
+    fn from(e: irone_core::connectors::base::ConnectorError) -> Self {
+        Self::Internal(e.to_string())
+    }
+}
+
 /// Convenience conversion: persistence errors become internal errors.
 impl From<irone_persistence::error::PersistenceError> for WebError {
     fn from(e: irone_persistence::error::PersistenceError) -> Self {

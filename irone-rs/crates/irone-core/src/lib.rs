@@ -1,3 +1,4 @@
+pub mod audit;
 pub mod catalog;
 pub mod config;
 pub mod connectors;

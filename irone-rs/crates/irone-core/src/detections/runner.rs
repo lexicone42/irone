@@ -515,19 +515,19 @@ mod tests {
         async fn query(
             &self,
             _sql: &str,
-        ) -> Result<QueryResult, Box<dyn std::error::Error + Send + Sync>> {
+        ) -> Result<QueryResult, crate::connectors::base::ConnectorError> {
             Ok(self.result.clone())
         }
         async fn get_schema(
             &self,
-        ) -> Result<HashMap<String, String>, Box<dyn std::error::Error + Send + Sync>> {
+        ) -> Result<HashMap<String, String>, crate::connectors::base::ConnectorError> {
             Ok(HashMap::new())
         }
         async fn check_health(
             &self,
         ) -> Result<
             crate::connectors::base::HealthCheckResult,
-            Box<dyn std::error::Error + Send + Sync>,
+            crate::connectors::base::ConnectorError,
         > {
             Ok(crate::connectors::base::HealthCheckResult::new(
                 "mock", true,

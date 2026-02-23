@@ -4,7 +4,7 @@
 //! Graph and timeline data live in S3 — this module only handles metadata.
 
 use aws_sdk_dynamodb::types::AttributeValue;
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 /// Investigation metadata stored in `DynamoDB`.
@@ -24,6 +24,11 @@ pub struct InvestigationMetadata {
     pub sfn_execution_arn: Option<String>,
     pub error: Option<String>,
 }
+
+/// Maximum time an investigation can remain in "enriching" status before
+/// being auto-reverted to "active" on read. This prevents investigations
+/// from being permanently stuck if the worker Lambda fails silently.
+const ENRICHING_TIMEOUT_MINUTES: i64 = 60;
 
 /// Thin wrapper around `DynamoDB` client for investigation operations.
 #[derive(Clone)]
@@ -124,6 +129,9 @@ impl DynamoInvestigationStore {
     }
 
     /// Get a single investigation by ID.
+    ///
+    /// If the investigation has been stuck in "enriching" status for longer
+    /// than [`ENRICHING_TIMEOUT_MINUTES`], it is automatically reverted to "active".
     pub async fn get_investigation(
         &self,
         id: &str,
@@ -136,10 +144,23 @@ impl DynamoInvestigationStore {
             .send()
             .await?;
 
-        Ok(result.item.and_then(|item| parse_item(&item)))
+        match result.item.and_then(|item| parse_item(&item)) {
+            Some(mut meta) => {
+                if self.recover_stale_enriching(&mut meta).await {
+                    tracing::warn!(
+                        investigation_id = %meta.id,
+                        "auto-recovered stuck enriching investigation"
+                    );
+                }
+                Ok(Some(meta))
+            }
+            None => Ok(None),
+        }
     }
 
     /// List all investigations, most recent first.
+    ///
+    /// Automatically recovers any investigations stuck in "enriching" status.
     pub async fn list_investigations(
         &self,
     ) -> Result<Vec<InvestigationMetadata>, aws_sdk_dynamodb::Error> {
@@ -157,7 +178,13 @@ impl DynamoInvestigationStore {
 
             if let Some(page_items) = result.items {
                 for item in &page_items {
-                    if let Some(meta) = parse_item(item) {
+                    if let Some(mut meta) = parse_item(item) {
+                        if self.recover_stale_enriching(&mut meta).await {
+                            tracing::warn!(
+                                investigation_id = %meta.id,
+                                "auto-recovered stuck enriching investigation"
+                            );
+                        }
                         items.push(meta);
                     }
                 }
@@ -172,6 +199,49 @@ impl DynamoInvestigationStore {
         // Sort by created_at descending
         items.sort_by(|a, b| b.created_at.cmp(&a.created_at));
         Ok(items)
+    }
+
+    /// Check if an investigation is stuck in "enriching" and auto-recover to "active".
+    ///
+    /// Returns `true` if the status was recovered.
+    async fn recover_stale_enriching(&self, meta: &mut InvestigationMetadata) -> bool {
+        if meta.status != "enriching" {
+            return false;
+        }
+
+        let is_stale = DateTime::parse_from_rfc3339(&meta.updated_at)
+            .map(|updated| {
+                let age = Utc::now() - updated.with_timezone(&Utc);
+                age.num_minutes() > ENRICHING_TIMEOUT_MINUTES
+            })
+            .unwrap_or(true); // If we can't parse the timestamp, assume stale
+
+        if !is_stale {
+            return false;
+        }
+
+        meta.status = "active".into();
+        meta.error = Some("enrichment timed out after 1 hour".into());
+
+        // Best-effort update in DynamoDB — don't fail the read if this fails
+        if let Err(e) = self
+            .update_status(
+                &meta.id,
+                "active",
+                None,
+                None,
+                Some("enrichment timed out after 1 hour"),
+            )
+            .await
+        {
+            tracing::error!(
+                investigation_id = %meta.id,
+                error = %e,
+                "failed to update stale enriching status in DynamoDB"
+            );
+        }
+
+        true
     }
 
     /// Delete an investigation record.

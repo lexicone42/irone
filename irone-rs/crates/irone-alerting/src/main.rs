@@ -5,6 +5,7 @@ use chrono::Utc;
 use irone_aws::health_cache::HealthCacheClient;
 use irone_aws::security_hub::SecurityHubNotifier;
 use irone_aws::sns::SnsNotifier;
+use irone_core::audit;
 use irone_core::catalog::DataCatalog;
 use irone_core::detections::{DetectionResult, DetectionRunner, Severity};
 use irone_core::graph::GraphBuilder;
@@ -126,6 +127,7 @@ async fn run_detections(sdk_config: &aws_config::SdkConfig) -> Result<AlertResul
         if result.severity == Severity::Critical || result.severity == Severity::High {
             match auto_investigate(sdk_config, result).await {
                 Ok(inv_id) => {
+                    audit::investigation_created("alerting-lambda", &inv_id, &result.rule_name);
                     tracing::info!(
                         rule_id = %result.rule_id,
                         investigation_id = %inv_id,
@@ -143,6 +145,8 @@ async fn run_detections(sdk_config: &aws_config::SdkConfig) -> Result<AlertResul
             }
         }
     }
+
+    audit::detection_run("alerting-lambda", rules_checked, triggered_count);
 
     Ok(AlertResult {
         check_type: "detections".into(),

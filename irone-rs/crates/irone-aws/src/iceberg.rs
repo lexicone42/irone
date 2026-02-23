@@ -692,7 +692,7 @@ impl DataConnector for IcebergConnector {
     async fn query(
         &self,
         sql: &str,
-    ) -> Result<QueryResult, Box<dyn std::error::Error + Send + Sync>> {
+    ) -> Result<QueryResult, irone_core::connectors::base::ConnectorError> {
         // The Iceberg connector doesn't support arbitrary SQL.
         // For SQL queries, callers should use the Athena connector.
         // This method exists for trait compatibility and does a full table scan
@@ -710,7 +710,7 @@ impl DataConnector for IcebergConnector {
 
     async fn get_schema(
         &self,
-    ) -> Result<HashMap<String, String>, Box<dyn std::error::Error + Send + Sync>> {
+    ) -> Result<HashMap<String, String>, irone_core::connectors::base::ConnectorError> {
         let table = self.load_table().await?;
         let schema = table.metadata().current_schema();
         let mut result = HashMap::new();
@@ -722,7 +722,7 @@ impl DataConnector for IcebergConnector {
 
     async fn check_health(
         &self,
-    ) -> Result<HealthCheckResult, Box<dyn std::error::Error + Send + Sync>> {
+    ) -> Result<HealthCheckResult, irone_core::connectors::base::ConnectorError> {
         let start = std::time::Instant::now();
         let now = Utc::now();
         let one_hour_ago = now - chrono::Duration::hours(1);

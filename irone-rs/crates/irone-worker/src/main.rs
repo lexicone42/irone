@@ -228,3 +228,123 @@ async fn main() -> Result<(), Error> {
 
     lambda_runtime::run(service_fn(handler)).await
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use irone_core::detections::{DetectionResult, Severity};
+    use irone_core::graph::{SecurityGraph, extract_attack_paths, extract_timeline_from_graph};
+
+    fn sample_detection_result() -> DetectionResult {
+        DetectionResult {
+            rule_id: "CT-001".into(),
+            rule_name: "Root Console Login".into(),
+            triggered: true,
+            severity: Severity::Critical,
+            match_count: 2,
+            matches: vec![{
+                let v = serde_json::json!({
+                    "actor": { "user": { "name": "root" } },
+                    "api": { "operation": "ConsoleLogin" },
+                    "time": "2026-02-23T12:00:00Z",
+                    "src_endpoint": { "ip": "198.51.100.1" }
+                });
+                v.as_object().unwrap().clone()
+            }],
+            message: "Root account console login detected".into(),
+            executed_at: chrono::Utc::now(),
+            execution_time_ms: 100.0,
+            error: None,
+        }
+    }
+
+    #[test]
+    fn worker_event_deserializes() {
+        let json = serde_json::json!({
+            "action": "enrich",
+            "investigation_id": "inv-123",
+            "rule_id": "CT-001",
+            "source_name": "cloudtrail",
+            "enrichment_window_minutes": 120,
+            "bucket": "my-report-bucket"
+        });
+        let event: WorkerEvent = serde_json::from_value(json).unwrap();
+        assert_eq!(event.action, "enrich");
+        assert_eq!(event.investigation_id, "inv-123");
+        assert_eq!(event.rule_id, "CT-001");
+        assert_eq!(event.source_name, "cloudtrail");
+        assert_eq!(event.enrichment_window_minutes, 120);
+        assert_eq!(event.bucket, "my-report-bucket");
+    }
+
+    #[test]
+    fn worker_result_serializes() {
+        let result = WorkerResult {
+            investigation_id: "inv-123".into(),
+            node_count: 10,
+            edge_count: 15,
+            attack_path_count: 2,
+        };
+        let json = serde_json::to_value(&result).unwrap();
+        assert_eq!(json["investigation_id"], "inv-123");
+        assert_eq!(json["node_count"], 10);
+        assert_eq!(json["edge_count"], 15);
+        assert_eq!(json["attack_path_count"], 2);
+    }
+
+    #[test]
+    fn detection_result_round_trips_through_json() {
+        let result = sample_detection_result();
+        let bytes = serde_json::to_vec(&result).unwrap();
+        let deserialized: DetectionResult = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(deserialized.rule_id, "CT-001");
+        assert_eq!(deserialized.match_count, 2);
+        assert!(deserialized.triggered);
+    }
+
+    #[test]
+    fn graph_builder_produces_graph_from_detection() {
+        // Verify the non-enrichment path (no connector) works
+        let result = sample_detection_result();
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let mut builder = GraphBuilder::new();
+            Box::pin(
+                builder.build_from_detection::<irone_aws::ConnectorKind>(&result, None, 0, 0, true),
+            )
+            .await;
+            let graph = builder.into_graph();
+            // Should have at least the actor node from the match
+            assert!(
+                !graph.nodes.is_empty(),
+                "graph should have nodes from detection matches"
+            );
+        });
+    }
+
+    #[test]
+    fn timeline_extraction_from_empty_graph() {
+        let graph = SecurityGraph::new();
+        let timeline = extract_timeline_from_graph(&graph, true, true);
+        assert!(timeline.events.is_empty());
+    }
+
+    #[test]
+    fn attack_paths_from_empty_graph() {
+        let graph = SecurityGraph::new();
+        let paths = extract_attack_paths(&graph);
+        assert!(paths.is_empty());
+    }
+
+    #[test]
+    fn graph_artifacts_serialize_to_json() {
+        let graph = SecurityGraph::new();
+        let timeline = extract_timeline_from_graph(&graph, true, true);
+        let paths = extract_attack_paths(&graph);
+
+        // All artifacts must be JSON-serializable (worker writes them to S3)
+        assert!(serde_json::to_vec(&graph).is_ok());
+        assert!(serde_json::to_vec(&timeline).is_ok());
+        assert!(serde_json::to_vec(&paths).is_ok());
+    }
+}

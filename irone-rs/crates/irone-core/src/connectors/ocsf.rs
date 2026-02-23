@@ -184,6 +184,8 @@ pub enum SecurityLakeError {
     InvalidParameter(String),
     #[error(transparent)]
     Other(#[from] Box<dyn std::error::Error + Send + Sync>),
+    #[error(transparent)]
+    Connector(#[from] super::base::ConnectorError),
 }
 
 /// Typed predicate for filtering OCSF event rows.

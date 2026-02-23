@@ -130,7 +130,7 @@ impl DataConnector for AthenaConnector {
     async fn query(
         &self,
         sql: &str,
-    ) -> Result<QueryResult, Box<dyn std::error::Error + Send + Sync>> {
+    ) -> Result<QueryResult, irone_core::connectors::base::ConnectorError> {
         let database = self.source.database.as_deref().unwrap_or("default");
 
         let mut req = self
@@ -186,7 +186,7 @@ impl DataConnector for AthenaConnector {
 
     async fn get_schema(
         &self,
-    ) -> Result<HashMap<String, String>, Box<dyn std::error::Error + Send + Sync>> {
+    ) -> Result<HashMap<String, String>, irone_core::connectors::base::ConnectorError> {
         let Some(ref table) = self.source.table else {
             return Ok(HashMap::new());
         };
@@ -216,7 +216,7 @@ impl DataConnector for AthenaConnector {
 
     async fn check_health(
         &self,
-    ) -> Result<HealthCheckResult, Box<dyn std::error::Error + Send + Sync>> {
+    ) -> Result<HealthCheckResult, irone_core::connectors::base::ConnectorError> {
         let start_time = Instant::now();
 
         let sql = if let Some(ref custom_query) = self.source.health_check_query {

@@ -66,6 +66,21 @@ impl AwsError {
     }
 }
 
+impl From<AwsError> for irone_core::connectors::base::ConnectorError {
+    fn from(e: AwsError) -> Self {
+        match &e {
+            AwsError::QueryTimeout { .. } => Self::Transient {
+                message: e.to_string(),
+                source: Some(Box::new(e)),
+            },
+            _ => Self::Permanent {
+                message: e.to_string(),
+                source: Some(Box::new(e)),
+            },
+        }
+    }
+}
+
 /// Parse an S3 location URI into (bucket, key).
 ///
 /// # Errors

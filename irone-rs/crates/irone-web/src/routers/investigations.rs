@@ -7,6 +7,7 @@ use axum::{Json, Router};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
+use irone_core::audit;
 use irone_core::graph::{
     AttackNarrative, EdgeType, EventTag, GraphBuilder, GraphEdge, GraphNode, InvestigationTimeline,
     NodeType, SecurityGraph, extract_attack_paths, extract_timeline_from_graph,
@@ -94,6 +95,82 @@ pub struct TagEventRequest {
     pub notes: String,
 }
 
+/// Maximum number of identifiers (users/IPs) per request.
+const MAX_IDENTIFIERS: usize = 100;
+
+/// Maximum name length.
+const MAX_NAME_LENGTH: usize = 256;
+
+/// Maximum lookback window in minutes (7 days).
+const MAX_LOOKBACK_MINUTES: i64 = 10080;
+
+impl CreateInvestigationRequest {
+    fn validate(&self) -> Result<(), WebError> {
+        if self.users.len() > MAX_IDENTIFIERS {
+            return Err(WebError::BadRequest(format!(
+                "too many users (max {MAX_IDENTIFIERS}, got {})",
+                self.users.len()
+            )));
+        }
+        if self.ips.len() > MAX_IDENTIFIERS {
+            return Err(WebError::BadRequest(format!(
+                "too many IPs (max {MAX_IDENTIFIERS}, got {})",
+                self.ips.len()
+            )));
+        }
+        if let Some(ref name) = self.name
+            && name.len() > MAX_NAME_LENGTH
+        {
+            return Err(WebError::BadRequest(format!(
+                "name too long (max {MAX_NAME_LENGTH} chars)"
+            )));
+        }
+        if let (Some(start), Some(end)) = (self.start, self.end) {
+            if start >= end {
+                return Err(WebError::BadRequest(
+                    "start time must be before end time".into(),
+                ));
+            }
+            let range = end - start;
+            if range.num_minutes() > MAX_LOOKBACK_MINUTES {
+                return Err(WebError::BadRequest(format!(
+                    "time range too large (max {} days)",
+                    MAX_LOOKBACK_MINUTES / 1440
+                )));
+            }
+        }
+        Ok(())
+    }
+}
+
+impl CreateFromDetectionRequest {
+    fn validate(&self) -> Result<(), WebError> {
+        if self.rule_id.is_empty() {
+            return Err(WebError::BadRequest("rule_id is required".into()));
+        }
+        if self.lookback_minutes <= 0 || self.lookback_minutes > MAX_LOOKBACK_MINUTES {
+            return Err(WebError::BadRequest(format!(
+                "lookback_minutes must be 1..{MAX_LOOKBACK_MINUTES}"
+            )));
+        }
+        if self.enrichment_window_minutes <= 0
+            || self.enrichment_window_minutes > MAX_LOOKBACK_MINUTES
+        {
+            return Err(WebError::BadRequest(format!(
+                "enrichment_window_minutes must be 1..{MAX_LOOKBACK_MINUTES}"
+            )));
+        }
+        if let Some(ref name) = self.name
+            && name.len() > MAX_NAME_LENGTH
+        {
+            return Err(WebError::BadRequest(format!(
+                "name too long (max {MAX_NAME_LENGTH} chars)"
+            )));
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Serialize)]
 pub struct InvestigationSummary {
     pub id: String,
@@ -174,6 +251,7 @@ async fn create_investigation(
     State(state): State<AppState>,
     Json(body): Json<CreateInvestigationRequest>,
 ) -> Result<Json<InvestigationSummary>, WebError> {
+    body.validate()?;
     let inv_id = uuid::Uuid::new_v4().to_string();
     let name = body
         .name
@@ -230,6 +308,8 @@ async fn create_investigation(
         .await
         .insert(inv_id.clone(), inv);
 
+    audit::investigation_created("api", &inv_id, &name);
+
     Ok(Json(InvestigationSummary {
         id: inv_id,
         name,
@@ -246,6 +326,7 @@ async fn create_from_detection(
     State(state): State<AppState>,
     Json(body): Json<CreateFromDetectionRequest>,
 ) -> Result<Json<CreateFromDetectionResponse>, WebError> {
+    body.validate()?;
     // 1. Check rule exists and get its preferred data source
     let rule = state
         .runner
@@ -492,6 +573,8 @@ async fn create_from_detection(
             }
         }
     }
+
+    audit::investigation_created("api", &inv_id, &name);
 
     Ok(Json(CreateFromDetectionResponse {
         investigation_id: inv_id,
@@ -802,9 +885,12 @@ async fn enrich_investigation(
             .ok_or_else(|| WebError::NotFound(format!("investigation '{inv_id}' not found")))?;
 
         // Mark as enriching
-        let _ = ddb_store
+        if let Err(e) = ddb_store
             .update_status(&inv_id, "enriching", None, None, None)
-            .await;
+            .await
+        {
+            tracing::error!(investigation_id = %inv_id, error = %e, "failed to mark investigation as enriching");
+        }
 
         let sfn_input = serde_json::json!({
             "action": "enrich",
@@ -824,6 +910,7 @@ async fn enrich_investigation(
             .await
             .map_err(|e| WebError::Internal(format!("failed to start Step Function: {e}")))?;
 
+        audit::investigation_enriched("api", &inv_id, 0, 0);
         return Ok(Json(serde_json::json!({
             "enriching": true,
             "investigation_id": inv_id,
@@ -888,14 +975,26 @@ async fn enrich_investigation(
             let id = inv.id.clone();
             let graph = inv.graph.clone();
             let timeline = inv.timeline.clone();
-            let _ = tokio::task::spawn_blocking(move || {
-                let _ = store.save_graph(&id, &graph);
-                let _ = store.save_timeline(&id, &timeline);
-                let _ = store.delete_artifacts(&id);
+            match tokio::task::spawn_blocking(move || {
+                if let Err(e) = store.save_graph(&id, &graph) {
+                    tracing::error!(investigation_id = %id, error = %e, "failed to save enriched graph");
+                }
+                if let Err(e) = store.save_timeline(&id, &timeline) {
+                    tracing::error!(investigation_id = %id, error = %e, "failed to save enriched timeline");
+                }
+                if let Err(e) = store.delete_artifacts(&id) {
+                    tracing::error!(investigation_id = %id, error = %e, "failed to delete stale artifacts");
+                }
             })
-            .await;
+            .await
+            {
+                Ok(()) => {}
+                Err(e) => tracing::error!(error = %e, "enrichment persist task panicked"),
+            }
         }
     }
+
+    audit::investigation_enriched("api", &inv_id, node_count, edge_count);
 
     Ok(Json(serde_json::json!({
         "enriched": true,
@@ -932,12 +1031,22 @@ async fn tag_timeline_event(
         let event_id = body.event_id.clone();
         let tag = body.tag.to_string();
         let notes = body.notes.clone();
-        let _ = tokio::task::spawn_blocking(move || {
-            let _ = store.tag_event(&inv_id, &event_id, &tag, &notes);
-            let _ = store.delete_artifacts(&inv_id);
+        match tokio::task::spawn_blocking(move || {
+            if let Err(e) = store.tag_event(&inv_id, &event_id, &tag, &notes) {
+                tracing::error!(investigation_id = %inv_id, event_id = %event_id, error = %e, "failed to persist event tag");
+            }
+            if let Err(e) = store.delete_artifacts(&inv_id) {
+                tracing::error!(investigation_id = %inv_id, error = %e, "failed to delete stale artifacts after tagging");
+            }
         })
-        .await;
+        .await
+        {
+            Ok(()) => {}
+            Err(e) => tracing::error!(error = %e, "tag persist task panicked"),
+        }
     }
+
+    audit::timeline_event_tagged("api", &inv_id, &body.event_id, &body.tag.to_string());
 
     Ok(Json(serde_json::json!({
         "tagged": true,
@@ -960,6 +1069,7 @@ async fn delete_investigation(
         // Also remove from in-memory cache
         state.investigations.write().await.remove(&inv_id);
         // Note: S3 artifacts are left for TTL/lifecycle cleanup
+        audit::investigation_deleted("api", &inv_id);
         return Ok(Json(serde_json::json!({ "deleted": inv_id })));
     }
 
@@ -974,9 +1084,19 @@ async fn delete_investigation(
     if let Some(ref store) = state.investigation_store {
         let store = Arc::clone(store);
         let id = inv_id.clone();
-        let _ = tokio::task::spawn_blocking(move || store.delete_investigation(&id)).await;
+        match tokio::task::spawn_blocking(move || {
+            if let Err(e) = store.delete_investigation(&id) {
+                tracing::error!(investigation_id = %id, error = %e, "failed to delete investigation from persistence");
+            }
+        })
+        .await
+        {
+            Ok(()) => {}
+            Err(e) => tracing::error!(error = %e, "delete persist task panicked"),
+        }
     }
 
+    audit::investigation_deleted("api", &inv_id);
     Ok(Json(serde_json::json!({ "deleted": inv_id })))
 }
 
@@ -1713,10 +1833,18 @@ async fn persist_investigation(state: &AppState, inv: &Investigation) {
         let created_at = inv.created_at;
         let status = inv.status.clone();
 
-        let _ = tokio::task::spawn_blocking(move || {
-            let _ = store.save_investigation(&id, &name, &graph, Some(created_at), None, &status);
-            let _ = store.save_timeline(&id, &timeline);
+        match tokio::task::spawn_blocking(move || {
+            if let Err(e) = store.save_investigation(&id, &name, &graph, Some(created_at), None, &status) {
+                tracing::error!(investigation_id = %id, error = %e, "failed to persist investigation");
+            }
+            if let Err(e) = store.save_timeline(&id, &timeline) {
+                tracing::error!(investigation_id = %id, error = %e, "failed to persist timeline");
+            }
         })
-        .await;
+        .await
+        {
+            Ok(()) => {}
+            Err(e) => tracing::error!(error = %e, "persist_investigation task panicked"),
+        }
     }
 }

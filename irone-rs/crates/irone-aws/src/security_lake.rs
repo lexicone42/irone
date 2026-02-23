@@ -57,19 +57,19 @@ impl DataConnector for SecurityLakeConnector {
     async fn query(
         &self,
         sql: &str,
-    ) -> Result<QueryResult, Box<dyn std::error::Error + Send + Sync>> {
+    ) -> Result<QueryResult, irone_core::connectors::base::ConnectorError> {
         self.inner.query(sql).await
     }
 
     async fn get_schema(
         &self,
-    ) -> Result<HashMap<String, String>, Box<dyn std::error::Error + Send + Sync>> {
+    ) -> Result<HashMap<String, String>, irone_core::connectors::base::ConnectorError> {
         self.inner.get_schema().await
     }
 
     async fn check_health(
         &self,
-    ) -> Result<HealthCheckResult, Box<dyn std::error::Error + Send + Sync>> {
+    ) -> Result<HealthCheckResult, irone_core::connectors::base::ConnectorError> {
         let start = std::time::Instant::now();
         let table = quote_table(
             self.source().database.as_deref().unwrap_or("default"),

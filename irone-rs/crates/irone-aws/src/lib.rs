@@ -4,6 +4,7 @@ pub mod error;
 pub mod health_cache;
 pub mod iam;
 pub mod iceberg;
+pub mod secrets;
 pub mod security_hub;
 pub mod security_lake;
 pub mod sns;
@@ -13,7 +14,7 @@ use std::collections::HashMap;
 use chrono::{DateTime, Utc};
 
 use irone_core::catalog::DataSource;
-use irone_core::connectors::base::{DataConnector, HealthCheckResult};
+use irone_core::connectors::base::{ConnectorError, DataConnector, HealthCheckResult};
 use irone_core::connectors::ocsf::{
     ColumnFilter, OCSFEventClass, SecurityLakeError, SecurityLakeQueries,
 };
@@ -43,22 +44,15 @@ macro_rules! delegate {
 
 #[allow(async_fn_in_trait)]
 impl DataConnector for ConnectorKind {
-    async fn query(
-        &self,
-        sql: &str,
-    ) -> Result<QueryResult, Box<dyn std::error::Error + Send + Sync>> {
+    async fn query(&self, sql: &str) -> Result<QueryResult, ConnectorError> {
         delegate!(self, query(sql))
     }
 
-    async fn get_schema(
-        &self,
-    ) -> Result<HashMap<String, String>, Box<dyn std::error::Error + Send + Sync>> {
+    async fn get_schema(&self) -> Result<HashMap<String, String>, ConnectorError> {
         delegate!(self, get_schema())
     }
 
-    async fn check_health(
-        &self,
-    ) -> Result<HealthCheckResult, Box<dyn std::error::Error + Send + Sync>> {
+    async fn check_health(&self) -> Result<HealthCheckResult, ConnectorError> {
         delegate!(self, check_health())
     }
 }
