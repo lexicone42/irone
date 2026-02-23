@@ -1,0 +1,23 @@
+id: canary-sts-identity
+name: "Canary: STS GetCallerIdentity"
+description: >
+  Test canary rule — triggers on any sts:GetCallerIdentity call.
+  Use `aws sts get-caller-identity` to generate a match on demand.
+  Threshold of 1 ensures it fires on a single call. Useful for
+  end-to-end testing of the detection → investigation → enrichment
+  pipeline without waiting for real security events.
+severity: low
+event_class: api_activity
+limit: 100
+threshold: 1
+tags:
+  - canary
+  - testing
+mitre_attack: []
+data_sources:
+  - cloudtrail
+filters:
+  - field: api.operation
+    equals: GetCallerIdentity
+  - field: api.service.name
+    equals: sts.amazonaws.com

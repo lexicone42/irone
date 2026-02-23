@@ -109,53 +109,15 @@ impl GraphBuilder {
             let end_time = result.executed_at;
             let start_time = end_time - Duration::minutes(enrichment_window_minutes);
 
-            // Run all enrichment queries in parallel, then process results
-            let enrichment_results = Self::run_enrichment_parallel(
+            self.run_enrichment(
                 &enricher,
                 &identifiers,
                 start_time,
                 end_time,
                 max_related_events,
+                include_events,
             )
             .await;
-
-            for qr in &enrichment_results {
-                if !qr.is_empty() {
-                    self.process_query_result(qr, include_events);
-                }
-            }
-
-            // Run lateral movement tracing for top IPs (cap at 3 to stay within time budget)
-            let trace_ips: Vec<String> = identifiers.ips.iter().take(3).cloned().collect();
-            for ip in &trace_ips {
-                let trace = enricher
-                    .trace_lateral_movement(ip, start_time, end_time, max_related_events / 2)
-                    .await;
-                for qr in &trace.hop_results {
-                    if !qr.is_empty() {
-                        self.process_query_result(qr, include_events);
-                    }
-                }
-            }
-
-            // Compute anomaly scores from all enrichment data
-            let anomalies = score_entity_anomalies(&enrichment_results, 1.0);
-            if !anomalies.is_empty() {
-                let scores: Vec<Value> = anomalies
-                    .iter()
-                    .map(|a| {
-                        serde_json::json!({
-                            "entity": a.entity,
-                            "kind": a.kind,
-                            "event_count": a.event_count,
-                            "z_score": (a.z_score * 100.0).round() / 100.0,
-                        })
-                    })
-                    .collect();
-                self.graph
-                    .metadata
-                    .insert("anomaly_scores".into(), Value::Array(scores));
-            }
         }
 
         info!(
@@ -198,52 +160,15 @@ impl GraphBuilder {
             ..Default::default()
         };
 
-        let enrichment_results = Self::run_enrichment_parallel(
+        self.run_enrichment(
             &enricher,
             &identifiers,
             start_time,
             end_time,
             max_events,
+            include_events,
         )
         .await;
-
-        for qr in &enrichment_results {
-            if !qr.is_empty() {
-                self.process_query_result(qr, include_events);
-            }
-        }
-
-        // Lateral movement tracing for provided IPs (cap at 3)
-        let trace_ips: Vec<&String> = ips.iter().take(3).collect();
-        for ip in trace_ips {
-            let trace = enricher
-                .trace_lateral_movement(ip, start_time, end_time, max_events / 2)
-                .await;
-            for qr in &trace.hop_results {
-                if !qr.is_empty() {
-                    self.process_query_result(qr, include_events);
-                }
-            }
-        }
-
-        // Anomaly scoring
-        let anomalies = score_entity_anomalies(&enrichment_results, 1.0);
-        if !anomalies.is_empty() {
-            let scores: Vec<Value> = anomalies
-                .iter()
-                .map(|a| {
-                    serde_json::json!({
-                        "entity": a.entity,
-                        "kind": a.kind,
-                        "event_count": a.event_count,
-                        "z_score": (a.z_score * 100.0).round() / 100.0,
-                    })
-                })
-                .collect();
-            self.graph
-                .metadata
-                .insert("anomaly_scores".into(), Value::Array(scores));
-        }
 
         &self.graph
     }
@@ -790,6 +715,62 @@ impl GraphBuilder {
             results.push(domain_result);
         }
         results
+    }
+
+    /// Run enrichment, lateral movement, and anomaly scoring for extracted identifiers.
+    async fn run_enrichment<S: SecurityLakeQueries>(
+        &mut self,
+        enricher: &SecurityLakeEnricher<'_, S>,
+        identifiers: &ExtractedIdentifiers,
+        start: DateTime<Utc>,
+        end: DateTime<Utc>,
+        limit: usize,
+        include_events: bool,
+    ) {
+        let enrichment_results =
+            Self::run_enrichment_parallel(enricher, identifiers, start, end, limit).await;
+
+        for qr in &enrichment_results {
+            if !qr.is_empty() {
+                self.process_query_result(qr, include_events);
+            }
+        }
+
+        // Run lateral movement tracing only when time budget allows.
+        // Each hop is a separate query (~5s for CloudTrail), so skip when
+        // limit is low (indicating a tight time budget).
+        if limit > 200 {
+            let trace_ips: Vec<String> = identifiers.ips.iter().take(1).cloned().collect();
+            for ip in &trace_ips {
+                let trace = enricher
+                    .trace_lateral_movement(ip, start, end, limit.min(200))
+                    .await;
+                for qr in &trace.hop_results {
+                    if !qr.is_empty() {
+                        self.process_query_result(qr, include_events);
+                    }
+                }
+            }
+        }
+
+        // Compute anomaly scores from all enrichment data
+        let anomalies = score_entity_anomalies(&enrichment_results, 1.0);
+        if !anomalies.is_empty() {
+            let scores: Vec<Value> = anomalies
+                .iter()
+                .map(|a| {
+                    serde_json::json!({
+                        "entity": a.entity,
+                        "kind": a.kind,
+                        "event_count": a.event_count,
+                        "z_score": (a.z_score * 100.0).round() / 100.0,
+                    })
+                })
+                .collect();
+            self.graph
+                .metadata
+                .insert("anomaly_scores".into(), Value::Array(scores));
+        }
     }
 }
 

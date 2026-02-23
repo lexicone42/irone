@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::path::Path;
-use std::time::Duration as StdDuration;
+use std::time::{Duration as StdDuration, Instant};
 
 use chrono::{DateTime, Duration, Utc};
 use regex::Regex;
@@ -11,7 +11,7 @@ use super::rule::{
     FieldFilter, FilterOp, OCSFDetectionRule, SQLDetectionRule, Severity, apply_filters,
 };
 use crate::connectors::base::DataConnector;
-use crate::connectors::ocsf::{OCSFEventClass, SecurityLakeQueries};
+use crate::connectors::ocsf::{ColumnFilter, OCSFEventClass, SecurityLakeQueries};
 
 /// Runs detection rules against data source connectors.
 ///
@@ -79,8 +79,13 @@ impl DetectionRunner {
 
         let end = end.unwrap_or_else(Utc::now);
         let start = start.unwrap_or_else(|| end - Duration::minutes(lookback_minutes));
+        let timer = Instant::now();
 
         let detection_query = rule.build_query(start, end);
+
+        // Split YAML filters: pushable ones become ColumnFilters for the connector,
+        // non-pushable ones (Contains, NotEquals, Regex) remain as post-query filters.
+        let (pushdown_filters, post_filters) = split_filters(rule.filters());
 
         let query_future = async {
             match &detection_query {
@@ -93,14 +98,21 @@ impl DetectionRunner {
                     connector.query(sql).await.map_err(|e| e.to_string())
                 }
                 DetectionQuery::Ocsf { event_class, limit } => {
+                    let cf = if pushdown_filters.is_empty() {
+                        None
+                    } else {
+                        Some(pushdown_filters.as_slice())
+                    };
                     debug!(
                         rule_id,
                         event_class = %event_class,
                         limit,
+                        pushdown = pushdown_filters.len(),
+                        post_filter = post_filters.len(),
                         "Executing OCSF detection query"
                     );
                     connector
-                        .query_by_event_class(*event_class, start, end, *limit, None)
+                        .query_by_event_class(*event_class, start, end, *limit, cf)
                         .await
                         .map_err(|e| e.to_string())
                 }
@@ -123,16 +135,18 @@ impl DetectionRunner {
             }
         };
 
-        // Apply post-query Rust-native filters (returns None if no filters → use original)
-        let filtered = apply_filters(&qr, rule.filters());
+        // Apply remaining non-pushable filters post-query
+        let filtered = apply_filters(&qr, &post_filters);
         let eval_qr = filtered.as_ref().unwrap_or(&qr);
 
-        let result = rule.evaluate(eval_qr);
+        let mut result = rule.evaluate(eval_qr);
+        result.execution_time_ms = timer.elapsed().as_secs_f64() * 1000.0;
         info!(
             rule_id,
             triggered = result.triggered,
             match_count = result.match_count,
             pre_filter_count = qr.len(),
+            execution_time_ms = result.execution_time_ms,
             "Detection completed"
         );
         result
@@ -459,6 +473,29 @@ fn parse_filters(
     Ok(filters)
 }
 
+/// Split `FieldFilter`s into pushdown `ColumnFilter`s and remaining post-query `FieldFilter`s.
+///
+/// `Equals` → `StringEquals`, `In` → `StringIn` (pushable).
+/// `Contains`, `NotEquals`, `Regex` stay as post-query filters.
+fn split_filters(filters: &[FieldFilter]) -> (Vec<ColumnFilter>, Vec<FieldFilter>) {
+    let mut pushdown = Vec::new();
+    let mut post = Vec::new();
+    for f in filters {
+        match &f.op {
+            FilterOp::Equals(val) => pushdown.push(ColumnFilter::StringEquals {
+                path: f.field.clone(),
+                value: val.clone(),
+            }),
+            FilterOp::In(vals) => pushdown.push(ColumnFilter::StringIn {
+                path: f.field.clone(),
+                values: vals.clone(),
+            }),
+            _ => post.push(f.clone()),
+        }
+    }
+    (pushdown, post)
+}
+
 #[cfg(test)]
 mod tests {
     use std::io::Write;
@@ -626,7 +663,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn run_ocsf_rule_with_filters() {
+    async fn run_ocsf_rule_with_pushdown_filters() {
+        // Equals filters are pushed down as ColumnFilters to the connector.
+        // The mock connector ignores them, so all 3 rows survive.
         let mut runner = DetectionRunner::new();
         let rule = OCSFDetectionRule {
             meta: DetectionMetadata {
@@ -650,7 +689,6 @@ mod tests {
         };
         runner.register_rule(Box::new(rule));
 
-        // Mock returns 3 rows, but only 2 have status_id=1
         let connector = MockConnector {
             result: QueryResult::from_maps(vec![
                 json_row!("status_id" => "1", "op" => "AttachUserPolicy"),
@@ -662,7 +700,79 @@ mod tests {
             .run_rule("ocsf-test", &connector, None, None, 15)
             .await;
         assert!(result.triggered);
-        assert_eq!(result.match_count, 2); // Filtered from 3 to 2
+        // Mock ignores ColumnFilter, so all 3 rows survive (real connector would filter)
+        assert_eq!(result.match_count, 3);
+    }
+
+    #[tokio::test]
+    async fn run_ocsf_rule_with_post_query_filters() {
+        // Contains/NotEquals/Regex filters stay as post-query filters.
+        let mut runner = DetectionRunner::new();
+        let rule = OCSFDetectionRule {
+            meta: DetectionMetadata {
+                id: "ocsf-post".into(),
+                name: "OCSF Post".into(),
+                severity: Severity::High,
+                enabled: true,
+                ..serde_json::from_str::<DetectionMetadata>(
+                    r#"{"id":"ocsf-post","name":"OCSF Post","severity":"high"}"#,
+                )
+                .unwrap()
+            },
+            event_class: OCSFEventClass::ApiActivity,
+            rule_filters: vec![FieldFilter {
+                field: "op".into(),
+                op: FilterOp::Contains("Policy".into()),
+            }],
+            threshold: 1,
+            limit: 5000,
+            group_by_fields: Vec::new(),
+        };
+        runner.register_rule(Box::new(rule));
+
+        let connector = MockConnector {
+            result: QueryResult::from_maps(vec![
+                json_row!("status_id" => "1", "op" => "AttachUserPolicy"),
+                json_row!("status_id" => "2", "op" => "ListBuckets"),
+                json_row!("status_id" => "1", "op" => "PutRolePolicy"),
+            ]),
+        };
+        let result = runner
+            .run_rule("ocsf-post", &connector, None, None, 15)
+            .await;
+        assert!(result.triggered);
+        assert_eq!(result.match_count, 2); // Contains("Policy") matches 2 of 3
+    }
+
+    #[test]
+    fn split_filters_separates_pushable_and_post() {
+        let filters = vec![
+            FieldFilter {
+                field: "api.operation".into(),
+                op: FilterOp::Equals("GetCallerIdentity".into()),
+            },
+            FieldFilter {
+                field: "status".into(),
+                op: FilterOp::Contains("Success".into()),
+            },
+            FieldFilter {
+                field: "api.service.name".into(),
+                op: FilterOp::In(vec!["sts".into(), "iam".into()]),
+            },
+            FieldFilter {
+                field: "actor".into(),
+                op: FilterOp::NotEquals("root".into()),
+            },
+        ];
+        let (pushdown, post) = super::split_filters(&filters);
+        assert_eq!(pushdown.len(), 2); // Equals + In
+        assert_eq!(post.len(), 2); // Contains + NotEquals
+        assert!(
+            matches!(&pushdown[0], ColumnFilter::StringEquals { path, .. } if path == "api.operation")
+        );
+        assert!(
+            matches!(&pushdown[1], ColumnFilter::StringIn { path, .. } if path == "api.service.name")
+        );
     }
 
     #[tokio::test]

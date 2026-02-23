@@ -1,0 +1,20 @@
+id: canary-lambda-invoke
+name: "Canary: Lambda Invoke"
+description: >
+  Test canary rule — triggers on any Lambda Invoke event.
+  Threshold of 1 ensures it fires immediately since Lambda functions
+  are always invoking. Useful for end-to-end testing of the
+  detection → investigation → enrichment pipeline.
+severity: low
+event_class: api_activity
+limit: 200
+threshold: 1
+tags:
+  - canary
+  - testing
+mitre_attack: []
+data_sources:
+  - lambda-execution
+filters:
+  - field: api.operation
+    equals: Invoke

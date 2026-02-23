@@ -285,7 +285,7 @@ async fn create_from_detection(
         &result,
         Some(&connector),
         body.enrichment_window_minutes,
-        500,
+        200,
         true,
     ))
     .await;
@@ -351,6 +351,7 @@ async fn get_investigation(
         "status": inv.status,
         "graph_summary": summary,
         "timeline_summary": timeline_summary,
+        "metadata": inv.graph.metadata,
     })))
 }
 

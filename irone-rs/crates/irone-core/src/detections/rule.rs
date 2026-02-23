@@ -251,7 +251,6 @@ pub fn threshold_evaluate(
     qr: &QueryResult,
     threshold: usize,
 ) -> DetectionResult {
-    let start = Utc::now();
     let match_count = qr.len();
     let triggered = match_count >= threshold;
 
@@ -271,9 +270,6 @@ pub fn threshold_evaluate(
         )
     };
 
-    #[allow(clippy::cast_precision_loss)]
-    let execution_time_ms = (Utc::now() - start).num_microseconds().unwrap_or(0) as f64 / 1000.0;
-
     DetectionResult {
         rule_id: rule_id.into(),
         rule_name: rule_name.into(),
@@ -283,7 +279,7 @@ pub fn threshold_evaluate(
         matches,
         message,
         executed_at: Utc::now(),
-        execution_time_ms,
+        execution_time_ms: 0.0, // Set by caller (run_rule) to include query time
         error: None,
     }
 }
