@@ -1,3 +1,4 @@
+use chrono::Duration;
 use irone_core::catalog::DataCatalog;
 use irone_core::graph::{GraphBuilder, extract_timeline_from_graph};
 use lambda_runtime::{Error, LambdaEvent, service_fn};
@@ -98,6 +99,46 @@ async fn handler(event: LambdaEvent<WorkerEvent>) -> Result<WorkerResult, Error>
         true,
     ))
     .await;
+
+    // 3b. Cross-source enrichment: query related sources for same entities
+    if let Some(identifiers) = builder.last_identifiers().cloned() {
+        let cross_sources = ["cloudtrail", "vpc-flow", "route53", "lambda-execution"];
+        let mut secondary_connectors = Vec::new();
+        for name in &cross_sources {
+            if *name == payload.source_name {
+                continue;
+            }
+            if let Some(source) = catalog.get_source(name).cloned() {
+                let conn = irone_aws::create_connector(source, &sdk_config, use_direct_query).await;
+                secondary_connectors.push((name.to_string(), conn));
+            }
+        }
+
+        if !secondary_connectors.is_empty() {
+            let end_time = detection_result.executed_at;
+            let start_time = end_time - Duration::minutes(payload.enrichment_window_minutes);
+
+            let connector_refs: Vec<(&str, &irone_aws::ConnectorKind)> = secondary_connectors
+                .iter()
+                .map(|(name, conn)| (name.as_str(), conn))
+                .collect();
+
+            tracing::info!(
+                sources = ?connector_refs.iter().map(|(n, _)| *n).collect::<Vec<_>>(),
+                "running cross-source enrichment"
+            );
+
+            Box::pin(builder.run_cross_source_enrichment(
+                &connector_refs,
+                &identifiers,
+                start_time,
+                end_time,
+                200,
+                true,
+            ))
+            .await;
+        }
+    }
 
     let graph = builder.into_graph();
     let timeline = extract_timeline_from_graph(&graph, true, true);

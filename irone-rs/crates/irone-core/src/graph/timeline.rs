@@ -110,6 +110,24 @@ fn default_status() -> String {
     "success".into()
 }
 
+/// A temporal cluster of timeline events — a burst of activity separated from
+/// other bursts by a configurable gap threshold.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TemporalCluster {
+    pub id: String,
+    pub start: DateTime<Utc>,
+    pub end: DateTime<Utc>,
+    pub event_count: usize,
+    pub event_ids: Vec<String>,
+    /// Dominant entity (most frequent `entity_id` in the cluster).
+    pub dominant_entity: String,
+    /// Source distribution: `source_name` → count.
+    #[serde(default)]
+    pub source_distribution: HashMap<String, usize>,
+    /// Seconds of silence before this cluster (`None` for the first cluster).
+    pub gap_seconds: Option<i64>,
+}
+
 /// Container for investigation timeline events with tagging support.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InvestigationTimeline {
@@ -117,6 +135,8 @@ pub struct InvestigationTimeline {
     pub investigation_id: String,
     #[serde(default)]
     pub events: Vec<TimelineEvent>,
+    #[serde(default)]
+    pub clusters: Vec<TemporalCluster>,
     #[serde(default)]
     pub ai_summary: String,
     #[serde(default)]
@@ -131,6 +151,7 @@ impl Default for InvestigationTimeline {
         Self {
             investigation_id: String::new(),
             events: Vec::new(),
+            clusters: Vec::new(),
             ai_summary: String::new(),
             analyst_summary: String::new(),
             created_at: now,
@@ -244,9 +265,101 @@ pub struct TimelineSummary {
     pub has_analyst_summary: bool,
 }
 
+/// Default gap threshold for temporal clustering (5 minutes).
+const DEFAULT_GAP_THRESHOLD_SECS: i64 = 300;
+
+/// Cluster timeline events into temporal groups separated by gaps.
+///
+/// Events must already be sorted by timestamp (which `InvestigationTimeline`
+/// guarantees). A new cluster starts when the gap between consecutive events
+/// exceeds `gap_threshold_secs`.
+#[must_use]
+pub fn cluster_timeline_events(
+    events: &[TimelineEvent],
+    gap_threshold_secs: i64,
+) -> Vec<TemporalCluster> {
+    if events.is_empty() {
+        return Vec::new();
+    }
+
+    let mut clusters = Vec::new();
+    let mut current_ids: Vec<String> = vec![events[0].id.clone()];
+    let mut current_start = events[0].timestamp;
+    let mut current_end = events[0].timestamp;
+    let mut entity_counts: HashMap<String, usize> = HashMap::new();
+    let mut source_counts: HashMap<String, usize> = HashMap::new();
+    *entity_counts
+        .entry(events[0].entity_id.clone())
+        .or_default() += 1;
+    if let Some(Value::String(src)) = events[0].properties.get("source_name") {
+        *source_counts.entry(src.clone()).or_default() += 1;
+    }
+    let mut prev_cluster_end: Option<DateTime<Utc>> = None;
+
+    for event in &events[1..] {
+        let gap = (event.timestamp - current_end).num_seconds();
+
+        if gap > gap_threshold_secs {
+            // Finalize current cluster
+            let dominant = dominant_entity(&entity_counts);
+            let gap_secs = prev_cluster_end.map(|pe| (current_start - pe).num_seconds());
+            clusters.push(TemporalCluster {
+                id: format!("cluster-{}", clusters.len()),
+                start: current_start,
+                end: current_end,
+                event_count: current_ids.len(),
+                event_ids: current_ids.clone(),
+                dominant_entity: dominant,
+                source_distribution: source_counts.clone(),
+                gap_seconds: gap_secs,
+            });
+
+            // Start new cluster
+            prev_cluster_end = Some(current_end);
+            current_ids.clear();
+            entity_counts.clear();
+            source_counts.clear();
+            current_start = event.timestamp;
+        }
+
+        current_ids.push(event.id.clone());
+        current_end = event.timestamp;
+        *entity_counts.entry(event.entity_id.clone()).or_default() += 1;
+        if let Some(Value::String(src)) = event.properties.get("source_name") {
+            *source_counts.entry(src.clone()).or_default() += 1;
+        }
+    }
+
+    // Finalize last cluster
+    let dominant = dominant_entity(&entity_counts);
+    let gap_secs = prev_cluster_end.map(|pe| (current_start - pe).num_seconds());
+    clusters.push(TemporalCluster {
+        id: format!("cluster-{}", clusters.len()),
+        start: current_start,
+        end: current_end,
+        event_count: current_ids.len(),
+        event_ids: current_ids,
+        dominant_entity: dominant,
+        source_distribution: source_counts,
+        gap_seconds: gap_secs,
+    });
+
+    clusters
+}
+
+/// Find the entity with the highest count.
+fn dominant_entity(counts: &HashMap<String, usize>) -> String {
+    counts
+        .iter()
+        .max_by_key(|(_, count)| *count)
+        .map(|(entity, _)| entity.clone())
+        .unwrap_or_default()
+}
+
 /// Extract a timeline from a [`SecurityGraph`].
 ///
-/// Converts graph nodes and edges with timestamps into timeline events.
+/// Converts graph nodes and edges with timestamps into timeline events,
+/// then clusters them by temporal proximity.
 pub fn extract_timeline_from_graph(
     graph: &SecurityGraph,
     include_nodes: bool,
@@ -267,6 +380,9 @@ pub fn extract_timeline_from_graph(
     if include_edges {
         extract_edge_events(graph, &mut timeline);
     }
+
+    // Cluster events by temporal proximity
+    timeline.clusters = cluster_timeline_events(&timeline.events, DEFAULT_GAP_THRESHOLD_SECS);
 
     timeline
 }
@@ -1096,5 +1212,147 @@ mod tests {
         );
         let ctx = super::add_operation_context(&props);
         assert!(ctx.is_empty());
+    }
+
+    // ─── Temporal clustering tests ───────────────────────────
+
+    fn make_timed_event(
+        id: &str,
+        timestamp: DateTime<Utc>,
+        entity_id: &str,
+        source_name: Option<&str>,
+    ) -> TimelineEvent {
+        let mut properties = HashMap::new();
+        if let Some(src) = source_name {
+            properties.insert("source_name".into(), Value::String(src.into()));
+        }
+        TimelineEvent {
+            id: id.into(),
+            timestamp,
+            title: format!("Event {id}"),
+            description: String::new(),
+            entity_type: "Principal".into(),
+            entity_id: entity_id.into(),
+            operation: String::new(),
+            status: "success".into(),
+            tag: EventTag::Unreviewed,
+            notes: String::new(),
+            properties,
+        }
+    }
+
+    #[test]
+    fn temporal_clustering_basic() {
+        // 3 events close together (1 min apart), gap, 2 events close together
+        let base = Utc::now() - chrono::Duration::hours(1);
+        let events = vec![
+            make_timed_event("a", base, "user:alice", Some("cloudtrail")),
+            make_timed_event(
+                "b",
+                base + chrono::Duration::minutes(1),
+                "user:alice",
+                Some("cloudtrail"),
+            ),
+            make_timed_event(
+                "c",
+                base + chrono::Duration::minutes(2),
+                "user:bob",
+                Some("vpc-flow"),
+            ),
+            // 10 min gap (> 5 min threshold)
+            make_timed_event(
+                "d",
+                base + chrono::Duration::minutes(12),
+                "user:alice",
+                Some("route53"),
+            ),
+            make_timed_event(
+                "e",
+                base + chrono::Duration::minutes(13),
+                "user:alice",
+                Some("route53"),
+            ),
+        ];
+
+        let clusters = super::cluster_timeline_events(&events, 300);
+        assert_eq!(
+            clusters.len(),
+            2,
+            "expected 2 clusters, got {}",
+            clusters.len()
+        );
+
+        // First cluster: 3 events
+        assert_eq!(clusters[0].event_count, 3);
+        assert_eq!(clusters[0].event_ids, vec!["a", "b", "c"]);
+        assert_eq!(clusters[0].dominant_entity, "user:alice"); // alice: 2, bob: 1
+        assert!(clusters[0].gap_seconds.is_none()); // first cluster
+
+        // Second cluster: 2 events
+        assert_eq!(clusters[1].event_count, 2);
+        assert_eq!(clusters[1].event_ids, vec!["d", "e"]);
+        assert_eq!(clusters[1].dominant_entity, "user:alice");
+        assert!(clusters[1].gap_seconds.unwrap() > 500); // ~10 min gap
+    }
+
+    #[test]
+    fn temporal_clustering_single_cluster() {
+        let base = Utc::now();
+        let events = vec![
+            make_timed_event("a", base, "user:alice", None),
+            make_timed_event("b", base + chrono::Duration::minutes(1), "user:alice", None),
+            make_timed_event("c", base + chrono::Duration::minutes(2), "user:alice", None),
+        ];
+
+        let clusters = super::cluster_timeline_events(&events, 300);
+        assert_eq!(clusters.len(), 1);
+        assert_eq!(clusters[0].event_count, 3);
+        assert!(clusters[0].gap_seconds.is_none());
+    }
+
+    #[test]
+    fn temporal_clustering_empty() {
+        let clusters = super::cluster_timeline_events(&[], 300);
+        assert!(clusters.is_empty());
+    }
+
+    #[test]
+    fn cluster_dominant_entity() {
+        let base = Utc::now();
+        let events = vec![
+            make_timed_event("a", base, "user:alice", None),
+            make_timed_event("b", base + chrono::Duration::seconds(30), "user:bob", None),
+            make_timed_event("c", base + chrono::Duration::seconds(60), "user:bob", None),
+            make_timed_event("d", base + chrono::Duration::seconds(90), "user:bob", None),
+        ];
+
+        let clusters = super::cluster_timeline_events(&events, 300);
+        assert_eq!(clusters.len(), 1);
+        assert_eq!(clusters[0].dominant_entity, "user:bob"); // bob: 3, alice: 1
+    }
+
+    #[test]
+    fn cluster_source_distribution() {
+        let base = Utc::now();
+        let events = vec![
+            make_timed_event("a", base, "user:alice", Some("cloudtrail")),
+            make_timed_event(
+                "b",
+                base + chrono::Duration::seconds(30),
+                "user:alice",
+                Some("cloudtrail"),
+            ),
+            make_timed_event(
+                "c",
+                base + chrono::Duration::seconds(60),
+                "user:alice",
+                Some("vpc-flow"),
+            ),
+        ];
+
+        let clusters = super::cluster_timeline_events(&events, 300);
+        assert_eq!(clusters.len(), 1);
+        assert_eq!(clusters[0].source_distribution.get("cloudtrail"), Some(&2));
+        assert_eq!(clusters[0].source_distribution.get("vpc-flow"), Some(&1));
     }
 }

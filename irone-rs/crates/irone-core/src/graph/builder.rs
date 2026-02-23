@@ -20,6 +20,7 @@ use crate::detections::DetectionResult;
 /// related events from Security Lake.
 pub struct GraphBuilder {
     graph: SecurityGraph,
+    last_identifiers: Option<ExtractedIdentifiers>,
 }
 
 impl Default for GraphBuilder {
@@ -32,6 +33,7 @@ impl GraphBuilder {
     pub fn new() -> Self {
         Self {
             graph: SecurityGraph::new(),
+            last_identifiers: None,
         }
     }
 
@@ -99,6 +101,7 @@ impl GraphBuilder {
             domains = identifiers.domains.len(),
             "extracted identifiers"
         );
+        self.last_identifiers = Some(identifiers.clone());
 
         // Process the original matches
         self.process_matches(&result.matches, &finding_id, include_events);
@@ -183,9 +186,74 @@ impl GraphBuilder {
         self.graph
     }
 
+    /// Return the identifiers extracted during the last `build_from_detection` call.
+    ///
+    /// This is useful for driving cross-source enrichment: the caller can pass
+    /// these identifiers to secondary connectors without re-extracting them.
+    #[must_use]
+    pub fn last_identifiers(&self) -> Option<&ExtractedIdentifiers> {
+        self.last_identifiers.as_ref()
+    }
+
+    /// Run enrichment against additional Security Lake sources.
+    ///
+    /// For each secondary connector, queries for the same extracted identifiers
+    /// (users, IPs, ARNs, domains) and merges results into the graph. Skips
+    /// sources that match `primary_source_name` (already enriched).
+    pub async fn run_cross_source_enrichment<S: SecurityLakeQueries>(
+        &mut self,
+        connectors: &[(&str, &S)],
+        identifiers: &ExtractedIdentifiers,
+        start: DateTime<Utc>,
+        end: DateTime<Utc>,
+        per_source_limit: usize,
+        include_events: bool,
+    ) {
+        let mut cross_source_names = Vec::new();
+
+        for &(source_name, connector) in connectors {
+            info!(source = source_name, "running cross-source enrichment");
+
+            let enricher = SecurityLakeEnricher::new(connector);
+            let results =
+                Self::run_enrichment_parallel(&enricher, identifiers, start, end, per_source_limit)
+                    .await;
+
+            let mut event_count = 0_usize;
+            for qr in &results {
+                if !qr.is_empty() {
+                    event_count += qr.len();
+                    self.process_query_result_with_source(qr, include_events, source_name);
+                }
+            }
+
+            if event_count > 0 {
+                cross_source_names.push(source_name.to_string());
+                info!(
+                    source = source_name,
+                    events = event_count,
+                    "cross-source enrichment added events"
+                );
+            }
+        }
+
+        if !cross_source_names.is_empty() {
+            self.graph.metadata.insert(
+                "cross_source_names".into(),
+                Value::Array(
+                    cross_source_names
+                        .iter()
+                        .map(|s| Value::String(s.clone()))
+                        .collect(),
+                ),
+            );
+        }
+    }
+
     /// Reset the builder for a new graph.
     pub fn reset(&mut self) {
         self.graph = SecurityGraph::new();
+        self.last_identifiers = None;
     }
 
     // --- Internal methods ---
@@ -366,6 +434,71 @@ impl GraphBuilder {
             // Event node
             if include_events {
                 let event_id = self.add_event_from_ocsf(record, event_time);
+                if let Some(iid) = &src_ip_id {
+                    self.add_edge(EdgeType::OriginatedFrom, &event_id, iid, event_time);
+                }
+            }
+        }
+    }
+
+    /// Process enrichment query results with a source name tag.
+    ///
+    /// Like [`process_query_result`] but attaches `source_name` to each Event
+    /// node's properties, so the UI can show which Security Lake source
+    /// contributed each event.
+    fn process_query_result_with_source(
+        &mut self,
+        qr: &QueryResult,
+        include_events: bool,
+        source_name: &str,
+    ) {
+        for record in qr.rows() {
+            let event_time = parse_timestamp(record.get("time_dt"));
+
+            #[allow(clippy::cast_possible_truncation)]
+            let class_uid = record.get("class_uid").and_then(Value::as_u64).unwrap_or(0) as u32;
+
+            let principal_id = self.add_principal_from_ocsf(record, event_time);
+            let src_ip_id = self.add_ip_from_ocsf(record, "src_endpoint.ip", event_time);
+
+            if let (Some(pid), Some(iid)) = (&principal_id, &src_ip_id) {
+                self.add_edge(EdgeType::AuthenticatedFrom, pid, iid, event_time);
+            }
+
+            match class_uid {
+                4001 => self.add_network_flow_from_ocsf(record, event_time),
+                4003 => {
+                    self.add_dns_from_ocsf(record, event_time);
+                }
+                _ => {
+                    let dst_ip_id = self.add_ip_from_ocsf(record, "dst_endpoint.ip", event_time);
+                    if let (Some(sid), Some(did)) = (&src_ip_id, &dst_ip_id)
+                        && sid != did
+                    {
+                        self.add_edge(EdgeType::RelatedTo, sid, did, event_time);
+                    }
+                }
+            }
+
+            let api_id = self.add_api_from_ocsf(record, event_time);
+            if let (Some(pid), Some(aid)) = (&principal_id, &api_id) {
+                self.add_edge(EdgeType::CalledApi, pid, aid, event_time);
+            }
+
+            let resource_ids = self.add_resources_from_ocsf(record, event_time);
+            for rid in &resource_ids {
+                if let Some(aid) = &api_id {
+                    self.add_edge(EdgeType::AccessedResource, aid, rid, event_time);
+                }
+            }
+
+            if include_events {
+                let event_id = self.add_event_from_ocsf(record, event_time);
+                // Tag event with source name
+                if let Some(node) = self.graph.nodes.get_mut(&event_id) {
+                    node.properties
+                        .insert("source_name".into(), Value::String(source_name.to_string()));
+                }
                 if let Some(iid) = &src_ip_id {
                     self.add_edge(EdgeType::OriginatedFrom, &event_id, iid, event_time);
                 }
@@ -775,14 +908,18 @@ impl GraphBuilder {
 }
 
 /// Identifiers extracted from detection match data.
-#[derive(Debug, Default)]
-struct ExtractedIdentifiers {
-    users: HashSet<String>,
-    ips: HashSet<String>,
-    operations: HashSet<String>,
-    services: HashSet<String>,
-    arns: HashSet<String>,
-    domains: HashSet<String>,
+///
+/// Used to drive enrichment queries — each field represents a set of unique
+/// entity values found in detection matches that can be correlated across
+/// Security Lake sources.
+#[derive(Debug, Default, Clone)]
+pub struct ExtractedIdentifiers {
+    pub users: HashSet<String>,
+    pub ips: HashSet<String>,
+    pub operations: HashSet<String>,
+    pub services: HashSet<String>,
+    pub arns: HashSet<String>,
+    pub domains: HashSet<String>,
 }
 
 /// Parse a timestamp from a JSON value (ISO-8601 string or epoch).
@@ -1279,5 +1416,131 @@ mod tests {
 
         // Weight reflects total bytes (log2(1500+7000) = log2(8500) ≈ 13.05)
         assert!(edge.weight > 13.0);
+    }
+
+    // --- Cross-source enrichment tests ---
+
+    #[tokio::test]
+    async fn cross_source_enrichment_merges_results() {
+        // Primary source has alice + IP 10.0.0.1
+        // Secondary "vpc-flow" source has network activity from 10.0.0.1 -> 8.8.8.8
+        // Secondary "route53" source has DNS query from 10.0.0.1 -> evil.com
+        let mut builder = GraphBuilder::new();
+        let det = sample_detection();
+
+        // Build primary (no enrichment connector)
+        builder
+            .build_from_detection::<MockSL>(&det, None, 60, 500, true)
+            .await;
+
+        let node_count_before = builder.get_graph().node_count();
+        let edge_count_before = builder.get_graph().edge_count();
+
+        // Secondary connectors with different events
+        let vpc_mock = MockSL::empty().with_user_events(QueryResult::from_maps(vec![json_row!(
+            "class_uid" => 4001_u64,
+            "src_endpoint.ip" => "10.0.0.1",
+            "dst_endpoint.ip" => "8.8.8.8",
+            "dst_endpoint.port" => 443_u64,
+            "connection_info.protocol_name" => "TCP",
+            "time_dt" => "2024-01-15T10:29:00Z"
+        )]));
+        let dns_mock = MockSL::empty().with_user_events(QueryResult::from_maps(vec![json_row!(
+            "class_uid" => 4003_u64,
+            "query.hostname" => "evil.example.com",
+            "src_endpoint.ip" => "10.0.0.1",
+            "time_dt" => "2024-01-15T10:28:00Z"
+        )]));
+
+        let identifiers = builder.last_identifiers().cloned().unwrap();
+        let end_time = det.executed_at;
+        let start_time = end_time - chrono::Duration::minutes(60);
+
+        let connectors: Vec<(&str, &MockSL)> =
+            vec![("vpc-flow", &vpc_mock), ("route53", &dns_mock)];
+
+        builder
+            .run_cross_source_enrichment(&connectors, &identifiers, start_time, end_time, 200, true)
+            .await;
+
+        let graph = builder.get_graph();
+
+        // Should have more nodes from cross-source data
+        assert!(
+            graph.node_count() > node_count_before,
+            "expected more nodes after cross-source, got {} (was {})",
+            graph.node_count(),
+            node_count_before
+        );
+        assert!(
+            graph.edge_count() > edge_count_before,
+            "expected more edges after cross-source, got {} (was {})",
+            graph.edge_count(),
+            edge_count_before
+        );
+
+        // Should have cross_source_names metadata
+        let cross_names = graph.metadata.get("cross_source_names").unwrap();
+        let names: Vec<&str> = cross_names
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|v| v.as_str())
+            .collect();
+        assert!(names.contains(&"vpc-flow"));
+        assert!(names.contains(&"route53"));
+
+        // Events from cross-source should have source_name property
+        let events = graph.get_nodes_by_type(&NodeType::Event);
+        let cross_events: Vec<_> = events
+            .iter()
+            .filter(|n| n.properties.contains_key("source_name"))
+            .collect();
+        assert!(
+            !cross_events.is_empty(),
+            "expected events with source_name tag"
+        );
+    }
+
+    #[tokio::test]
+    async fn cross_source_skips_empty_connectors() {
+        let mut builder = GraphBuilder::new();
+        let det = sample_detection();
+
+        builder
+            .build_from_detection::<MockSL>(&det, None, 60, 500, false)
+            .await;
+
+        let node_count_before = builder.get_graph().node_count();
+        let identifiers = builder.last_identifiers().cloned().unwrap();
+
+        // Empty connector returns no results
+        let empty_mock = MockSL::empty();
+        let connectors: Vec<(&str, &MockSL)> = vec![("vpc-flow", &empty_mock)];
+
+        let end_time = det.executed_at;
+        let start_time = end_time - chrono::Duration::minutes(60);
+
+        builder
+            .run_cross_source_enrichment(
+                &connectors,
+                &identifiers,
+                start_time,
+                end_time,
+                200,
+                false,
+            )
+            .await;
+
+        // Node count should be unchanged (no new data)
+        assert_eq!(builder.get_graph().node_count(), node_count_before);
+
+        // No cross_source_names metadata (nothing contributed)
+        assert!(
+            !builder
+                .get_graph()
+                .metadata
+                .contains_key("cross_source_names")
+        );
     }
 }

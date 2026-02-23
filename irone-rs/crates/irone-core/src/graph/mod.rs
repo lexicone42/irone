@@ -3,7 +3,7 @@ pub mod enrichment;
 mod models;
 mod timeline;
 
-pub use builder::GraphBuilder;
+pub use builder::{ExtractedIdentifiers, GraphBuilder};
 pub use enrichment::{
     EntityAnomalyScore, LateralMovementTrace, SecurityLakeEnricher, score_entity_anomalies,
 };
@@ -12,6 +12,7 @@ pub use models::{
     PrincipalNode, ResourceNode, SecurityFindingNode, SecurityGraph,
 };
 pub use timeline::{
-    EventTag, InvestigationTimeline, TAG_COLORS, TimelineEvent, extract_timeline_from_graph,
-    generate_narrative, generate_timeline_summary_prompt,
+    EventTag, InvestigationTimeline, TAG_COLORS, TemporalCluster, TimelineEvent,
+    cluster_timeline_events, extract_timeline_from_graph, generate_narrative,
+    generate_timeline_summary_prompt,
 };
