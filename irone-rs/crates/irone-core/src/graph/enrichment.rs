@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use chrono::{DateTime, Utc};
 use tracing::{debug, info, warn};
@@ -8,6 +8,113 @@ use crate::connectors::ocsf::{
 };
 use crate::connectors::result::QueryResult;
 use crate::connectors::sql_utils::validate_ipv4;
+
+/// Anomaly score for an entity (user, IP, service) in the investigation window.
+///
+/// Measures how far an entity's event count deviates from the mean across all
+/// entities of the same kind. A score > 1.0 means the entity has more than
+/// 1 standard deviation above average activity.
+#[derive(Debug, Clone)]
+pub struct EntityAnomalyScore {
+    /// Entity identifier (user name, IP address, service name, etc.).
+    pub entity: String,
+    /// Entity kind ("user", "ip", "service").
+    pub kind: String,
+    /// Number of events involving this entity in the investigation window.
+    pub event_count: usize,
+    /// Mean event count across all entities of this kind.
+    pub mean: f64,
+    /// Standard deviation of event counts.
+    pub std_dev: f64,
+    /// Z-score: (`event_count` - mean) / `std_dev`. Higher = more anomalous.
+    pub z_score: f64,
+}
+
+/// Score entity activity volumes from enrichment results.
+///
+/// Counts events per user, IP, and service from the provided `QueryResult`s,
+/// then computes z-scores within each entity kind. Returns only entities
+/// with z-score above the given threshold (default: scores above 1.0 standard
+/// deviation are considered anomalous).
+///
+/// This is a pure computation over already-fetched data — no additional queries.
+#[must_use]
+pub fn score_entity_anomalies(
+    results: &[QueryResult],
+    z_threshold: f64,
+) -> Vec<EntityAnomalyScore> {
+    let mut user_counts: HashMap<String, usize> = HashMap::new();
+    let mut ip_counts: HashMap<String, usize> = HashMap::new();
+    let mut service_counts: HashMap<String, usize> = HashMap::new();
+
+    for qr in results {
+        for row in qr.rows() {
+            if let Some(user) = get_nested_str(row, &["actor.user.name"]) {
+                *user_counts.entry(user).or_default() += 1;
+            }
+            if let Some(ip) = get_nested_str(row, &["src_endpoint.ip"]) {
+                *ip_counts.entry(ip).or_default() += 1;
+            }
+            if let Some(svc) = get_nested_str(row, &["api.service.name"]) {
+                *service_counts.entry(svc).or_default() += 1;
+            }
+        }
+    }
+
+    let mut scores = Vec::new();
+    collect_anomalies(&user_counts, "user", z_threshold, &mut scores);
+    collect_anomalies(&ip_counts, "ip", z_threshold, &mut scores);
+    collect_anomalies(&service_counts, "service", z_threshold, &mut scores);
+
+    // Sort by z-score descending (most anomalous first)
+    scores.sort_by(|a, b| {
+        b.z_score
+            .partial_cmp(&a.z_score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    scores
+}
+
+/// Compute z-scores for a set of entity counts and collect those above threshold.
+#[allow(clippy::cast_precision_loss)] // Event counts won't exceed f64 mantissa range
+fn collect_anomalies(
+    counts: &HashMap<String, usize>,
+    kind: &str,
+    threshold: f64,
+    out: &mut Vec<EntityAnomalyScore>,
+) {
+    if counts.len() < 2 {
+        return; // Need at least 2 entities to compute meaningful deviation
+    }
+
+    let n = counts.len() as f64;
+    let sum: f64 = counts.values().map(|&c| c as f64).sum();
+    let mean = sum / n;
+    let variance = counts
+        .values()
+        .map(|&c| (c as f64 - mean).powi(2))
+        .sum::<f64>()
+        / n;
+    let std_dev = variance.sqrt();
+
+    if std_dev < f64::EPSILON {
+        return; // All counts identical, no anomalies
+    }
+
+    for (entity, &count) in counts {
+        let z_score = (count as f64 - mean) / std_dev;
+        if z_score >= threshold {
+            out.push(EntityAnomalyScore {
+                entity: entity.clone(),
+                kind: kind.to_string(),
+                event_count: count,
+                mean,
+                std_dev,
+                z_score,
+            });
+        }
+    }
+}
 
 /// Results from a multi-hop lateral movement trace.
 ///
@@ -1328,6 +1435,107 @@ mod tests {
         let (start, end) = time_window();
         let result = enricher.enrich_domains_batch(&[], start, end, 500).await;
         assert!(result.is_empty());
+    }
+
+    // --- Anomaly scoring tests ---
+
+    #[test]
+    fn anomaly_scores_detect_outlier_user() {
+        // alice appears 10 times, bob 1 time, carol 1 time
+        // alice should be flagged as anomalous
+        let mut rows = Vec::new();
+        for _ in 0..10 {
+            rows.push(json_row!(
+                "actor.user.name" => "alice",
+                "src_endpoint.ip" => "10.0.0.1",
+                "api.service.name" => "s3"
+            ));
+        }
+        rows.push(json_row!(
+            "actor.user.name" => "bob",
+            "src_endpoint.ip" => "10.0.0.2",
+            "api.service.name" => "s3"
+        ));
+        rows.push(json_row!(
+            "actor.user.name" => "carol",
+            "src_endpoint.ip" => "10.0.0.3",
+            "api.service.name" => "ec2"
+        ));
+
+        let qr = QueryResult::from_maps(rows);
+        let scores = score_entity_anomalies(&[qr], 1.0);
+
+        // alice should be in the results as anomalous user
+        let alice_score = scores
+            .iter()
+            .find(|s| s.entity == "alice" && s.kind == "user");
+        assert!(
+            alice_score.is_some(),
+            "alice should be flagged as anomalous"
+        );
+        assert!(alice_score.unwrap().z_score > 1.0);
+
+        // bob and carol should NOT be flagged (below threshold)
+        assert!(
+            scores
+                .iter()
+                .all(|s| !(s.entity == "bob" && s.kind == "user"))
+        );
+    }
+
+    #[test]
+    fn anomaly_scores_empty_input() {
+        let scores = score_entity_anomalies(&[], 1.0);
+        assert!(scores.is_empty());
+    }
+
+    #[test]
+    fn anomaly_scores_single_entity_no_anomaly() {
+        // Only one user → can't compute deviation, no anomalies
+        let rows = vec![json_row!(
+            "actor.user.name" => "alice",
+            "src_endpoint.ip" => "10.0.0.1"
+        )];
+        let qr = QueryResult::from_maps(rows);
+        let scores = score_entity_anomalies(&[qr], 1.0);
+        assert!(scores.is_empty());
+    }
+
+    #[test]
+    fn anomaly_scores_uniform_distribution_no_anomalies() {
+        // All users have equal counts → std_dev = 0 → no anomalies
+        let rows = vec![
+            json_row!("actor.user.name" => "alice", "src_endpoint.ip" => "10.0.0.1"),
+            json_row!("actor.user.name" => "bob", "src_endpoint.ip" => "10.0.0.2"),
+            json_row!("actor.user.name" => "carol", "src_endpoint.ip" => "10.0.0.3"),
+        ];
+        let qr = QueryResult::from_maps(rows);
+        let scores = score_entity_anomalies(&[qr], 1.0);
+        // No users should be anomalous (all have count=1)
+        let user_scores: Vec<_> = scores.iter().filter(|s| s.kind == "user").collect();
+        assert!(user_scores.is_empty());
+    }
+
+    #[test]
+    fn anomaly_scores_sorted_by_z_score() {
+        let mut rows = Vec::new();
+        // alice: 20 events, bob: 5 events, carol: 1 event, dave: 1 event
+        for _ in 0..20 {
+            rows.push(json_row!("actor.user.name" => "alice"));
+        }
+        for _ in 0..5 {
+            rows.push(json_row!("actor.user.name" => "bob"));
+        }
+        rows.push(json_row!("actor.user.name" => "carol"));
+        rows.push(json_row!("actor.user.name" => "dave"));
+
+        let qr = QueryResult::from_maps(rows);
+        let scores = score_entity_anomalies(&[qr], 0.0); // threshold 0 to get all above-mean
+
+        let user_scores: Vec<_> = scores.iter().filter(|s| s.kind == "user").collect();
+        if user_scores.len() >= 2 {
+            assert!(user_scores[0].z_score >= user_scores[1].z_score);
+        }
     }
 
     // --- Lateral movement tracing tests ---

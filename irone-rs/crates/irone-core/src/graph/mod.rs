@@ -4,7 +4,9 @@ mod models;
 mod timeline;
 
 pub use builder::GraphBuilder;
-pub use enrichment::{LateralMovementTrace, SecurityLakeEnricher};
+pub use enrichment::{
+    EntityAnomalyScore, LateralMovementTrace, SecurityLakeEnricher, score_entity_anomalies,
+};
 pub use models::{
     APIOperationNode, EdgeType, EventNode, GraphEdge, GraphNode, IPAddressNode, NodeType,
     PrincipalNode, ResourceNode, SecurityFindingNode, SecurityGraph,

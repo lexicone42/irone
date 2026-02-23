@@ -4,7 +4,7 @@ use chrono::{DateTime, Duration, Utc};
 use serde_json::Value;
 use tracing::{debug, info};
 
-use super::enrichment::SecurityLakeEnricher;
+use super::enrichment::{SecurityLakeEnricher, score_entity_anomalies};
 use super::models::{
     APIOperationNode, EdgeType, GraphEdge, GraphNode, IPAddressNode, NodeType, PrincipalNode,
     ResourceNode, SecurityFindingNode, SecurityGraph,
@@ -137,6 +137,25 @@ impl GraphBuilder {
                     }
                 }
             }
+
+            // Compute anomaly scores from all enrichment data
+            let anomalies = score_entity_anomalies(&enrichment_results, 1.0);
+            if !anomalies.is_empty() {
+                let scores: Vec<Value> = anomalies
+                    .iter()
+                    .map(|a| {
+                        serde_json::json!({
+                            "entity": a.entity,
+                            "kind": a.kind,
+                            "event_count": a.event_count,
+                            "z_score": (a.z_score * 100.0).round() / 100.0,
+                        })
+                    })
+                    .collect();
+                self.graph
+                    .metadata
+                    .insert("anomaly_scores".into(), Value::Array(scores));
+            }
         }
 
         info!(
@@ -205,6 +224,25 @@ impl GraphBuilder {
                     self.process_query_result(qr, include_events);
                 }
             }
+        }
+
+        // Anomaly scoring
+        let anomalies = score_entity_anomalies(&enrichment_results, 1.0);
+        if !anomalies.is_empty() {
+            let scores: Vec<Value> = anomalies
+                .iter()
+                .map(|a| {
+                    serde_json::json!({
+                        "entity": a.entity,
+                        "kind": a.kind,
+                        "event_count": a.event_count,
+                        "z_score": (a.z_score * 100.0).round() / 100.0,
+                    })
+                })
+                .collect();
+            self.graph
+                .metadata
+                .insert("anomaly_scores".into(), Value::Array(scores));
         }
 
         &self.graph
