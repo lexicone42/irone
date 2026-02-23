@@ -123,8 +123,10 @@ async fn run_detections(sdk_config: &aws_config::SdkConfig) -> Result<AlertResul
             send_alert(hub, &alert).await;
         }
 
-        // Auto-investigate for Critical/High
-        if result.severity == Severity::Critical || result.severity == Severity::High {
+        // Auto-investigate for Critical/High (with dedup)
+        if (result.severity == Severity::Critical || result.severity == Severity::High)
+            && !has_recent_investigation(sdk_config, &result.rule_id).await
+        {
             match auto_investigate(sdk_config, result).await {
                 Ok(inv_id) => {
                     audit::investigation_created("alerting-lambda", &inv_id, &result.rule_name);
@@ -272,6 +274,50 @@ async fn send_alert(channel: &impl NotificationChannel, alert: &SecurityAlert) {
             "failed to send alert"
         );
     }
+}
+
+/// Check if an investigation for this `rule_id` was already created within the dedup window.
+///
+/// Queries the `status-created_at-index` GSI for recent active/enriching investigations,
+/// then filters client-side for matching `rule_id`. Returns true if a duplicate exists.
+async fn has_recent_investigation(sdk_config: &aws_config::SdkConfig, rule_id: &str) -> bool {
+    let table = match std::env::var("SECDASH_INVESTIGATIONS_TABLE") {
+        Ok(t) if !t.is_empty() => t,
+        _ => return false,
+    };
+
+    let ddb_client = aws_sdk_dynamodb::Client::new(sdk_config);
+    let cutoff = (Utc::now() - chrono::Duration::hours(24)).to_rfc3339();
+
+    // Check both "active" and "enriching" statuses
+    for status in ["active", "enriching"] {
+        let result = ddb_client
+            .query()
+            .table_name(&table)
+            .index_name("status-created_at-index")
+            .key_condition_expression("#s = :status AND created_at > :cutoff")
+            .filter_expression("rule_id = :rule_id")
+            .expression_attribute_names("#s", "status")
+            .expression_attribute_values(":status", AttributeValue::S(status.into()))
+            .expression_attribute_values(":cutoff", AttributeValue::S(cutoff.clone()))
+            .expression_attribute_values(":rule_id", AttributeValue::S(rule_id.into()))
+            .limit(1)
+            .send()
+            .await;
+
+        if let Ok(output) = result
+            && output.count() > 0
+        {
+            tracing::info!(
+                rule_id,
+                status,
+                "skipping auto-investigate: recent investigation exists"
+            );
+            return true;
+        }
+    }
+
+    false
 }
 
 /// Create an investigation from a detection result (mirrors irone-web's `create_from_detection`).

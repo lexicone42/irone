@@ -434,6 +434,9 @@ function investigationsApp() {
         timelineFilter: "all",   // "all" | "suspicious" | "unreviewed"
         selectedTimelineEvent: null,
 
+        // Graph display options
+        showEventNodes: false,
+
         // Source dropdown
         availableSources: [],
         newSourceName: "",
@@ -547,7 +550,7 @@ function investigationsApp() {
                     this.loadTimeline(invId),
                 ]);
                 this.graphData = graphResp;
-                this.$nextTick(() => this.renderGraph(graphResp.elements));
+                this.$nextTick(() => this.renderGraph(this.filteredGraphElements(graphResp.elements)));
             } catch (e) {
                 this.error = e.message;
             } finally {
@@ -559,7 +562,7 @@ function investigationsApp() {
             this.detailTab = tab;
             if (tab === "graph") {
                 this.$nextTick(() => {
-                    if (this.graphData) this.renderGraph(this.graphData.elements);
+                    if (this.graphData) this.renderGraph(this.filteredGraphElements(this.graphData.elements));
                 });
             } else if (tab === "report" && !this.reportData) {
                 await this.loadReport();
@@ -576,6 +579,31 @@ function investigationsApp() {
                 this.error = e.message;
             } finally {
                 this.reportLoading = false;
+            }
+        },
+
+        filteredGraphElements(elements) {
+            if (!elements) return [];
+            if (this.showEventNodes) return elements;
+            // Collect IDs of Event nodes to exclude
+            const eventIds = new Set();
+            for (const el of elements) {
+                if (el.group === "nodes" && el.data?.node_type === "Event") {
+                    eventIds.add(el.data.id);
+                }
+            }
+            // Filter out Event nodes and any edges touching them
+            return elements.filter(el => {
+                if (el.group === "nodes") return !eventIds.has(el.data.id);
+                if (el.group === "edges") return !eventIds.has(el.data.source) && !eventIds.has(el.data.target);
+                return true;
+            });
+        },
+
+        toggleEventNodes() {
+            this.showEventNodes = !this.showEventNodes;
+            if (this.graphData) {
+                this.$nextTick(() => this.renderGraph(this.filteredGraphElements(this.graphData.elements)));
             }
         },
 

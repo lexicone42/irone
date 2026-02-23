@@ -217,19 +217,19 @@
                     </template>
 
                     <!-- Summary Cards -->
-                    <template x-if="activeInv.summary">
+                    <template x-if="activeInv.graph_summary || activeInv.summary">
                         <div class="grid grid-4 mb-4">
                             <div class="card stat-card">
                                 <div class="stat-label">Nodes</div>
-                                <div class="stat-value" x-text="activeInv.summary.total_nodes"></div>
+                                <div class="stat-value" x-text="(activeInv.graph_summary || activeInv.summary).total_nodes"></div>
                             </div>
                             <div class="card stat-card">
                                 <div class="stat-label">Edges</div>
-                                <div class="stat-value" x-text="activeInv.summary.total_edges"></div>
+                                <div class="stat-value" x-text="(activeInv.graph_summary || activeInv.summary).total_edges"></div>
                             </div>
                             <div class="card stat-card">
                                 <div class="stat-label">Node Types</div>
-                                <div class="stat-value" x-text="Object.keys(activeInv.summary.nodes_by_type || {}).length"></div>
+                                <div class="stat-value" x-text="Object.keys((activeInv.graph_summary || activeInv.summary).nodes_by_type || {}).length"></div>
                             </div>
                             <div class="card stat-card">
                                 <div class="stat-label">Created</div>
@@ -259,8 +259,15 @@
                         <div class="card" x-show="graphData">
                             <div class="card-header flex-between">
                                 <span>Investigation Graph</span>
-                                <span class="text-muted text-sm">
-                                    Click nodes or edges to inspect. Scroll to zoom. Drag to pan.
+                                <span style="display: flex; align-items: center; gap: 0.75rem;">
+                                    <button class="btn btn-sm"
+                                            :class="showEventNodes ? 'btn-primary' : ''"
+                                            @click="toggleEventNodes()"
+                                            x-text="showEventNodes ? 'Hide Events' : 'Show Events (' + ((graphData?.summary?.nodes_by_type?.Event) || 0) + ')'">
+                                    </button>
+                                    <span class="text-muted text-sm">
+                                        Click nodes to inspect. Scroll to zoom.
+                                    </span>
                                 </span>
                             </div>
                             <div id="cy-graph" class="graph-container"></div>
