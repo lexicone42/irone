@@ -124,6 +124,19 @@ impl GraphBuilder {
                     self.process_query_result(qr, include_events);
                 }
             }
+
+            // Run lateral movement tracing for top IPs (cap at 3 to stay within time budget)
+            let trace_ips: Vec<String> = identifiers.ips.iter().take(3).cloned().collect();
+            for ip in &trace_ips {
+                let trace = enricher
+                    .trace_lateral_movement(ip, start_time, end_time, max_related_events / 2)
+                    .await;
+                for qr in &trace.hop_results {
+                    if !qr.is_empty() {
+                        self.process_query_result(qr, include_events);
+                    }
+                }
+            }
         }
 
         info!(
@@ -178,6 +191,19 @@ impl GraphBuilder {
         for qr in &enrichment_results {
             if !qr.is_empty() {
                 self.process_query_result(qr, include_events);
+            }
+        }
+
+        // Lateral movement tracing for provided IPs (cap at 3)
+        let trace_ips: Vec<&String> = ips.iter().take(3).collect();
+        for ip in trace_ips {
+            let trace = enricher
+                .trace_lateral_movement(ip, start_time, end_time, max_events / 2)
+                .await;
+            for qr in &trace.hop_results {
+                if !qr.is_empty() {
+                    self.process_query_result(qr, include_events);
+                }
             }
         }
 

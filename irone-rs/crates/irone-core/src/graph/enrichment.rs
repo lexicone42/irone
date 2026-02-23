@@ -1,9 +1,38 @@
-use chrono::{DateTime, Utc};
-use tracing::{debug, warn};
+use std::collections::HashSet;
 
-use crate::connectors::ocsf::{ColumnFilter, OCSFEventClass, SecurityLakeQueries};
+use chrono::{DateTime, Utc};
+use tracing::{debug, info, warn};
+
+use crate::connectors::ocsf::{
+    ColumnFilter, OCSFEventClass, SecurityLakeQueries, get_nested_array, get_nested_str,
+};
 use crate::connectors::result::QueryResult;
 use crate::connectors::sql_utils::validate_ipv4;
+
+/// Results from a multi-hop lateral movement trace.
+///
+/// Starting from a seed IP, traces the chain:
+/// 1. IP → authentication events → user names
+/// 2. Users → API activity → services + resource ARNs
+/// 3. Resources → API activity → additional users who accessed them
+///
+/// Each hop's raw `QueryResult` is preserved for graph building, and the
+/// extracted identifiers are available for further analysis.
+#[derive(Debug)]
+pub struct LateralMovementTrace {
+    /// Seed IP address that initiated the trace.
+    pub seed_ip: String,
+    /// Users who authenticated from the seed IP (hop 1).
+    pub users: Vec<String>,
+    /// Services those users interacted with (hop 2).
+    pub services: Vec<String>,
+    /// Resource ARNs those users accessed (hop 2).
+    pub resources: Vec<String>,
+    /// Additional users who also accessed the same resources (hop 3).
+    pub related_users: Vec<String>,
+    /// Raw query results from each hop, for graph node/edge creation.
+    pub hop_results: Vec<QueryResult>,
+}
 
 /// Enriches investigation graphs with related Security Lake events.
 ///
@@ -630,6 +659,205 @@ impl<'a, S: SecurityLakeQueries> SecurityLakeEnricher<'a, S> {
             QueryResult::concat(results)
         }
     }
+
+    /// Trace lateral movement starting from a seed IP address.
+    ///
+    /// Performs a multi-hop correlation:
+    /// 1. **IP → Users**: Query auth + API events from this IP, extract user names
+    /// 2. **Users → Services + Resources**: Query API activity, extract services and ARNs
+    /// 3. **Resources → Related Users**: Query API activity for resources, find other users
+    pub async fn trace_lateral_movement(
+        &self,
+        seed_ip: &str,
+        start: DateTime<Utc>,
+        end: DateTime<Utc>,
+        per_hop_limit: usize,
+    ) -> LateralMovementTrace {
+        let mut trace = LateralMovementTrace {
+            seed_ip: seed_ip.to_string(),
+            users: Vec::new(),
+            services: Vec::new(),
+            resources: Vec::new(),
+            related_users: Vec::new(),
+            hop_results: Vec::new(),
+        };
+
+        if validate_ipv4(seed_ip).is_err() {
+            warn!(ip = seed_ip, "invalid IP for lateral movement trace");
+            return trace;
+        }
+
+        // Hop 1: IP → Users
+        self.trace_hop_ip_to_users(seed_ip, start, end, per_hop_limit, &mut trace)
+            .await;
+        if trace.users.is_empty() {
+            debug!(ip = seed_ip, "no users found from seed IP, trace complete");
+            return trace;
+        }
+        info!(ip = seed_ip, users = trace.users.len(), "hop 1: IP → users");
+
+        // Hop 2: Users → Services + Resources
+        self.trace_hop_users_to_resources(start, end, per_hop_limit, &mut trace)
+            .await;
+        info!(
+            ip = seed_ip,
+            services = trace.services.len(),
+            resources = trace.resources.len(),
+            "hop 2: users → services + resources"
+        );
+
+        // Hop 3: Resources → Related Users
+        self.trace_hop_resources_to_users(start, end, per_hop_limit, &mut trace)
+            .await;
+
+        trace
+    }
+
+    /// Hop 1: Query auth + API events from an IP, extract user names.
+    async fn trace_hop_ip_to_users(
+        &self,
+        seed_ip: &str,
+        start: DateTime<Utc>,
+        end: DateTime<Utc>,
+        limit: usize,
+        trace: &mut LateralMovementTrace,
+    ) {
+        let ip_filter = [ColumnFilter::StringEquals {
+            path: "src_endpoint.ip".into(),
+            value: seed_ip.to_string(),
+        }];
+        let mut users = HashSet::new();
+
+        for event_class in [OCSFEventClass::Authentication, OCSFEventClass::ApiActivity] {
+            if let Ok(qr) = self
+                .connector
+                .query_by_event_class(event_class, start, end, limit, Some(&ip_filter))
+                .await
+            {
+                for row in qr.rows() {
+                    if let Some(user) = get_nested_str(row, &["actor.user.name"]) {
+                        users.insert(user);
+                    }
+                }
+                if !qr.is_empty() {
+                    trace.hop_results.push(qr);
+                }
+            }
+        }
+
+        trace.users = users.into_iter().collect();
+        trace.users.sort();
+    }
+
+    /// Hop 2: Query API activity for discovered users, extract services and resource ARNs.
+    async fn trace_hop_users_to_resources(
+        &self,
+        start: DateTime<Utc>,
+        end: DateTime<Utc>,
+        limit: usize,
+        trace: &mut LateralMovementTrace,
+    ) {
+        let user_filter = [ColumnFilter::StringIn {
+            path: "actor.user.name".into(),
+            values: trace.users.clone(),
+        }];
+
+        let Ok(qr) = self
+            .connector
+            .query_by_event_class(
+                OCSFEventClass::ApiActivity,
+                start,
+                end,
+                limit,
+                Some(&user_filter),
+            )
+            .await
+        else {
+            return;
+        };
+
+        let mut services = HashSet::new();
+        let mut resources = HashSet::new();
+        for row in qr.rows() {
+            if let Some(svc) = get_nested_str(row, &["api.service.name"]) {
+                services.insert(svc);
+            }
+            if let Some(res_list) = get_nested_array(row, "resources") {
+                for res in &res_list {
+                    if let Some(uid) = res.get("uid").and_then(|v| v.as_str())
+                        && uid.starts_with("arn:")
+                    {
+                        resources.insert(uid.to_string());
+                    }
+                }
+            }
+        }
+        if !qr.is_empty() {
+            trace.hop_results.push(qr);
+        }
+
+        trace.services = services.into_iter().collect();
+        trace.services.sort();
+        trace.resources = resources.into_iter().collect();
+        trace.resources.sort();
+    }
+
+    /// Hop 3: Query API activity for discovered resources, extract other users.
+    async fn trace_hop_resources_to_users(
+        &self,
+        start: DateTime<Utc>,
+        end: DateTime<Utc>,
+        limit: usize,
+        trace: &mut LateralMovementTrace,
+    ) {
+        if trace.resources.is_empty() {
+            return;
+        }
+
+        let arns: Vec<String> = trace.resources.iter().take(20).cloned().collect();
+        let resource_filter = [ColumnFilter::ListContainsAny {
+            list_path: "resources".into(),
+            field: "uid".into(),
+            values: arns,
+        }];
+
+        let Ok(qr) = self
+            .connector
+            .query_by_event_class(
+                OCSFEventClass::ApiActivity,
+                start,
+                end,
+                limit,
+                Some(&resource_filter),
+            )
+            .await
+        else {
+            return;
+        };
+
+        let seed_users: HashSet<&str> = trace.users.iter().map(String::as_str).collect();
+        let mut related = HashSet::new();
+        for row in qr.rows() {
+            if let Some(user) = get_nested_str(row, &["actor.user.name"])
+                && !seed_users.contains(user.as_str())
+            {
+                related.insert(user);
+            }
+        }
+        if !qr.is_empty() {
+            trace.hop_results.push(qr);
+        }
+
+        trace.related_users = related.into_iter().collect();
+        trace.related_users.sort();
+
+        if !trace.related_users.is_empty() {
+            info!(
+                related_users = trace.related_users.len(),
+                "hop 3: resources → related users"
+            );
+        }
+    }
 }
 
 #[cfg(test)]
@@ -940,5 +1168,129 @@ mod tests {
             .enrich_resources_batch(&arns, start, end, 500)
             .await;
         assert!(result.is_empty());
+    }
+
+    // --- Lateral movement tracing tests ---
+
+    #[tokio::test]
+    async fn lateral_trace_full_chain() {
+        // Hop 1: Auth from 10.0.0.1 reveals user "alice"
+        let auth_rows = vec![json_row!(
+            "actor.user.name" => "alice",
+            "src_endpoint.ip" => "10.0.0.1",
+            "status" => "Success"
+        )];
+        // Hop 2+3: API activity reveals service + resource + related user "bob"
+        let api_rows = vec![
+            json_row!(
+                "actor.user.name" => "alice",
+                "api.service.name" => "s3",
+                "api.operation" => "GetObject",
+                "resources" => serde_json::json!([{"uid": "arn:aws:s3:::my-bucket"}])
+            ),
+            json_row!(
+                "actor.user.name" => "bob",
+                "api.service.name" => "s3",
+                "api.operation" => "PutObject",
+                "resources" => serde_json::json!([{"uid": "arn:aws:s3:::my-bucket"}])
+            ),
+        ];
+
+        let mock = MockSecurityLake::new()
+            .with_result(
+                OCSFEventClass::Authentication,
+                QueryResult::from_maps(auth_rows),
+            )
+            .with_result(
+                OCSFEventClass::ApiActivity,
+                QueryResult::from_maps(api_rows),
+            );
+
+        let enricher = SecurityLakeEnricher::new(&mock);
+        let (start, end) = time_window();
+        let trace = enricher
+            .trace_lateral_movement("10.0.0.1", start, end, 500)
+            .await;
+
+        assert_eq!(trace.seed_ip, "10.0.0.1");
+        // Hop 1: discovered alice (and bob from API events since mock returns same for all)
+        assert!(trace.users.contains(&"alice".to_string()));
+        // Hop 2: discovered s3 service
+        assert!(trace.services.contains(&"s3".to_string()));
+        // Hop 2: discovered resource ARN
+        assert!(
+            trace
+                .resources
+                .contains(&"arn:aws:s3:::my-bucket".to_string())
+        );
+        // Should have hop results
+        assert!(!trace.hop_results.is_empty());
+    }
+
+    #[tokio::test]
+    async fn lateral_trace_invalid_ip() {
+        let mock = MockSecurityLake::new();
+        let enricher = SecurityLakeEnricher::new(&mock);
+        let (start, end) = time_window();
+        let trace = enricher
+            .trace_lateral_movement("not-an-ip", start, end, 500)
+            .await;
+
+        assert!(trace.users.is_empty());
+        assert!(trace.services.is_empty());
+        assert!(trace.resources.is_empty());
+        assert!(trace.hop_results.is_empty());
+    }
+
+    #[tokio::test]
+    async fn lateral_trace_no_auth_events() {
+        // No auth or API events for this IP → empty trace
+        let mock = MockSecurityLake::new();
+        let enricher = SecurityLakeEnricher::new(&mock);
+        let (start, end) = time_window();
+        let trace = enricher
+            .trace_lateral_movement("192.168.1.1", start, end, 500)
+            .await;
+
+        assert!(trace.users.is_empty());
+        assert!(trace.services.is_empty());
+        assert!(trace.hop_results.is_empty());
+    }
+
+    #[tokio::test]
+    async fn lateral_trace_no_resources() {
+        // Auth events reveal a user, but their API activity has no resource ARNs
+        let auth_rows = vec![json_row!(
+            "actor.user.name" => "carol",
+            "src_endpoint.ip" => "10.0.0.5",
+            "status" => "Success"
+        )];
+        let api_rows = vec![json_row!(
+            "actor.user.name" => "carol",
+            "api.service.name" => "sts",
+            "api.operation" => "GetCallerIdentity"
+        )];
+
+        let mock = MockSecurityLake::new()
+            .with_result(
+                OCSFEventClass::Authentication,
+                QueryResult::from_maps(auth_rows),
+            )
+            .with_result(
+                OCSFEventClass::ApiActivity,
+                QueryResult::from_maps(api_rows),
+            );
+
+        let enricher = SecurityLakeEnricher::new(&mock);
+        let (start, end) = time_window();
+        let trace = enricher
+            .trace_lateral_movement("10.0.0.5", start, end, 500)
+            .await;
+
+        assert_eq!(trace.users, vec!["carol".to_string()]);
+        assert_eq!(trace.services, vec!["sts".to_string()]);
+        assert!(trace.resources.is_empty());
+        // Hop 3 skipped since no resources
+        assert!(trace.related_users.is_empty());
     }
 }

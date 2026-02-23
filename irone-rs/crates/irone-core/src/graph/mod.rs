@@ -4,7 +4,7 @@ mod models;
 mod timeline;
 
 pub use builder::GraphBuilder;
-pub use enrichment::SecurityLakeEnricher;
+pub use enrichment::{LateralMovementTrace, SecurityLakeEnricher};
 pub use models::{
     APIOperationNode, EdgeType, EventNode, GraphEdge, GraphNode, IPAddressNode, NodeType,
     PrincipalNode, ResourceNode, SecurityFindingNode, SecurityGraph,
