@@ -20,6 +20,15 @@ repos:
   # Local hooks
   - repo: local
     hooks:
+      # Preflight auto-fixer: runs cargo fmt + clippy --fix + restage
+      # so the check hooks below become no-ops on the second pass
+      - id: preflight
+        name: Preflight (auto-fix fmt + clippy)
+        entry: /home/bryan/.claude/bin/preflight
+        language: system
+        files: ^irone-rs/
+        pass_filenames: false
+
       # Rust: format check (fast, every commit)
       - id: cargo-fmt
         name: Cargo Format
