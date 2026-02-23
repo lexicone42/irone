@@ -504,7 +504,7 @@ mod tests {
             _start: DateTime<Utc>,
             _end: DateTime<Utc>,
             _limit: usize,
-            _additional_filters: Option<&str>,
+            _filters: Option<&[crate::connectors::ocsf::ColumnFilter]>,
         ) -> Result<QueryResult, SecurityLakeError> {
             Ok(self.result.clone())
         }

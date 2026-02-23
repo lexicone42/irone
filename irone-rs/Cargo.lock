@@ -2737,6 +2737,7 @@ dependencies = [
 name = "irone-aws"
 version = "0.1.0"
 dependencies = [
+ "arrow-arith",
  "arrow-array",
  "arrow-cast",
  "arrow-ord",

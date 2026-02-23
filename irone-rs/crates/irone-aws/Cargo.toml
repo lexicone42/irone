@@ -26,6 +26,7 @@ arrow-schema = { workspace = true }
 arrow-cast = { workspace = true }
 arrow-select = { workspace = true }
 arrow-ord = { workspace = true }
+arrow-arith = { workspace = true }
 parquet = { workspace = true }
 futures = { workspace = true }
 bytes = { workspace = true }

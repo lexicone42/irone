@@ -1,7 +1,7 @@
 use chrono::{DateTime, Utc};
 use tracing::{debug, warn};
 
-use crate::connectors::ocsf::{OCSFEventClass, SecurityLakeQueries};
+use crate::connectors::ocsf::{ColumnFilter, OCSFEventClass, SecurityLakeQueries};
 use crate::connectors::result::QueryResult;
 use crate::connectors::sql_utils::{sanitize_string, validate_ipv4};
 
@@ -36,15 +36,18 @@ impl<'a, S: SecurityLakeQueries> SecurityLakeEnricher<'a, S> {
         ];
         let classes = event_classes.unwrap_or(&default_classes);
 
-        let safe_user = sanitize_string(user_name);
-        let filter = format!("\"actor\".\"user\".\"name\" = '{safe_user}'");
+        let filter = ColumnFilter::StringEquals {
+            path: "actor.user.name".into(),
+            value: user_name.to_string(),
+        };
+        let filters = [filter];
 
         let mut all_results = Vec::new();
 
         for &event_class in classes {
             match self
                 .connector
-                .query_by_event_class(event_class, start, end, limit, Some(&filter))
+                .query_by_event_class(event_class, start, end, limit, Some(&filters))
                 .await
             {
                 Ok(qr) if !qr.is_empty() => {
@@ -94,18 +97,29 @@ impl<'a, S: SecurityLakeQueries> SecurityLakeEnricher<'a, S> {
             return QueryResult::empty();
         }
 
-        let mut filters = Vec::new();
+        let mut direction_filters = Vec::new();
         if direction == "source" || direction == "both" {
-            filters.push(format!("\"src_endpoint\".\"ip\" = '{ip_address}'"));
+            direction_filters.push(ColumnFilter::StringEquals {
+                path: "src_endpoint.ip".into(),
+                value: ip_address.to_string(),
+            });
         }
         if direction == "dest" || direction == "both" {
-            filters.push(format!("\"dst_endpoint\".\"ip\" = '{ip_address}'"));
+            direction_filters.push(ColumnFilter::StringEquals {
+                path: "dst_endpoint.ip".into(),
+                value: ip_address.to_string(),
+            });
         }
-        if filters.is_empty() {
+        if direction_filters.is_empty() {
             return QueryResult::empty();
         }
 
-        let filter_clause = format!("({})", filters.join(" OR "));
+        let ip_filter = if direction_filters.len() == 1 {
+            direction_filters.remove(0)
+        } else {
+            ColumnFilter::Or(direction_filters)
+        };
+        let net_filters = [ip_filter];
 
         let mut all_results = Vec::new();
 
@@ -117,7 +131,7 @@ impl<'a, S: SecurityLakeQueries> SecurityLakeEnricher<'a, S> {
                 start,
                 end,
                 limit,
-                Some(&filter_clause),
+                Some(&net_filters),
             )
             .await
         {
@@ -128,7 +142,10 @@ impl<'a, S: SecurityLakeQueries> SecurityLakeEnricher<'a, S> {
 
         // API activity (source IP only)
         if direction == "source" || direction == "both" {
-            let src_filter = format!("\"src_endpoint\".\"ip\" = '{ip_address}'");
+            let src_filter = [ColumnFilter::StringEquals {
+                path: "src_endpoint.ip".into(),
+                value: ip_address.to_string(),
+            }];
             match self
                 .connector
                 .query_by_event_class(
@@ -147,7 +164,10 @@ impl<'a, S: SecurityLakeQueries> SecurityLakeEnricher<'a, S> {
         }
 
         // Authentication events
-        let auth_filter = format!("\"src_endpoint\".\"ip\" = '{ip_address}'");
+        let auth_filter = [ColumnFilter::StringEquals {
+            path: "src_endpoint.ip".into(),
+            value: ip_address.to_string(),
+        }];
         match self
             .connector
             .query_by_event_class(
@@ -180,20 +200,17 @@ impl<'a, S: SecurityLakeQueries> SecurityLakeEnricher<'a, S> {
         operations: Option<&[&str]>,
         limit: usize,
     ) -> QueryResult {
-        let safe_service = sanitize_string(service_name);
-        let mut filters = vec![format!("\"api\".\"service\".\"name\" = '{safe_service}'")];
+        let mut filter_list = vec![ColumnFilter::StringEquals {
+            path: "api.service.name".into(),
+            value: service_name.to_string(),
+        }];
 
         if let Some(ops) = operations {
-            let safe_ops: Vec<String> = ops.iter().map(|op| sanitize_string(op)).collect();
-            let ops_str = safe_ops
-                .iter()
-                .map(|s| format!("'{s}'"))
-                .collect::<Vec<_>>()
-                .join(", ");
-            filters.push(format!("\"api\".\"operation\" IN ({ops_str})"));
+            filter_list.push(ColumnFilter::StringIn {
+                path: "api.operation".into(),
+                values: ops.iter().map(|s| (*s).to_string()).collect(),
+            });
         }
-
-        let filter_clause = filters.join(" AND ");
 
         match self
             .connector
@@ -202,7 +219,7 @@ impl<'a, S: SecurityLakeQueries> SecurityLakeEnricher<'a, S> {
                 start,
                 end,
                 limit,
-                Some(&filter_clause),
+                Some(&filter_list),
             )
             .await
         {
@@ -223,15 +240,17 @@ impl<'a, S: SecurityLakeQueries> SecurityLakeEnricher<'a, S> {
         service: Option<&str>,
         limit: usize,
     ) -> QueryResult {
-        let safe_op = sanitize_string(operation);
-        let mut filters = vec![format!("\"api\".\"operation\" = '{safe_op}'")];
+        let mut filter_list = vec![ColumnFilter::StringEquals {
+            path: "api.operation".into(),
+            value: operation.to_string(),
+        }];
 
         if let Some(svc) = service {
-            let safe_svc = sanitize_string(svc);
-            filters.push(format!("\"api\".\"service\".\"name\" = '{safe_svc}'"));
+            filter_list.push(ColumnFilter::StringEquals {
+                path: "api.service.name".into(),
+                value: svc.to_string(),
+            });
         }
-
-        let filter_clause = filters.join(" AND ");
 
         match self
             .connector
@@ -240,7 +259,7 @@ impl<'a, S: SecurityLakeQueries> SecurityLakeEnricher<'a, S> {
                 start,
                 end,
                 limit,
-                Some(&filter_clause),
+                Some(&filter_list),
             )
             .await
         {
@@ -260,8 +279,10 @@ impl<'a, S: SecurityLakeQueries> SecurityLakeEnricher<'a, S> {
         end: DateTime<Utc>,
         limit: usize,
     ) -> QueryResult {
-        let safe_user = sanitize_string(user_name);
-        let filter = format!("\"actor\".\"user\".\"name\" = '{safe_user}'");
+        let filters = [ColumnFilter::StringEquals {
+            path: "actor.user.name".into(),
+            value: user_name.to_string(),
+        }];
 
         match self
             .connector
@@ -270,7 +291,7 @@ impl<'a, S: SecurityLakeQueries> SecurityLakeEnricher<'a, S> {
                 start,
                 end,
                 limit,
-                Some(&filter),
+                Some(&filters),
             )
             .await
         {
@@ -305,20 +326,17 @@ impl<'a, S: SecurityLakeQueries> SecurityLakeEnricher<'a, S> {
         ];
         let classes = event_classes.unwrap_or(&default_classes);
 
-        let safe_users: Vec<String> = user_names.iter().map(|u| sanitize_string(u)).collect();
-        let in_list = safe_users
-            .iter()
-            .map(|s| format!("'{s}'"))
-            .collect::<Vec<_>>()
-            .join(", ");
-        let filter = format!("\"actor\".\"user\".\"name\" IN ({in_list})");
+        let filters = [ColumnFilter::StringIn {
+            path: "actor.user.name".into(),
+            values: user_names.to_vec(),
+        }];
 
         let mut all_results = Vec::new();
 
         for &event_class in classes {
             match self
                 .connector
-                .query_by_event_class(event_class, start, end, limit, Some(&filter))
+                .query_by_event_class(event_class, start, end, limit, Some(&filters))
                 .await
             {
                 Ok(qr) if !qr.is_empty() => {
@@ -371,18 +389,21 @@ impl<'a, S: SecurityLakeQueries> SecurityLakeEnricher<'a, S> {
             return QueryResult::empty();
         }
 
-        let in_list = valid_ips
-            .iter()
-            .map(|ip| format!("'{ip}'"))
-            .collect::<Vec<_>>()
-            .join(", ");
+        let ip_values: Vec<String> = valid_ips.iter().map(|s| (*s).to_string()).collect();
 
         let mut all_results = Vec::new();
 
         // NetworkActivity: match either src or dst endpoint
-        let net_filter = format!(
-            "(\"src_endpoint\".\"ip\" IN ({in_list}) OR \"dst_endpoint\".\"ip\" IN ({in_list}))"
-        );
+        let net_filters = [ColumnFilter::Or(vec![
+            ColumnFilter::StringIn {
+                path: "src_endpoint.ip".into(),
+                values: ip_values.clone(),
+            },
+            ColumnFilter::StringIn {
+                path: "dst_endpoint.ip".into(),
+                values: ip_values.clone(),
+            },
+        ])];
         match self
             .connector
             .query_by_event_class(
@@ -390,7 +411,7 @@ impl<'a, S: SecurityLakeQueries> SecurityLakeEnricher<'a, S> {
                 start,
                 end,
                 limit,
-                Some(&net_filter),
+                Some(&net_filters),
             )
             .await
         {
@@ -402,11 +423,14 @@ impl<'a, S: SecurityLakeQueries> SecurityLakeEnricher<'a, S> {
         }
 
         // ApiActivity + Authentication: source IP only
-        let src_filter = format!("\"src_endpoint\".\"ip\" IN ({in_list})");
+        let src_filters = [ColumnFilter::StringIn {
+            path: "src_endpoint.ip".into(),
+            values: ip_values,
+        }];
         for event_class in [OCSFEventClass::ApiActivity, OCSFEventClass::Authentication] {
             match self
                 .connector
-                .query_by_event_class(event_class, start, end, limit, Some(&src_filter))
+                .query_by_event_class(event_class, start, end, limit, Some(&src_filters))
                 .await
             {
                 Ok(qr) if !qr.is_empty() => {
@@ -458,7 +482,9 @@ impl<'a, S: SecurityLakeQueries> SecurityLakeEnricher<'a, S> {
         }
 
         let safe_arn = sanitize_string(arn);
-        let filter = format!("any_match(\"resources\", x -> x.\"uid\" = '{safe_arn}')");
+        let filters = [ColumnFilter::RawSql(format!(
+            "any_match(\"resources\", x -> x.\"uid\" = '{safe_arn}')"
+        ))];
 
         match self
             .connector
@@ -467,7 +493,7 @@ impl<'a, S: SecurityLakeQueries> SecurityLakeEnricher<'a, S> {
                 start,
                 end,
                 limit,
-                Some(&filter),
+                Some(&filters),
             )
             .await
         {
@@ -513,7 +539,9 @@ impl<'a, S: SecurityLakeQueries> SecurityLakeEnricher<'a, S> {
             .map(|a| format!("'{}'", sanitize_string(a)))
             .collect::<Vec<_>>()
             .join(", ");
-        let filter = format!("any_match(\"resources\", x -> x.\"uid\" IN ({in_list}))");
+        let filters = [ColumnFilter::RawSql(format!(
+            "any_match(\"resources\", x -> x.\"uid\" IN ({in_list}))"
+        ))];
 
         match self
             .connector
@@ -522,7 +550,7 @@ impl<'a, S: SecurityLakeQueries> SecurityLakeEnricher<'a, S> {
                 start,
                 end,
                 limit,
-                Some(&filter),
+                Some(&filters),
             )
             .await
         {
@@ -559,7 +587,10 @@ impl<'a, S: SecurityLakeQueries> SecurityLakeEnricher<'a, S> {
             return QueryResult::empty();
         }
 
-        let filter = format!("\"src_endpoint\".\"ip\" = '{ip_address}'");
+        let filters = [ColumnFilter::StringEquals {
+            path: "src_endpoint.ip".into(),
+            value: ip_address.to_string(),
+        }];
         let mut results = Vec::new();
 
         // Authentication events
@@ -570,7 +601,7 @@ impl<'a, S: SecurityLakeQueries> SecurityLakeEnricher<'a, S> {
                 start,
                 end,
                 limit,
-                Some(&filter),
+                Some(&filters),
             )
             .await
             && !qr.is_empty()
@@ -586,7 +617,7 @@ impl<'a, S: SecurityLakeQueries> SecurityLakeEnricher<'a, S> {
                 start,
                 end,
                 limit,
-                Some(&filter),
+                Some(&filters),
             )
             .await
             && !qr.is_empty()
@@ -634,7 +665,7 @@ mod tests {
             _start: DateTime<Utc>,
             _end: DateTime<Utc>,
             _limit: usize,
-            _additional_filters: Option<&str>,
+            _filters: Option<&[ColumnFilter]>,
         ) -> Result<QueryResult, SecurityLakeError> {
             Ok(self
                 .results

@@ -278,15 +278,14 @@ async fn create_from_detection(
         }));
     }
 
-    // 3. Build graph from detection matches only (no enrichment).
-    //    Enrichment scans too many Parquet files for the API Gateway 29s limit.
-    //    Use POST /investigations/{id}/enrich for enrichment after creation.
+    // 3. Build graph with enrichment — Arrow-level string filters ensure
+    //    only matching rows survive, keeping within the API Gateway 29s limit.
     let mut builder = GraphBuilder::new();
     Box::pin(builder.build_from_detection::<irone_aws::ConnectorKind>(
         &result,
-        None,
+        Some(&connector),
         body.enrichment_window_minutes,
-        1000,
+        500,
         true,
     ))
     .await;

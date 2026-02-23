@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::result::QueryResult;
+use super::sql_utils::sanitize_string;
 
 /// OCSF event class IDs commonly found in Security Lake.
 ///
@@ -185,6 +186,77 @@ pub enum SecurityLakeError {
     Other(#[from] Box<dyn std::error::Error + Send + Sync>),
 }
 
+/// Typed predicate for filtering OCSF event rows.
+///
+/// Replaces raw SQL filter strings with structured predicates that can be
+/// converted to SQL (for Athena) or Arrow-level filters (for Iceberg).
+/// Dot-notation paths match the existing `get_nested_value` convention
+/// (e.g. `"actor.user.name"`, `"src_endpoint.ip"`).
+#[derive(Debug, Clone)]
+pub enum ColumnFilter {
+    /// Exact string match on a (possibly nested) OCSF column.
+    StringEquals { path: String, value: String },
+    /// String membership test on a (possibly nested) OCSF column.
+    StringIn { path: String, values: Vec<String> },
+    /// Disjunction of filters.
+    Or(Vec<ColumnFilter>),
+    /// Conjunction of filters.
+    And(Vec<ColumnFilter>),
+    /// Raw SQL expression — used for Athena-specific features like `any_match()`.
+    /// Iceberg ignores this variant gracefully.
+    RawSql(String),
+}
+
+impl ColumnFilter {
+    /// Convert a dot-notation OCSF path to a quoted SQL column reference.
+    ///
+    /// `"actor.user.name"` → `"actor"."user"."name"`
+    fn quote_ocsf_path(path: &str) -> String {
+        path.split('.')
+            .map(|part| format!("\"{part}\""))
+            .collect::<Vec<_>>()
+            .join(".")
+    }
+
+    /// Convert this filter to a SQL WHERE clause fragment.
+    ///
+    /// Values are sanitized via `sanitize_string` for defense-in-depth.
+    #[must_use]
+    pub fn to_sql(&self) -> String {
+        match self {
+            Self::StringEquals { path, value } => {
+                let col = Self::quote_ocsf_path(path);
+                let safe = sanitize_string(value);
+                format!("{col} = '{safe}'")
+            }
+            Self::StringIn { path, values } => {
+                let col = Self::quote_ocsf_path(path);
+                let in_list = values
+                    .iter()
+                    .map(|v| format!("'{}'", sanitize_string(v)))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!("{col} IN ({in_list})")
+            }
+            Self::Or(filters) => {
+                if filters.is_empty() {
+                    return "FALSE".to_string();
+                }
+                let parts: Vec<String> = filters.iter().map(Self::to_sql).collect();
+                format!("({})", parts.join(" OR "))
+            }
+            Self::And(filters) => {
+                if filters.is_empty() {
+                    return "TRUE".to_string();
+                }
+                let parts: Vec<String> = filters.iter().map(Self::to_sql).collect();
+                format!("({})", parts.join(" AND "))
+            }
+            Self::RawSql(sql) => sql.clone(),
+        }
+    }
+}
+
 /// Trait for Security Lake OCSF-aware query operations.
 ///
 /// Defined in `irone-core` for dependency inversion: `GraphBuilder` and
@@ -199,7 +271,7 @@ pub trait SecurityLakeQueries: Send + Sync {
         start: DateTime<Utc>,
         end: DateTime<Utc>,
         limit: usize,
-        additional_filters: Option<&str>,
+        filters: Option<&[ColumnFilter]>,
     ) -> Result<QueryResult, SecurityLakeError>;
 
     /// Query authentication events (class 3002).
@@ -450,5 +522,57 @@ mod tests {
         let data: serde_json::Map<String, Value> =
             serde_json::from_str(r#"{"resources": []}"#).unwrap();
         assert!(get_nested_array(&data, "resources").is_none());
+    }
+
+    // --- ColumnFilter::to_sql ---
+
+    #[test]
+    fn column_filter_string_equals_sql() {
+        let f = ColumnFilter::StringEquals {
+            path: "actor.user.name".into(),
+            value: "alice".into(),
+        };
+        assert_eq!(f.to_sql(), r#""actor"."user"."name" = 'alice'"#);
+    }
+
+    #[test]
+    fn column_filter_string_in_sql() {
+        let f = ColumnFilter::StringIn {
+            path: "src_endpoint.ip".into(),
+            values: vec!["10.0.0.1".into(), "10.0.0.2".into()],
+        };
+        assert_eq!(
+            f.to_sql(),
+            r#""src_endpoint"."ip" IN ('10.0.0.1', '10.0.0.2')"#
+        );
+    }
+
+    #[test]
+    fn column_filter_or_sql() {
+        let f = ColumnFilter::Or(vec![
+            ColumnFilter::StringEquals {
+                path: "src_endpoint.ip".into(),
+                value: "10.0.0.1".into(),
+            },
+            ColumnFilter::StringEquals {
+                path: "dst_endpoint.ip".into(),
+                value: "10.0.0.1".into(),
+            },
+        ]);
+        assert_eq!(
+            f.to_sql(),
+            r#"("src_endpoint"."ip" = '10.0.0.1' OR "dst_endpoint"."ip" = '10.0.0.1')"#
+        );
+    }
+
+    #[test]
+    fn column_filter_sanitizes_values() {
+        let f = ColumnFilter::StringEquals {
+            path: "actor.user.name".into(),
+            value: "O'Brien; DROP TABLE--".into(),
+        };
+        let sql = f.to_sql();
+        assert!(sql.contains("O''Brien"));
+        assert!(!sql.contains("--"));
     }
 }

@@ -7,10 +7,10 @@ use tracing::{debug, warn};
 use irone_core::catalog::DataSource;
 use irone_core::connectors::base::{DataConnector, HealthCheckResult};
 use irone_core::connectors::ocsf::{
-    OCSFEventClass, SecurityLakeError, SecurityLakeQueries, format_athena_timestamp,
+    ColumnFilter, OCSFEventClass, SecurityLakeError, SecurityLakeQueries, format_athena_timestamp,
 };
 use irone_core::connectors::result::QueryResult;
-use irone_core::connectors::sql_utils::{quote_table, sanitize_string, validate_ipv4};
+use irone_core::connectors::sql_utils::{quote_table, validate_ipv4};
 
 use crate::athena::AthenaConnector;
 
@@ -150,7 +150,7 @@ impl SecurityLakeQueries for SecurityLakeConnector {
         start: DateTime<Utc>,
         end: DateTime<Utc>,
         limit: usize,
-        additional_filters: Option<&str>,
+        filters: Option<&[ColumnFilter]>,
     ) -> Result<QueryResult, SecurityLakeError> {
         let table = self.table_ref()?;
         let class_uid = event_class.class_uid();
@@ -165,19 +165,22 @@ impl SecurityLakeQueries for SecurityLakeConnector {
                AND time_dt < TIMESTAMP '{end_ts}'"
         );
 
-        if let Some(filters) = additional_filters {
-            // Log warning if filters contain suspicious keywords
-            let upper = filters.to_uppercase();
-            if ["DROP", "DELETE", "INSERT", "UPDATE", "TRUNCATE"]
-                .iter()
-                .any(|kw| upper.contains(kw))
-            {
-                warn!(
-                    filter = &filters[..filters.len().min(100)],
-                    "Suspicious SQL filter detected"
-                );
+        if let Some(filter_list) = filters {
+            for filter in filter_list {
+                let clause = filter.to_sql();
+                // Defense-in-depth: warn on suspicious SQL from RawSql variants
+                let upper = clause.to_uppercase();
+                if ["DROP", "DELETE", "INSERT", "UPDATE", "TRUNCATE"]
+                    .iter()
+                    .any(|kw| upper.contains(kw))
+                {
+                    warn!(
+                        filter = &clause[..clause.len().min(100)],
+                        "Suspicious SQL filter detected"
+                    );
+                }
+                write!(sql, " AND ({clause})").unwrap();
             }
-            write!(sql, " AND ({filters})").unwrap();
         }
 
         write!(sql, " LIMIT {safe_limit}").unwrap();
@@ -200,18 +203,21 @@ impl SecurityLakeQueries for SecurityLakeConnector {
         status: Option<&str>,
         limit: usize,
     ) -> Result<QueryResult, SecurityLakeError> {
-        let filters = status.map(|s| {
-            let safe = sanitize_string(s);
-            format!("status = '{safe}'")
-        });
-        self.query_by_event_class(
-            OCSFEventClass::Authentication,
-            start,
-            end,
-            limit,
-            filters.as_deref(),
-        )
-        .await
+        let filter_vec: Vec<ColumnFilter> = status
+            .map(|s| {
+                vec![ColumnFilter::StringEquals {
+                    path: "status".into(),
+                    value: s.to_string(),
+                }]
+            })
+            .unwrap_or_default();
+        let filters = if filter_vec.is_empty() {
+            None
+        } else {
+            Some(filter_vec.as_slice())
+        };
+        self.query_by_event_class(OCSFEventClass::Authentication, start, end, limit, filters)
+            .await
     }
 
     async fn query_api_activity(
@@ -222,28 +228,26 @@ impl SecurityLakeQueries for SecurityLakeConnector {
         operation: Option<&str>,
         limit: usize,
     ) -> Result<QueryResult, SecurityLakeError> {
-        let mut filter_parts = Vec::new();
+        let mut filter_vec = Vec::new();
         if let Some(svc) = service {
-            let safe = sanitize_string(svc);
-            filter_parts.push(format!("\"api\".\"service\".\"name\" = '{safe}'"));
+            filter_vec.push(ColumnFilter::StringEquals {
+                path: "api.service.name".into(),
+                value: svc.to_string(),
+            });
         }
         if let Some(op) = operation {
-            let safe = sanitize_string(op);
-            filter_parts.push(format!("\"api\".\"operation\" = '{safe}'"));
+            filter_vec.push(ColumnFilter::StringEquals {
+                path: "api.operation".into(),
+                value: op.to_string(),
+            });
         }
-        let filters = if filter_parts.is_empty() {
+        let filters = if filter_vec.is_empty() {
             None
         } else {
-            Some(filter_parts.join(" AND "))
+            Some(filter_vec.as_slice())
         };
-        self.query_by_event_class(
-            OCSFEventClass::ApiActivity,
-            start,
-            end,
-            limit,
-            filters.as_deref(),
-        )
-        .await
+        self.query_by_event_class(OCSFEventClass::ApiActivity, start, end, limit, filters)
+            .await
     }
 
     async fn query_network_activity(
@@ -255,31 +259,34 @@ impl SecurityLakeQueries for SecurityLakeConnector {
         dst_port: Option<u16>,
         limit: usize,
     ) -> Result<QueryResult, SecurityLakeError> {
-        let mut filter_parts = Vec::new();
+        let mut filter_vec = Vec::new();
         if let Some(ip) = src_ip {
             validate_ipv4(ip).map_err(|e| SecurityLakeError::InvalidParameter(e.to_string()))?;
-            filter_parts.push(format!("\"src_endpoint\".\"ip\" = '{ip}'"));
+            filter_vec.push(ColumnFilter::StringEquals {
+                path: "src_endpoint.ip".into(),
+                value: ip.to_string(),
+            });
         }
         if let Some(ip) = dst_ip {
             validate_ipv4(ip).map_err(|e| SecurityLakeError::InvalidParameter(e.to_string()))?;
-            filter_parts.push(format!("\"dst_endpoint\".\"ip\" = '{ip}'"));
+            filter_vec.push(ColumnFilter::StringEquals {
+                path: "dst_endpoint.ip".into(),
+                value: ip.to_string(),
+            });
         }
         if let Some(port) = dst_port {
-            filter_parts.push(format!("\"dst_endpoint\".\"port\" = {port}"));
+            // Port filtering uses RawSql since it's an integer comparison
+            filter_vec.push(ColumnFilter::RawSql(format!(
+                "\"dst_endpoint\".\"port\" = {port}"
+            )));
         }
-        let filters = if filter_parts.is_empty() {
+        let filters = if filter_vec.is_empty() {
             None
         } else {
-            Some(filter_parts.join(" AND "))
+            Some(filter_vec.as_slice())
         };
-        self.query_by_event_class(
-            OCSFEventClass::NetworkActivity,
-            start,
-            end,
-            limit,
-            filters.as_deref(),
-        )
-        .await
+        self.query_by_event_class(OCSFEventClass::NetworkActivity, start, end, limit, filters)
+            .await
     }
 
     async fn query_security_findings(
@@ -289,18 +296,21 @@ impl SecurityLakeQueries for SecurityLakeConnector {
         severity: Option<&str>,
         limit: usize,
     ) -> Result<QueryResult, SecurityLakeError> {
-        let filters = severity.map(|s| {
-            let safe = sanitize_string(s);
-            format!("severity = '{safe}'")
-        });
-        self.query_by_event_class(
-            OCSFEventClass::SecurityFinding,
-            start,
-            end,
-            limit,
-            filters.as_deref(),
-        )
-        .await
+        let filter_vec: Vec<ColumnFilter> = severity
+            .map(|s| {
+                vec![ColumnFilter::StringEquals {
+                    path: "severity".into(),
+                    value: s.to_string(),
+                }]
+            })
+            .unwrap_or_default();
+        let filters = if filter_vec.is_empty() {
+            None
+        } else {
+            Some(filter_vec.as_slice())
+        };
+        self.query_by_event_class(OCSFEventClass::SecurityFinding, start, end, limit, filters)
+            .await
     }
 
     async fn get_event_summary(
@@ -332,6 +342,7 @@ impl SecurityLakeQueries for SecurityLakeConnector {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use irone_core::connectors::sql_utils::sanitize_string;
 
     /// Test that SQL generation for `query_by_event_class` produces correct format.
     /// We test the SQL format logic without actual AWS calls.

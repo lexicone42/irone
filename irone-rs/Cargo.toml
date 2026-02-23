@@ -73,6 +73,7 @@ arrow-schema = "57"
 arrow-cast = "57"
 arrow-select = "57"
 arrow-ord = "57"
+arrow-arith = "57"
 parquet = { version = "57", features = ["arrow", "async"] }
 futures = "0.3"
 bytes = "1"

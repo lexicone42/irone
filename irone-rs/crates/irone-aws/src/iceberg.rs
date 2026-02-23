@@ -12,7 +12,7 @@
 
 use std::collections::HashMap;
 
-use arrow_array::{Int32Array, RecordBatch, cast::AsArray};
+use arrow_array::{Array, BooleanArray, Int32Array, RecordBatch, StringArray, cast::AsArray};
 use arrow_ord::cmp::eq;
 use arrow_schema::DataType;
 use arrow_select::filter::filter_record_batch;
@@ -30,7 +30,9 @@ use tracing::{debug, warn};
 
 use irone_core::catalog::DataSource;
 use irone_core::connectors::base::{DataConnector, HealthCheckResult};
-use irone_core::connectors::ocsf::{OCSFEventClass, SecurityLakeError, SecurityLakeQueries};
+use irone_core::connectors::ocsf::{
+    ColumnFilter, OCSFEventClass, SecurityLakeError, SecurityLakeQueries,
+};
 use irone_core::connectors::result::QueryResult;
 
 use crate::arrow_convert::record_batches_to_query_result;
@@ -43,23 +45,31 @@ use crate::error::{AwsError, parse_s3_location};
 /// manifest/file level, so without this, queries like `class_uid = 3002`
 /// return unfiltered rows.
 enum ArrowRowFilter {
-    /// Filter rows where an int column equals a specific value.
+    /// Filter rows where a top-level int column equals a specific value.
     IntEquals { column: String, value: i32 },
+    /// Filter rows where a nested string column equals a specific value.
+    NestedStringEquals { path: Vec<String>, value: String },
+    /// Filter rows where a nested string column matches any of the given values.
+    NestedStringIn {
+        path: Vec<String>,
+        values: Vec<String>,
+    },
+    /// Disjunction of filters.
+    Or(Vec<ArrowRowFilter>),
+    /// Conjunction of filters.
+    And(Vec<ArrowRowFilter>),
 }
 
 impl ArrowRowFilter {
-    fn apply(&self, batch: &RecordBatch) -> Result<RecordBatch, AwsError> {
+    /// Compute a boolean mask for filtering a `RecordBatch`.
+    fn compute_mask(&self, batch: &RecordBatch) -> Result<BooleanArray, AwsError> {
         match self {
             Self::IntEquals { column, value } => {
                 let col_idx = batch.schema().index_of(column).map_err(|_| {
                     AwsError::QueryFailed(format!("filter column '{column}' not found in batch"))
                 })?;
                 let col = batch.column(col_idx);
-
-                // Create a scalar array of the target value with the same length
                 let target = Int32Array::from(vec![*value; batch.num_rows()]);
-
-                // Cast column to Int32 if needed (OCSF class_uid is typically int/long)
                 let col_i32 = if *col.data_type() == DataType::Int32 {
                     col.as_primitive::<arrow_array::types::Int32Type>().clone()
                 } else {
@@ -72,13 +82,190 @@ impl ArrowRowFilter {
                         .as_primitive::<arrow_array::types::Int32Type>()
                         .clone()
                 };
-
-                let mask = eq(&col_i32, &target)
-                    .map_err(|e| AwsError::QueryFailed(format!("filter comparison failed: {e}")))?;
-
-                filter_record_batch(batch, &mask)
-                    .map_err(|e| AwsError::QueryFailed(format!("filter_record_batch failed: {e}")))
+                eq(&col_i32, &target)
+                    .map_err(|e| AwsError::QueryFailed(format!("filter comparison failed: {e}")))
             }
+
+            Self::NestedStringEquals { path, value } => {
+                let str_col = resolve_nested_string_column(batch, path)?;
+                let bits: Vec<bool> = (0..batch.num_rows())
+                    .map(|i| !str_col.is_null(i) && str_col.value(i) == value)
+                    .collect();
+                Ok(BooleanArray::from(bits))
+            }
+
+            Self::NestedStringIn { path, values } => {
+                let str_col = resolve_nested_string_column(batch, path)?;
+                let bits: Vec<bool> = (0..batch.num_rows())
+                    .map(|i| !str_col.is_null(i) && values.iter().any(|v| v == str_col.value(i)))
+                    .collect();
+                Ok(BooleanArray::from(bits))
+            }
+
+            Self::Or(filters) => {
+                if filters.is_empty() {
+                    return Ok(BooleanArray::from(vec![false; batch.num_rows()]));
+                }
+                let first = filters[0].compute_mask(batch)?;
+                let mut result = first;
+                for f in &filters[1..] {
+                    let mask = f.compute_mask(batch)?;
+                    result = arrow_arith::boolean::or(&result, &mask)
+                        .map_err(|e| AwsError::QueryFailed(format!("boolean OR failed: {e}")))?;
+                }
+                Ok(result)
+            }
+
+            Self::And(filters) => {
+                if filters.is_empty() {
+                    return Ok(BooleanArray::from(vec![true; batch.num_rows()]));
+                }
+                let first = filters[0].compute_mask(batch)?;
+                let mut result = first;
+                for f in &filters[1..] {
+                    let mask = f.compute_mask(batch)?;
+                    result = arrow_arith::boolean::and(&result, &mask)
+                        .map_err(|e| AwsError::QueryFailed(format!("boolean AND failed: {e}")))?;
+                }
+                Ok(result)
+            }
+        }
+    }
+
+    /// Apply this filter to a `RecordBatch`, returning only matching rows.
+    fn apply(&self, batch: &RecordBatch) -> Result<RecordBatch, AwsError> {
+        let mask = self.compute_mask(batch)?;
+        filter_record_batch(batch, &mask)
+            .map_err(|e| AwsError::QueryFailed(format!("filter_record_batch failed: {e}")))
+    }
+}
+
+/// Traverse nested `StructArray` columns to resolve a string leaf.
+///
+/// Given a path like `["actor", "user", "name"]`, navigates
+/// `batch→actor (StructArray)→user (StructArray)→name (StringArray)`.
+/// Handles `LargeUtf8` → `Utf8` cast for Security Lake compatibility.
+fn resolve_nested_string_column(
+    batch: &RecordBatch,
+    path: &[String],
+) -> Result<StringArray, AwsError> {
+    if path.is_empty() {
+        return Err(AwsError::QueryFailed("empty column path".into()));
+    }
+
+    // Start from the batch schema
+    let col_idx = batch
+        .schema()
+        .index_of(&path[0])
+        .map_err(|_| AwsError::QueryFailed(format!("column '{}' not found in batch", path[0])))?;
+    let mut current: std::sync::Arc<dyn Array> = std::sync::Arc::clone(batch.column(col_idx));
+
+    // Navigate intermediate struct levels
+    for segment in &path[1..] {
+        let struct_arr = current
+            .as_any()
+            .downcast_ref::<arrow_array::StructArray>()
+            .ok_or_else(|| {
+                AwsError::QueryFailed(format!(
+                    "expected StructArray at '{}', got {:?}",
+                    segment,
+                    current.data_type()
+                ))
+            })?;
+        let field_idx = struct_arr
+            .fields()
+            .iter()
+            .position(|f| f.name() == segment)
+            .ok_or_else(|| {
+                AwsError::QueryFailed(format!("field '{segment}' not found in struct"))
+            })?;
+        current = std::sync::Arc::clone(struct_arr.column(field_idx));
+    }
+
+    // Leaf must be Utf8 or LargeUtf8
+    match current.data_type() {
+        DataType::Utf8 => {
+            let arr = current
+                .as_any()
+                .downcast_ref::<StringArray>()
+                .ok_or_else(|| AwsError::QueryFailed("downcast to StringArray failed".into()))?;
+            Ok(arr.clone())
+        }
+        DataType::LargeUtf8 => {
+            let casted = arrow_cast::cast(&current, &DataType::Utf8)
+                .map_err(|e| AwsError::QueryFailed(format!("LargeUtf8→Utf8 cast failed: {e}")))?;
+            let arr = casted
+                .as_any()
+                .downcast_ref::<StringArray>()
+                .ok_or_else(|| {
+                    AwsError::QueryFailed("downcast to StringArray after cast failed".into())
+                })?;
+            Ok(arr.clone())
+        }
+        dt => Err(AwsError::QueryFailed(format!(
+            "expected string column at end of path, got {dt:?}"
+        ))),
+    }
+}
+
+/// Convert `ColumnFilter` predicates to an `ArrowRowFilter`.
+///
+/// `RawSql` variants are silently skipped (with a warning) since they can't
+/// be expressed as Arrow operations. Returns `None` if all filters are `RawSql`.
+fn column_filters_to_arrow(filters: &[ColumnFilter]) -> Option<ArrowRowFilter> {
+    let mut arrow_filters: Vec<ArrowRowFilter> = Vec::new();
+
+    for f in filters {
+        if let Some(af) = single_column_filter_to_arrow(f) {
+            arrow_filters.push(af);
+        }
+    }
+
+    match arrow_filters.len() {
+        0 => None,
+        1 => Some(arrow_filters.remove(0)),
+        _ => Some(ArrowRowFilter::And(arrow_filters)),
+    }
+}
+
+fn single_column_filter_to_arrow(filter: &ColumnFilter) -> Option<ArrowRowFilter> {
+    match filter {
+        ColumnFilter::StringEquals { path, value } => Some(ArrowRowFilter::NestedStringEquals {
+            path: path.split('.').map(String::from).collect(),
+            value: value.clone(),
+        }),
+        ColumnFilter::StringIn { path, values } => Some(ArrowRowFilter::NestedStringIn {
+            path: path.split('.').map(String::from).collect(),
+            values: values.clone(),
+        }),
+        ColumnFilter::Or(inner) => {
+            let converted: Vec<ArrowRowFilter> = inner
+                .iter()
+                .filter_map(single_column_filter_to_arrow)
+                .collect();
+            if converted.is_empty() {
+                None
+            } else {
+                Some(ArrowRowFilter::Or(converted))
+            }
+        }
+        ColumnFilter::And(inner) => {
+            let converted: Vec<ArrowRowFilter> = inner
+                .iter()
+                .filter_map(single_column_filter_to_arrow)
+                .collect();
+            if converted.is_empty() {
+                None
+            } else {
+                Some(ArrowRowFilter::And(converted))
+            }
+        }
+        ColumnFilter::RawSql(sql) => {
+            warn!(
+                sql = &sql[..sql.len().min(80)],
+                "Iceberg ignoring RawSql filter"
+            );
+            None
         }
     }
 }
@@ -388,16 +575,8 @@ impl SecurityLakeQueries for IcebergConnector {
         start: DateTime<Utc>,
         end: DateTime<Utc>,
         limit: usize,
-        additional_filters: Option<&str>,
+        filters: Option<&[ColumnFilter]>,
     ) -> Result<QueryResult, SecurityLakeError> {
-        if additional_filters.is_some() {
-            // Iceberg predicates don't support arbitrary SQL WHERE clauses.
-            // For complex filters, the caller should fall back to Athena.
-            warn!(
-                "IcebergConnector ignoring additional_filters (not supported in Iceberg predicates)"
-            );
-        }
-
         let safe_limit = limit.min(10_000);
         let table = self
             .load_table()
@@ -411,21 +590,28 @@ impl SecurityLakeQueries for IcebergConnector {
         debug!(
             event_class = event_class.name(),
             class_uid = event_class.class_uid(),
+            has_filters = filters.is_some(),
             "Executing Iceberg scan"
         );
 
         let scan = Self::build_scan(&table, Some(predicate))
             .map_err(|e| SecurityLakeError::QueryFailed(e.to_string()))?;
 
-        // Apply Arrow-level row filter for class_uid since Iceberg predicates
-        // only prune at the manifest/file level in our bypass pattern.
+        // Build Arrow-level row filter: always include class_uid filter,
+        // plus any ColumnFilter predicates converted to Arrow operations.
         #[allow(clippy::cast_possible_wrap)]
-        let row_filter = Some(ArrowRowFilter::IntEquals {
+        let class_filter = ArrowRowFilter::IntEquals {
             column: "class_uid".into(),
             value: event_class.class_uid() as i32,
-        });
+        };
 
-        self.execute_scan(scan, Some(safe_limit), row_filter)
+        let row_filter = if let Some(extra) = filters.and_then(column_filters_to_arrow) {
+            ArrowRowFilter::And(vec![class_filter, extra])
+        } else {
+            class_filter
+        };
+
+        self.execute_scan(scan, Some(safe_limit), Some(row_filter))
             .await
             .map_err(|e| SecurityLakeError::QueryFailed(e.to_string()))
     }
@@ -804,5 +990,192 @@ mod tests {
         };
         let result = filter.apply(&batch);
         assert!(result.is_err());
+    }
+
+    /// Helper: build a batch with nested struct actor.user.name.
+    fn nested_actor_batch(names: &[Option<&str>]) -> RecordBatch {
+        use arrow_array::{RecordBatch, StringArray, StructArray};
+        use arrow_schema::{Field, Schema};
+        use std::sync::Arc;
+
+        let name_field = Field::new("name", DataType::Utf8, true);
+        let user_type = DataType::Struct(vec![name_field.clone()].into());
+        let user_field = Field::new("user", user_type, true);
+        let actor_type = DataType::Struct(vec![user_field.clone()].into());
+
+        let schema = Arc::new(Schema::new(vec![Field::new("actor", actor_type, true)]));
+
+        let name_arr = StringArray::from(names.to_vec());
+        let user_struct = StructArray::from(vec![(
+            Arc::new(name_field),
+            Arc::new(name_arr) as Arc<dyn arrow_array::Array>,
+        )]);
+        let actor_struct = StructArray::from(vec![(
+            Arc::new(user_field),
+            Arc::new(user_struct) as Arc<dyn arrow_array::Array>,
+        )]);
+
+        RecordBatch::try_new(schema, vec![Arc::new(actor_struct)]).unwrap()
+    }
+
+    #[test]
+    fn nested_string_equals_filters_rows() {
+        let batch = nested_actor_batch(&[Some("alice"), Some("bob"), Some("alice")]);
+
+        let filter = ArrowRowFilter::NestedStringEquals {
+            path: vec!["actor".into(), "user".into(), "name".into()],
+            value: "alice".into(),
+        };
+        let filtered = filter.apply(&batch).unwrap();
+        assert_eq!(filtered.num_rows(), 2);
+    }
+
+    #[test]
+    fn nested_string_in_filters_rows() {
+        let batch = nested_actor_batch(&[Some("alice"), Some("bob"), Some("charlie")]);
+
+        let filter = ArrowRowFilter::NestedStringIn {
+            path: vec!["actor".into(), "user".into(), "name".into()],
+            values: vec!["alice".into(), "charlie".into()],
+        };
+        let filtered = filter.apply(&batch).unwrap();
+        assert_eq!(filtered.num_rows(), 2);
+    }
+
+    #[test]
+    fn nested_string_equals_handles_nulls() {
+        let batch = nested_actor_batch(&[Some("alice"), None, Some("alice")]);
+
+        let filter = ArrowRowFilter::NestedStringEquals {
+            path: vec!["actor".into(), "user".into(), "name".into()],
+            value: "alice".into(),
+        };
+        let filtered = filter.apply(&batch).unwrap();
+        assert_eq!(filtered.num_rows(), 2);
+    }
+
+    #[test]
+    fn or_filter_combines_masks() {
+        use arrow_array::{RecordBatch, StringArray};
+        use arrow_schema::{Field, Schema};
+        use std::sync::Arc;
+
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("src_ip", DataType::Utf8, true),
+            Field::new("dst_ip", DataType::Utf8, true),
+        ]));
+        let batch = RecordBatch::try_new(
+            schema,
+            vec![
+                Arc::new(StringArray::from(vec!["10.0.0.1", "10.0.0.2", "10.0.0.3"])),
+                Arc::new(StringArray::from(vec!["8.8.8.8", "10.0.0.1", "1.1.1.1"])),
+            ],
+        )
+        .unwrap();
+
+        let filter = ArrowRowFilter::Or(vec![
+            ArrowRowFilter::NestedStringEquals {
+                path: vec!["src_ip".into()],
+                value: "10.0.0.1".into(),
+            },
+            ArrowRowFilter::NestedStringEquals {
+                path: vec!["dst_ip".into()],
+                value: "10.0.0.1".into(),
+            },
+        ]);
+        let filtered = filter.apply(&batch).unwrap();
+        // Row 0: src=10.0.0.1 matches; Row 1: dst=10.0.0.1 matches; Row 2: no match
+        assert_eq!(filtered.num_rows(), 2);
+    }
+
+    #[test]
+    fn and_filter_intersects_masks() {
+        use arrow_array::{Int32Array, RecordBatch, StringArray};
+        use arrow_schema::{Field, Schema};
+        use std::sync::Arc;
+
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("class_uid", DataType::Int32, false),
+            Field::new("status", DataType::Utf8, true),
+        ]));
+        let batch = RecordBatch::try_new(
+            schema,
+            vec![
+                Arc::new(Int32Array::from(vec![3002, 3002, 6003])),
+                Arc::new(StringArray::from(vec!["Success", "Failure", "Success"])),
+            ],
+        )
+        .unwrap();
+
+        let filter = ArrowRowFilter::And(vec![
+            ArrowRowFilter::IntEquals {
+                column: "class_uid".into(),
+                value: 3002,
+            },
+            ArrowRowFilter::NestedStringEquals {
+                path: vec!["status".into()],
+                value: "Success".into(),
+            },
+        ]);
+        let filtered = filter.apply(&batch).unwrap();
+        assert_eq!(filtered.num_rows(), 1);
+    }
+
+    #[test]
+    fn nested_string_missing_field_errors() {
+        let batch = nested_actor_batch(&[Some("alice")]);
+
+        let filter = ArrowRowFilter::NestedStringEquals {
+            path: vec!["actor".into(), "session".into(), "id".into()],
+            value: "x".into(),
+        };
+        let result = filter.apply(&batch);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn large_utf8_column_resolved() {
+        use arrow_array::{LargeStringArray, RecordBatch};
+        use arrow_schema::{Field, Schema};
+        use std::sync::Arc;
+
+        let schema = Arc::new(Schema::new(vec![Field::new(
+            "name",
+            DataType::LargeUtf8,
+            true,
+        )]));
+        let batch = RecordBatch::try_new(
+            schema,
+            vec![Arc::new(LargeStringArray::from(vec!["alice", "bob"]))],
+        )
+        .unwrap();
+
+        let filter = ArrowRowFilter::NestedStringEquals {
+            path: vec!["name".into()],
+            value: "bob".into(),
+        };
+        let filtered = filter.apply(&batch).unwrap();
+        assert_eq!(filtered.num_rows(), 1);
+    }
+
+    #[test]
+    fn column_filters_to_arrow_converts_predicates() {
+        let filters = vec![
+            ColumnFilter::StringEquals {
+                path: "actor.user.name".into(),
+                value: "alice".into(),
+            },
+            ColumnFilter::RawSql("any_match(...)".into()),
+        ];
+
+        let result = column_filters_to_arrow(&filters);
+        assert!(result.is_some(), "should produce a filter despite RawSql");
+    }
+
+    #[test]
+    fn column_filters_to_arrow_all_raw_returns_none() {
+        let filters = vec![ColumnFilter::RawSql("any_match(...)".into())];
+        let result = column_filters_to_arrow(&filters);
+        assert!(result.is_none());
     }
 }

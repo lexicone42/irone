@@ -12,7 +12,9 @@ use chrono::{DateTime, Utc};
 
 use irone_core::catalog::DataSource;
 use irone_core::connectors::base::{DataConnector, HealthCheckResult};
-use irone_core::connectors::ocsf::{OCSFEventClass, SecurityLakeError, SecurityLakeQueries};
+use irone_core::connectors::ocsf::{
+    ColumnFilter, OCSFEventClass, SecurityLakeError, SecurityLakeQueries,
+};
 use irone_core::connectors::result::QueryResult;
 
 use crate::iceberg::IcebergConnector;
@@ -67,11 +69,11 @@ impl SecurityLakeQueries for ConnectorKind {
         start: DateTime<Utc>,
         end: DateTime<Utc>,
         limit: usize,
-        additional_filters: Option<&str>,
+        filters: Option<&[ColumnFilter]>,
     ) -> Result<QueryResult, SecurityLakeError> {
         delegate!(
             self,
-            query_by_event_class(event_class, start, end, limit, additional_filters)
+            query_by_event_class(event_class, start, end, limit, filters)
         )
     }
 
