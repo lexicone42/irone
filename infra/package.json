@@ -11,6 +11,8 @@
     "cdk": "cdk"
   },
   "devDependencies": {
+    "@swc/core": "^1.15.11",
+    "@swc/helpers": "^0.5.19",
     "@types/jest": "^30",
     "@types/node": "^24.10.1",
     "aws-cdk": "2.1101.0",

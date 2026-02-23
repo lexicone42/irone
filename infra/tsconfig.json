@@ -25,6 +25,9 @@
       "./node_modules/@types"
     ]
   },
+  "ts-node": {
+    "swc": true
+  },
   "exclude": [
     "node_modules",
     "cdk.out"

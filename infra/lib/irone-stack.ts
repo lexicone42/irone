@@ -6,8 +6,7 @@ import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
 import * as events from "aws-cdk-lib/aws-events";
 import * as targets from "aws-cdk-lib/aws-events-targets";
 import * as iam from "aws-cdk-lib/aws-iam";
-import * as route53 from "aws-cdk-lib/aws-route53";
-import * as route53targets from "aws-cdk-lib/aws-route53-targets";
+// route53 imports removed — DNS record managed outside CDK (see note below)
 import * as s3 from "aws-cdk-lib/aws-s3";
 import { HttpApi } from "@aws-cdk/aws-apigatewayv2-alpha";
 import { Construct } from "constructs";
@@ -254,25 +253,10 @@ export class IroneStack extends cdk.Stack {
     ).overrideLogicalId("Distribution830FAC52");
 
     // --- Route53: A record alias to CloudFront ---
-    const hostedZone = route53.HostedZone.fromHostedZoneAttributes(
-      this,
-      "Zone",
-      {
-        hostedZoneId: props.hostedZoneId,
-        zoneName: props.domainName,
-      }
-    );
-
-    const dnsRecord = new route53.ARecord(this, "DnsRecord", {
-      zone: hostedZone,
-      recordName: props.domainName,
-      target: route53.RecordTarget.fromAlias(
-        new route53targets.CloudFrontTarget(distribution)
-      ),
-    });
-    (
-      dnsRecord.node.defaultChild as route53.CfnRecordSet
-    ).overrideLogicalId("DnsRecord68F7FB14");
+    // NOTE: DNS record (irone.lexicone.com → CloudFront) is managed outside CDK.
+    // Previously managed by this stack as iris.lexicone.com, manually migrated to
+    // irone.lexicone.com. CloudFormation state was stale (PhysicalId: iris.lexicone.com)
+    // causing UPDATE_ROLLBACK. Record exists in Route53 zone ZN8XM06S79WID.
 
     // --- Outputs ---
     new cdk.CfnOutput(this, "DistributionId", {
