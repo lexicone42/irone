@@ -92,7 +92,7 @@ fi
 # --- Auto-detect S3 bucket ---
 if [[ -z "${SECDASH_S3_BUCKET:-}" ]]; then
     echo "Detecting S3 bucket from Lambda config..."
-    DETECT_LAMBDA="${SECDASH_WEB_LAMBDA_NAME:-${SECDASH_HEALTH_LAMBDA_NAME:-}}"
+    DETECT_LAMBDA="${SECDASH_WEB_LAMBDA_NAME:-${SECDASH_HEALTH_LAMBDA_NAME:-${SECDASH_WORKER_LAMBDA_NAME:-}}}"
     SECDASH_S3_BUCKET=$(
         aws lambda get-function-configuration \
             --function-name "$DETECT_LAMBDA" \
