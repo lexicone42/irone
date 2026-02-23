@@ -181,7 +181,7 @@ export class AlertingStack extends cdk.Stack {
     // --- EventBridge Rules ---
     const detectionRule = new events.Rule(this, "DetectionCheckRule", {
       ruleName: "secdash-detection-check",
-      schedule: events.Schedule.rate(cdk.Duration.minutes(15)),
+      schedule: events.Schedule.rate(cdk.Duration.minutes(60)),
       description: "Run detection rules against Security Lake",
     });
     detectionRule.addTarget(
