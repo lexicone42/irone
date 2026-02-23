@@ -29,5 +29,5 @@ filters:
       - CreatePolicyVersion
       - AttachGroupPolicy
       - PutGroupPolicy
-  - field: status_id
-    equals: "1"
+  - field: status
+    equals: Success

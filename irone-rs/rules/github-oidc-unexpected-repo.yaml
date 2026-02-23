@@ -26,5 +26,5 @@ data_sources:
 filters:
   - field: api.operation
     equals: AssumeRoleWithWebIdentity
-  - field: status_id
-    equals: "1"
+  - field: status
+    equals: Success

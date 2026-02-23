@@ -29,5 +29,5 @@ filters:
     equals: AssumeRole
   - field: api.service.name
     equals: sts.amazonaws.com
-  - field: status_id
-    equals: "1"
+  - field: status
+    equals: Success
