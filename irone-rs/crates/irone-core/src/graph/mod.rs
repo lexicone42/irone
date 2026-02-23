@@ -1,8 +1,10 @@
+pub mod attack_path;
 pub mod builder;
 pub mod enrichment;
 mod models;
 mod timeline;
 
+pub use attack_path::{AttackNarrative, AttackPhase, AttackStep, extract_attack_paths};
 pub use builder::{ExtractedIdentifiers, GraphBuilder};
 pub use enrichment::{
     EntityAnomalyScore, LateralMovementTrace, SecurityLakeEnricher, score_entity_anomalies,
