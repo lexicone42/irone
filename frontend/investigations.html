@@ -49,36 +49,104 @@
                         <div class="alert alert-error" x-text="error"></div>
                     </template>
 
-                    <!-- Create Form -->
+                    <!-- Create Form (tabbed) -->
                     <div class="card">
                         <div class="card-header">New Investigation</div>
-                        <div class="form-grid mb-3">
-                            <div>
-                                <label>Name</label>
-                                <input type="text" x-model="newName" placeholder="e.g. Suspicious login" class="w-full">
-                            </div>
-                            <div>
-                                <label>Users (comma-separated)</label>
-                                <input type="text" x-model="newUsers" placeholder="e.g. admin@example.com" class="w-full">
-                            </div>
-                            <div>
-                                <label>IPs (comma-separated)</label>
-                                <input type="text" x-model="newIps" placeholder="e.g. 198.51.100.1" class="w-full">
-                            </div>
-                            <div>
-                                <label>Data Source</label>
-                                <select x-model="newSourceName" class="w-full">
-                                    <option value="">— none (empty graph) —</option>
-                                    <template x-for="src in availableSources" :key="src.name">
-                                        <option :value="src.name" x-text="src.name"></option>
-                                    </template>
-                                </select>
-                            </div>
+                        <div class="tab-bar" style="margin-bottom: 0.75rem;">
+                            <button class="tab-btn" :class="createTab === 'identifiers' && 'active'"
+                                    @click="createTab = 'identifiers'">
+                                <i class="fa-solid fa-fingerprint"></i> From Identifiers
+                            </button>
+                            <button class="tab-btn" :class="createTab === 'detection' && 'active'"
+                                    @click="createTab = 'detection'">
+                                <i class="fa-solid fa-shield-halved"></i> From Detection
+                                <template x-if="triggeredRuns.length > 0">
+                                    <span class="badge badge-error badge-sm" style="margin-left: 0.35rem;"
+                                          x-text="triggeredRuns.length"></span>
+                                </template>
+                            </button>
                         </div>
-                        <button class="btn btn-primary" @click="create()" :disabled="creating">
-                            <template x-if="!creating"><span>Create Investigation</span></template>
-                            <template x-if="creating"><span><span class="spinner"></span> Creating...</span></template>
-                        </button>
+
+                        <!-- Tab: From Identifiers -->
+                        <div x-show="createTab === 'identifiers'">
+                            <div class="form-grid mb-3">
+                                <div>
+                                    <label>Name</label>
+                                    <input type="text" x-model="newName" placeholder="e.g. Suspicious login" class="w-full">
+                                </div>
+                                <div>
+                                    <label>Users (comma-separated)</label>
+                                    <input type="text" x-model="newUsers" placeholder="e.g. admin@example.com" class="w-full">
+                                </div>
+                                <div>
+                                    <label>IPs (comma-separated)</label>
+                                    <input type="text" x-model="newIps" placeholder="e.g. 198.51.100.1" class="w-full">
+                                </div>
+                                <div>
+                                    <label>Data Source</label>
+                                    <select x-model="newSourceName" class="w-full">
+                                        <option value="">— none (empty graph) —</option>
+                                        <template x-for="src in availableSources" :key="src.name">
+                                            <option :value="src.name" x-text="src.name"></option>
+                                        </template>
+                                    </select>
+                                </div>
+                            </div>
+                            <button class="btn btn-primary" @click="create()" :disabled="creating">
+                                <template x-if="!creating"><span>Create Investigation</span></template>
+                                <template x-if="creating"><span><span class="spinner"></span> Creating...</span></template>
+                            </button>
+                        </div>
+
+                        <!-- Tab: From Detection -->
+                        <div x-show="createTab === 'detection'">
+                            <template x-if="triggeredRuns.length === 0">
+                                <p class="text-muted text-sm" style="padding: 0.5rem 0;">
+                                    No triggered detection runs yet. Run detections from the
+                                    <a href="/detections.html" class="text-accent">Rules &amp; Queries</a> page first.
+                                </p>
+                            </template>
+                            <template x-if="triggeredRuns.length > 0">
+                                <div>
+                                    <div class="form-grid mb-3">
+                                        <div style="grid-column: 1 / -1;">
+                                            <label>Triggered Detection</label>
+                                            <select x-model="selectedDetectionRunId" class="w-full">
+                                                <option value="">— select a triggered run —</option>
+                                                <template x-for="run in triggeredRuns" :key="run.run_id">
+                                                    <option :value="run.run_id"
+                                                            x-text="run.rule_name + ' — ' + run.match_count + ' matches (' + timeAgo(run.executed_at) + ')'"></option>
+                                                </template>
+                                            </select>
+                                        </div>
+                                        <div>
+                                            <label>Data Source (optional override)</label>
+                                            <select x-model="detectionSourceName" class="w-full">
+                                                <option value="">— use rule default —</option>
+                                                <template x-for="src in availableSources" :key="src.name">
+                                                    <option :value="src.name" x-text="src.name"></option>
+                                                </template>
+                                            </select>
+                                        </div>
+                                    </div>
+                                    <template x-if="selectedDetectionRun">
+                                        <div class="detection-run-preview">
+                                            <span class="badge badge-error" x-text="selectedDetectionRun.severity"></span>
+                                            <span class="text-sm" x-text="selectedDetectionRun.rule_name"></span>
+                                            <span class="text-muted text-xs">
+                                                <span x-text="selectedDetectionRun.match_count"></span> matches &middot;
+                                                <span x-text="selectedDetectionRun.execution_time_ms + 'ms'"></span>
+                                            </span>
+                                        </div>
+                                    </template>
+                                    <button class="btn btn-primary" @click="createFromDetection()"
+                                            :disabled="creating || !selectedDetectionRunId">
+                                        <template x-if="!creating"><span><i class="fa-solid fa-diagram-project"></i> Investigate Detection</span></template>
+                                        <template x-if="creating"><span><span class="spinner"></span> Creating...</span></template>
+                                    </button>
+                                </div>
+                            </template>
+                        </div>
                     </div>
 
                     <!-- List -->
@@ -103,6 +171,7 @@
                                 <thead>
                                     <tr>
                                         <th>Name</th>
+                                        <th>Status</th>
                                         <th>Nodes</th>
                                         <th>Edges</th>
                                         <th>Created</th>
@@ -113,6 +182,11 @@
                                     <template x-for="inv in investigations" :key="inv.id">
                                         <tr class="clickable" @click="openDetail(inv.id)">
                                             <td x-text="inv.name"></td>
+                                            <td>
+                                                <span class="badge badge-sm"
+                                                      :class="inv.status === 'active' ? 'badge-ok' : inv.status === 'closed' ? 'badge-muted' : 'badge-warn'"
+                                                      x-text="inv.status"></span>
+                                            </td>
                                             <td x-text="inv.node_count"></td>
                                             <td x-text="inv.edge_count"></td>
                                             <td x-text="timeAgo(inv.created_at)"></td>

@@ -54,6 +54,7 @@ fn to_l42_config(app: &AppConfig) -> L42Config {
         callback_allowed_origins: Vec::new(),
         aaguid_allowlist: Vec::new(),
         require_device_bound: false,
+        service_token: None,
     }
 }
 
@@ -103,6 +104,7 @@ pub async fn build_auth(config: &AppConfig) -> Option<AuthComponents> {
         secret: l42_config.session_secret.clone(),
         https_only: l42_config.session_https_only,
         cookie_domain: l42_config.cookie_domain.clone(),
+        service_token: l42_config.service_token.clone(),
     });
 
     let state = Arc::new(AuthState {

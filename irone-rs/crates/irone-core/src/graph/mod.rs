@@ -11,5 +11,5 @@ pub use models::{
 };
 pub use timeline::{
     EventTag, InvestigationTimeline, TAG_COLORS, TimelineEvent, extract_timeline_from_graph,
-    generate_timeline_summary_prompt,
+    generate_narrative, generate_timeline_summary_prompt,
 };

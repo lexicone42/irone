@@ -292,11 +292,18 @@ fn extract_node_events(graph: &SecurityGraph, timeline: &mut InvestigationTimeli
             .get(&node.node_type)
             .unwrap_or(&"Activity");
         let title = format!("{type_desc}: {}", node.label);
-        let description = build_node_description(node);
+
+        // Generate narrative from properties if available, fall back to legacy
+        let description = if node.properties.contains_key("class_uid") {
+            generate_narrative(&node.properties)
+        } else {
+            build_node_description(node)
+        };
 
         let operation = node
             .properties
             .get("operation")
+            .or_else(|| node.properties.get("api_operation"))
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string();
@@ -400,7 +407,28 @@ fn extract_edge_events(graph: &SecurityGraph, timeline: &mut InvestigationTimeli
             .map_or(&edge.target_id, |n| &n.label);
 
         let title = format!("{}: {source_label} -> {target_label}", edge.edge_type);
-        let description = if edge.event_count > 1 {
+
+        // Generate narrative for edges with OCSF properties
+        let description = if edge.properties.contains_key("class_uid") {
+            generate_narrative(&edge.properties)
+        } else if !edge.properties.is_empty()
+            && (edge.properties.contains_key("bytes_in")
+                || edge.properties.contains_key("bytes_out"))
+        {
+            // Network flow edge with byte counts (e.g. from seed graph)
+            let mut flow_props = edge.properties.clone();
+            // Inject src/dst from node labels for narrative
+            flow_props
+                .entry("src_endpoint_ip".to_string())
+                .or_insert_with(|| Value::String(source_label.clone()));
+            flow_props
+                .entry("dst_endpoint_ip".to_string())
+                .or_insert_with(|| Value::String(target_label.clone()));
+            flow_props
+                .entry("class_uid".to_string())
+                .or_insert_with(|| Value::Number(4001.into()));
+            generate_narrative(&flow_props)
+        } else if edge.event_count > 1 {
             format!("Occurred {} times", edge.event_count)
         } else {
             String::new()
@@ -420,6 +448,207 @@ fn extract_edge_events(graph: &SecurityGraph, timeline: &mut InvestigationTimeli
             properties: edge.properties.clone(),
         };
         timeline.add_event(event);
+    }
+}
+
+// ─── Narrative Generation ────────────────────────────────────────────
+
+/// Helper: extract a string from a properties `HashMap`.
+fn get_prop_str<'a>(props: &'a HashMap<String, Value>, key: &str) -> Option<&'a str> {
+    props.get(key).and_then(Value::as_str)
+}
+
+/// Format a byte count as a human-readable string.
+#[allow(clippy::cast_precision_loss)] // Precision loss is irrelevant for display formatting
+fn format_bytes(bytes: u64) -> String {
+    if bytes >= 1_000_000_000 {
+        format!("{:.1} GB", bytes as f64 / 1_000_000_000.0)
+    } else if bytes >= 1_000_000 {
+        format!("{:.1} MB", bytes as f64 / 1_000_000.0)
+    } else if bytes >= 1_000 {
+        format!("{:.1} KB", bytes as f64 / 1_000.0)
+    } else {
+        format!("{bytes} B")
+    }
+}
+
+/// Generate a narrative description for a timeline event based on its OCSF `class_uid`.
+///
+/// Dispatches to class-specific narration functions that produce IR-analyst-style
+/// descriptions (e.g. "User 'bryan' authenticated to AWS Console from 73.162.45.100").
+#[must_use]
+#[allow(clippy::implicit_hasher)]
+pub fn generate_narrative(props: &HashMap<String, Value>) -> String {
+    #[allow(clippy::cast_possible_truncation)] // OCSF class_uid always fits in u32
+    let class_uid = props.get("class_uid").and_then(Value::as_u64).unwrap_or(0) as u32;
+
+    let base = match class_uid {
+        3002 => narrate_authentication(props),
+        6003 | 3001 => narrate_api_activity(props),
+        4001 => narrate_network_flow(props),
+        4003 => narrate_dns_activity(props),
+        _ => narrate_generic(props),
+    };
+
+    // Append IR context for sensitive operations
+    let context = add_operation_context(props);
+    if context.is_empty() {
+        base
+    } else {
+        format!("{base} {context}")
+    }
+}
+
+/// Narrate an authentication event (`class_uid` 3002).
+fn narrate_authentication(props: &HashMap<String, Value>) -> String {
+    use std::fmt::Write;
+
+    let user = get_prop_str(props, "actor_user_name").unwrap_or("unknown");
+    let user_type = get_prop_str(props, "actor_user_type").unwrap_or("unknown");
+    let service = get_prop_str(props, "api_service_name").unwrap_or("AWS");
+    let src_ip = get_prop_str(props, "src_endpoint_ip");
+    let status = get_prop_str(props, "status").unwrap_or("unknown");
+
+    let mut narrative = format!("User '{user}' ({user_type}) authenticated to {service}");
+    if let Some(ip) = src_ip {
+        let _ = write!(narrative, " from {ip}");
+    }
+    let _ = write!(narrative, ". Status: {status}.");
+    narrative
+}
+
+/// Narrate an API activity event (`class_uid` 6003 / 3001).
+fn narrate_api_activity(props: &HashMap<String, Value>) -> String {
+    let user = get_prop_str(props, "actor_user_name").unwrap_or("unknown");
+    let operation = get_prop_str(props, "api_operation").unwrap_or("unknown");
+    let service = get_prop_str(props, "api_service_name").unwrap_or("");
+    let resource = get_prop_str(props, "resource_arn");
+
+    let qualified_op = if service.is_empty() {
+        operation.to_string()
+    } else {
+        format!("{service}:{operation}")
+    };
+
+    let mut narrative = format!("User '{user}' called {qualified_op}");
+    if let Some(arn) = resource {
+        use std::fmt::Write;
+        let _ = write!(narrative, " targeting {arn}");
+    }
+    narrative.push('.');
+    narrative
+}
+
+/// Narrate a network flow event (`class_uid` 4001).
+fn narrate_network_flow(props: &HashMap<String, Value>) -> String {
+    use std::fmt::Write;
+
+    let src = get_prop_str(props, "src_endpoint_ip").unwrap_or("unknown");
+    let dst = get_prop_str(props, "dst_endpoint_ip").unwrap_or("unknown");
+    let protocol = get_prop_str(props, "protocol_name").unwrap_or("TCP");
+
+    let bytes_in = props.get("bytes_in").and_then(Value::as_u64).unwrap_or(0);
+    let bytes_out = props.get("bytes_out").and_then(Value::as_u64).unwrap_or(0);
+
+    let dst_port_str = props.get("dst_port").map(|v| {
+        if let Some(arr) = v.as_array() {
+            arr.iter()
+                .filter_map(Value::as_u64)
+                .map(|p| p.to_string())
+                .collect::<Vec<_>>()
+                .join(",")
+        } else if let Some(p) = v.as_u64() {
+            p.to_string()
+        } else {
+            String::new()
+        }
+    });
+
+    let mut narrative = format!("{src} communicated with {dst}");
+    if let Some(ref ports) = dst_port_str
+        && !ports.is_empty()
+    {
+        let _ = write!(narrative, " on {protocol}/{ports}");
+    }
+
+    if bytes_in > 0 || bytes_out > 0 {
+        let _ = write!(
+            narrative,
+            " \u{2014} {} outbound, {} inbound",
+            format_bytes(bytes_out),
+            format_bytes(bytes_in)
+        );
+    }
+
+    narrative
+}
+
+/// Narrate a DNS activity event (`class_uid` 4003).
+fn narrate_dns_activity(props: &HashMap<String, Value>) -> String {
+    let src = get_prop_str(props, "src_endpoint_ip").unwrap_or("unknown host");
+    let hostname = get_prop_str(props, "query_hostname").unwrap_or("unknown domain");
+
+    format!("Internal host {src} resolved {hostname}")
+}
+
+/// Generic narrative for events without a specific handler.
+fn narrate_generic(props: &HashMap<String, Value>) -> String {
+    let mut parts = Vec::new();
+
+    if let Some(user) = get_prop_str(props, "actor_user_name") {
+        parts.push(format!("User: {user}"));
+    }
+    if let Some(op) = get_prop_str(props, "api_operation") {
+        let service = get_prop_str(props, "api_service_name").unwrap_or("");
+        if service.is_empty() {
+            parts.push(format!("Operation: {op}"));
+        } else {
+            parts.push(format!("Operation: {service}:{op}"));
+        }
+    }
+    if let Some(ip) = get_prop_str(props, "src_endpoint_ip") {
+        parts.push(format!("Source: {ip}"));
+    }
+    if let Some(status) = get_prop_str(props, "status") {
+        parts.push(format!("Status: {status}"));
+    }
+
+    if parts.is_empty() {
+        "Security event observed.".into()
+    } else {
+        parts.join(" | ")
+    }
+}
+
+/// Append IR-analyst context annotations for sensitive API operations.
+fn add_operation_context(props: &HashMap<String, Value>) -> String {
+    let Some(operation) = get_prop_str(props, "api_operation") else {
+        return String::new();
+    };
+
+    match operation {
+        "CreateAccessKey" => "This created new programmatic credentials.".into(),
+        "DeactivateMFADevice" | "DeleteVirtualMFADevice" => {
+            "This removed multi-factor authentication protection.".into()
+        }
+        "StopLogging" | "DeleteTrail" | "PutEventSelectors" => {
+            "This disabled audit logging \u{2014} potential anti-forensics.".into()
+        }
+        "AssumeRole" | "AssumeRoleWithSAML" | "AssumeRoleWithWebIdentity" => {
+            "This assumed a different identity with potentially different permissions.".into()
+        }
+        "PutBucketPolicy" | "PutBucketAcl" => {
+            "This modified access controls on the S3 bucket.".into()
+        }
+        "AuthorizeSecurityGroupIngress" | "AuthorizeSecurityGroupEgress" => {
+            "This opened network access \u{2014} check for overly permissive rules.".into()
+        }
+        "RunInstances" => "This launched new compute resources.".into(),
+        "CreateUser" | "CreateLoginProfile" => "This created a new IAM identity.".into(),
+        "AttachUserPolicy" | "AttachRolePolicy" | "PutUserPolicy" | "PutRolePolicy" => {
+            "This modified IAM permissions.".into()
+        }
+        _ => String::new(),
     }
 }
 
@@ -727,5 +956,145 @@ mod tests {
         assert_eq!(json, "\"privilege_escalation\"");
         let back: EventTag = serde_json::from_str(&json).unwrap();
         assert_eq!(back, EventTag::PrivilegeEscalation);
+    }
+
+    // ─── Narrative generation tests ─────────────────────────
+
+    #[test]
+    fn format_bytes_scales() {
+        assert_eq!(super::format_bytes(42), "42 B");
+        assert_eq!(super::format_bytes(1_500), "1.5 KB");
+        assert_eq!(super::format_bytes(2_500_000), "2.5 MB");
+        assert_eq!(super::format_bytes(1_500_000_000), "1.5 GB");
+    }
+
+    #[test]
+    fn narrate_authentication_event() {
+        let mut props = HashMap::new();
+        props.insert("class_uid".into(), Value::Number(3002.into()));
+        props.insert("actor_user_name".into(), Value::String("bryan".into()));
+        props.insert("actor_user_type".into(), Value::String("IAMUser".into()));
+        props.insert(
+            "api_service_name".into(),
+            Value::String("AWS Console".into()),
+        );
+        props.insert(
+            "src_endpoint_ip".into(),
+            Value::String("73.162.45.100".into()),
+        );
+        props.insert("status".into(), Value::String("Success".into()));
+
+        let narrative = super::generate_narrative(&props);
+        assert!(narrative.contains("bryan"));
+        assert!(narrative.contains("IAMUser"));
+        assert!(narrative.contains("73.162.45.100"));
+        assert!(narrative.contains("Success"));
+    }
+
+    #[test]
+    fn narrate_api_activity_with_context() {
+        let mut props = HashMap::new();
+        props.insert("class_uid".into(), Value::Number(6003.into()));
+        props.insert(
+            "actor_user_name".into(),
+            Value::String("unknown-actor".into()),
+        );
+        props.insert(
+            "api_operation".into(),
+            Value::String("CreateAccessKey".into()),
+        );
+        props.insert("api_service_name".into(), Value::String("iam".into()));
+        props.insert(
+            "resource_arn".into(),
+            Value::String("arn:aws:iam::651804262336:user/bryan".into()),
+        );
+
+        let narrative = super::generate_narrative(&props);
+        assert!(narrative.contains("unknown-actor"));
+        assert!(narrative.contains("iam:CreateAccessKey"));
+        assert!(narrative.contains("arn:aws:iam"));
+        // Should include IR context for CreateAccessKey
+        assert!(narrative.contains("programmatic credentials"));
+    }
+
+    #[test]
+    fn narrate_network_flow_event() {
+        let mut props = HashMap::new();
+        props.insert("class_uid".into(), Value::Number(4001.into()));
+        props.insert("src_endpoint_ip".into(), Value::String("10.0.1.50".into()));
+        props.insert(
+            "dst_endpoint_ip".into(),
+            Value::String("203.0.113.66".into()),
+        );
+        props.insert("protocol_name".into(), Value::String("TCP".into()));
+        props.insert("dst_port".into(), Value::Number(443.into()));
+        props.insert("bytes_in".into(), Value::Number(45_000.into()));
+        props.insert("bytes_out".into(), Value::Number(150_000_000_u64.into()));
+
+        let narrative = super::generate_narrative(&props);
+        assert!(narrative.contains("10.0.1.50"));
+        assert!(narrative.contains("203.0.113.66"));
+        assert!(narrative.contains("TCP/443"));
+        assert!(narrative.contains("150.0 MB"));
+        assert!(narrative.contains("45.0 KB"));
+    }
+
+    #[test]
+    fn narrate_dns_activity_event() {
+        let mut props = HashMap::new();
+        props.insert("class_uid".into(), Value::Number(4003.into()));
+        props.insert("src_endpoint_ip".into(), Value::String("10.0.1.50".into()));
+        props.insert(
+            "query_hostname".into(),
+            Value::String("c2-callback.evil.com".into()),
+        );
+
+        let narrative = super::generate_narrative(&props);
+        assert!(narrative.contains("10.0.1.50"));
+        assert!(narrative.contains("c2-callback.evil.com"));
+    }
+
+    #[test]
+    fn narrate_generic_event() {
+        let mut props = HashMap::new();
+        props.insert("class_uid".into(), Value::Number(9999.into()));
+        props.insert("actor_user_name".into(), Value::String("alice".into()));
+        props.insert("status".into(), Value::String("Success".into()));
+
+        let narrative = super::generate_narrative(&props);
+        assert!(narrative.contains("alice"));
+        assert!(narrative.contains("Success"));
+    }
+
+    #[test]
+    fn operation_context_annotations() {
+        let cases = vec![
+            ("CreateAccessKey", "programmatic credentials"),
+            ("DeactivateMFADevice", "multi-factor authentication"),
+            ("StopLogging", "audit logging"),
+            ("AssumeRole", "different identity"),
+            ("PutBucketPolicy", "access controls"),
+        ];
+
+        for (op, expected_fragment) in cases {
+            let mut props = HashMap::new();
+            props.insert("api_operation".into(), Value::String(op.into()));
+            let ctx = super::add_operation_context(&props);
+            assert!(
+                ctx.contains(expected_fragment),
+                "operation '{op}' context should contain '{expected_fragment}', got: '{ctx}'"
+            );
+        }
+    }
+
+    #[test]
+    fn no_context_for_benign_operations() {
+        let mut props = HashMap::new();
+        props.insert(
+            "api_operation".into(),
+            Value::String("DescribeInstances".into()),
+        );
+        let ctx = super::add_operation_context(&props);
+        assert!(ctx.is_empty());
     }
 }

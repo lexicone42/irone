@@ -84,6 +84,76 @@
                             </div>
                         </div>
                     </template>
+
+                    <!-- Activity feeds -->
+                    <div class="grid grid-2" style="margin-top: 0.5rem;">
+                        <!-- Recent Detections -->
+                        <div class="card">
+                            <div class="card-header flex-between">
+                                <span><i class="fa-solid fa-shield-halved"></i> Recent Detections</span>
+                                <a href="/detections.html" class="text-xs text-accent" style="text-decoration: none;">View all &rarr;</a>
+                            </div>
+                            <template x-if="data.recent_detections && data.recent_detections.length > 0">
+                                <div class="feed-list">
+                                    <template x-for="run in data.recent_detections" :key="run.run_id">
+                                        <div class="feed-item" :class="run.triggered ? 'feed-triggered' : ''">
+                                            <div class="feed-item-status">
+                                                <template x-if="run.triggered">
+                                                    <i class="fa-solid fa-circle-exclamation" style="color: var(--color-danger);"></i>
+                                                </template>
+                                                <template x-if="!run.triggered && !run.error">
+                                                    <i class="fa-solid fa-circle-check" style="color: var(--color-success);"></i>
+                                                </template>
+                                                <template x-if="run.error">
+                                                    <i class="fa-solid fa-triangle-exclamation" style="color: var(--color-warning);"></i>
+                                                </template>
+                                            </div>
+                                            <div class="feed-item-info">
+                                                <span class="feed-item-name" x-text="run.rule_name"></span>
+                                                <span class="text-muted text-xs" x-text="timeAgo(run.executed_at)"></span>
+                                            </div>
+                                        </div>
+                                    </template>
+                                </div>
+                            </template>
+                            <template x-if="!data.recent_detections || data.recent_detections.length === 0">
+                                <p class="text-muted text-sm" style="padding: 0.75rem;">No recent detection runs.</p>
+                            </template>
+                        </div>
+
+                        <!-- Active Investigations -->
+                        <div class="card">
+                            <div class="card-header flex-between">
+                                <span><i class="fa-solid fa-magnifying-glass"></i> Active Investigations</span>
+                                <a href="/investigations.html" class="text-xs text-accent" style="text-decoration: none;">View all &rarr;</a>
+                            </div>
+                            <template x-if="recentInvestigations.length > 0">
+                                <div class="feed-list">
+                                    <template x-for="inv in recentInvestigations" :key="inv.id">
+                                        <a :href="'/investigations.html#' + inv.id" class="feed-item" style="text-decoration: none; color: inherit;">
+                                            <div class="feed-item-status">
+                                                <i class="fa-solid fa-diagram-project" style="color: var(--color-accent);"></i>
+                                            </div>
+                                            <div class="feed-item-info">
+                                                <span class="feed-item-name" x-text="inv.name"></span>
+                                                <span class="text-muted text-xs">
+                                                    <span x-text="inv.node_count"></span> nodes &middot;
+                                                    <span x-text="inv.edge_count"></span> edges
+                                                </span>
+                                            </div>
+                                            <div class="feed-item-meta">
+                                                <span class="badge badge-sm" :class="inv.status === 'active' ? 'badge-ok' : 'badge-muted'"
+                                                      x-text="inv.status"></span>
+                                            </div>
+                                        </a>
+                                    </template>
+                                </div>
+                            </template>
+                            <template x-if="recentInvestigations.length === 0">
+                                <p class="text-muted text-sm" style="padding: 0.75rem;">No investigations yet.</p>
+                            </template>
+                        </div>
+                    </div>
                 </div>
             </template>
         </main>

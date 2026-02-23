@@ -3,6 +3,7 @@ use axum::routing::get;
 use axum::{Json, Router};
 use serde::Serialize;
 
+use crate::routers::detections::DetectionRunSummary;
 use crate::state::AppState;
 
 /// Build the dashboard sub-router (auth-protected routes).
@@ -38,6 +39,7 @@ pub struct DashboardSummary {
     pub region: String,
     pub version: &'static str,
     pub health: HealthSummary,
+    pub recent_detections: Vec<DetectionRunSummary>,
 }
 
 #[derive(Debug, Serialize)]
@@ -95,6 +97,16 @@ async fn dashboard_summary(State(state): State<AppState>) -> Json<DashboardSumma
         }
     };
 
+    // Recent detection runs (last 10 from in-memory cache)
+    let recent_detections: Vec<DetectionRunSummary> = state
+        .detection_runs
+        .read()
+        .await
+        .iter()
+        .take(10)
+        .map(DetectionRunSummary::from)
+        .collect();
+
     Json(DashboardSummary {
         source_count,
         rule_count,
@@ -102,6 +114,7 @@ async fn dashboard_summary(State(state): State<AppState>) -> Json<DashboardSumma
         region: state.config.region.clone(),
         health,
         version: env!("CARGO_PKG_VERSION"),
+        recent_detections,
     })
 }
 

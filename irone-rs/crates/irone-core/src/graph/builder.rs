@@ -444,6 +444,11 @@ impl GraphBuilder {
     }
 
     /// Create an Event node from OCSF data. Always succeeds (generates ID if missing).
+    ///
+    /// Stores selective OCSF fields as flat properties for narrative generation:
+    /// `actor_user_name`, `actor_user_type`, `api_operation`, `api_service_name`,
+    /// `src_endpoint_ip`, `dst_endpoint_ip`, `status`, `query_hostname`,
+    /// `resource_arn`, `protocol_name`, `bytes_in`, `bytes_out`.
     fn add_event_from_ocsf(
         &mut self,
         event: &serde_json::Map<String, Value>,
@@ -469,9 +474,63 @@ impl GraphBuilder {
             event_count: 1,
         };
 
+        // Core classification
         if let Some(class_uid) = event.get("class_uid") {
             node.properties
                 .insert("class_uid".into(), class_uid.clone());
+        }
+
+        // Store selective OCSF fields for narrative generation
+        // Actor
+        if let Some(v) = get_nested_value(event, "actor.user.name") {
+            node.properties.insert("actor_user_name".into(), v);
+        }
+        if let Some(v) = get_nested_value(event, "actor.user.type") {
+            node.properties.insert("actor_user_type".into(), v);
+        }
+        // API
+        if let Some(v) = get_nested_value(event, "api.operation") {
+            node.properties.insert("api_operation".into(), v);
+        }
+        if let Some(v) = get_nested_value(event, "api.service.name") {
+            node.properties.insert("api_service_name".into(), v);
+        }
+        // Network endpoints
+        if let Some(v) = get_nested_value(event, "src_endpoint.ip") {
+            node.properties.insert("src_endpoint_ip".into(), v);
+        }
+        if let Some(v) = get_nested_value(event, "dst_endpoint.ip") {
+            node.properties.insert("dst_endpoint_ip".into(), v);
+        }
+        // Status
+        if let Some(v) = event.get("status").cloned() {
+            node.properties.insert("status".into(), v);
+        }
+        // DNS
+        if let Some(hostname) = get_nested_str(event, &["query.hostname", "dns.query.hostname"]) {
+            node.properties
+                .insert("query_hostname".into(), Value::String(hostname));
+        }
+        // First resource ARN
+        if let Some(resources) = crate::connectors::ocsf::get_nested_array(event, "resources")
+            && let Some(uid) = resources
+                .iter()
+                .find_map(|r| r.get("uid").and_then(Value::as_str))
+        {
+            node.properties
+                .insert("resource_arn".into(), Value::String(uid.to_string()));
+        }
+        // Network flow
+        if let Some(v) = get_nested_value(event, "connection_info.protocol_name")
+            .or_else(|| get_nested_value(event, "protocol_name"))
+        {
+            node.properties.insert("protocol_name".into(), v);
+        }
+        if let Some(v) = get_nested_value(event, "traffic.bytes_in") {
+            node.properties.insert("bytes_in".into(), v);
+        }
+        if let Some(v) = get_nested_value(event, "traffic.bytes_out") {
+            node.properties.insert("bytes_out".into(), v);
         }
 
         self.graph.add_node(node);

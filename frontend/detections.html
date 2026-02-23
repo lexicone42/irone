@@ -38,198 +38,337 @@
         </nav>
 
         <main class="main-content" x-data="detectionsApp()">
-            <h1>Detection Rules</h1>
+            <h1>Detections</h1>
 
-            <!-- Rules Section -->
-            <div class="card">
-                <div class="card-header">
-                    Registered Rules
+            <!-- Tab Bar -->
+            <div class="tab-bar">
+                <button class="tab-btn" :class="activeTab === 'rules' && 'active'"
+                        @click="activeTab = 'rules'">
+                    <i class="fa-solid fa-shield-halved"></i> Rules
                     <template x-if="!loading">
-                        <span x-text="'(' + rules.length + ')'"></span>
+                        <span class="tab-count" x-text="rules.length"></span>
                     </template>
-                </div>
-
-                <template x-if="loading">
-                    <div class="text-center" style="padding: 1rem;">
-                        <span class="spinner"></span> Loading rules...
-                    </div>
-                </template>
-
-                <template x-if="error">
-                    <div class="alert alert-error" x-text="error"></div>
-                </template>
-
-                <template x-if="!loading && rules.length === 0 && !error">
-                    <p class="text-muted">No rules registered. Load rules from a rules directory.</p>
-                </template>
-
-                <template x-if="!loading && rules.length > 0">
-                    <table class="data-table">
-                        <thead>
-                            <tr>
-                                <th>Name</th>
-                                <th>Severity</th>
-                                <th>Tags</th>
-                                <th>Enabled</th>
-                                <th></th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            <template x-for="rule in rules" :key="rule.id">
-                                <tr>
-                                    <td>
-                                        <div x-text="rule.name"></div>
-                                        <div class="text-muted text-xs mt-1"
-                                             x-text="rule.description"></div>
-                                    </td>
-                                    <td>
-                                        <span class="badge" :class="severityClass(rule.severity)"
-                                              x-text="rule.severity"></span>
-                                    </td>
-                                    <td>
-                                        <template x-for="tag in (rule.tags || [])" :key="tag">
-                                            <span class="rule-tag" x-text="tag"></span>
-                                        </template>
-                                    </td>
-                                    <td>
-                                        <span :class="rule.enabled ? 'status-ok' : 'status-error'"
-                                              x-text="rule.enabled ? 'yes' : 'no'"></span>
-                                    </td>
-                                    <td>
-                                        <button class="btn btn-sm"
-                                                @click="runDetection(rule.id)"
-                                                :disabled="runningRule === rule.id">
-                                            <template x-if="runningRule === rule.id">
-                                                <span><span class="spinner"></span></span>
-                                            </template>
-                                            <template x-if="runningRule !== rule.id">
-                                                <span>Run</span>
-                                            </template>
-                                        </button>
-                                    </td>
-                                </tr>
-                            </template>
-                        </tbody>
-                    </table>
-                </template>
+                </button>
+                <button class="tab-btn" :class="activeTab === 'history' && 'active'"
+                        @click="switchToHistory()">
+                    <i class="fa-solid fa-clock-rotate-left"></i> History
+                    <template x-if="history.length > 0">
+                        <span class="tab-count" x-text="history.length"></span>
+                    </template>
+                </button>
             </div>
 
-            <!-- Detection Result Panel -->
-            <template x-if="detectionResult">
-                <div class="card" :class="detectionResult.triggered ? 'card-triggered' : ''">
-                    <div class="card-header flex-between">
-                        <span>
-                            Detection Result: <span class="text-primary" x-text="detectionResult.rule_name"></span>
-                        </span>
-                        <button class="btn btn-sm btn-ghost" @click="dismissResult()">Dismiss</button>
-                    </div>
+            <template x-if="error">
+                <div class="alert alert-error" x-text="error"></div>
+            </template>
 
-                    <!-- Status badge row -->
-                    <div class="flex items-center gap-4 mb-4">
-                        <template x-if="detectionResult.triggered">
-                            <span class="badge badge-error" style="font-size: var(--text-md); padding: 0.25rem 0.75rem;">TRIGGERED</span>
-                        </template>
-                        <template x-if="!detectionResult.triggered && !detectionResult.error">
-                            <span class="badge badge-ok" style="font-size: var(--text-md); padding: 0.25rem 0.75rem;">CLEAN</span>
-                        </template>
-                        <template x-if="detectionResult.error">
-                            <span class="badge badge-warn" style="font-size: var(--text-md); padding: 0.25rem 0.75rem;">ERROR</span>
-                        </template>
-                        <span class="text-muted text-sm"
-                              x-text="new Date(detectionResult.executed_at).toLocaleString()"></span>
-                    </div>
+            <!-- ═══ TAB 1: Rules ═══ -->
+            <template x-if="activeTab === 'rules'">
+                <div>
+                    <template x-if="loading">
+                        <div class="text-center" style="padding: 2rem;">
+                            <span class="spinner"></span> Loading rules...
+                        </div>
+                    </template>
 
-                    <!-- Summary stats -->
-                    <template x-if="!detectionResult.error">
-                        <div class="grid grid-4 mb-4">
-                            <div class="result-stat">
-                                <div class="stat-label">Matches</div>
-                                <div class="stat-value-sm"
-                                     :class="detectionResult.match_count > 0 ? 'text-danger' : ''"
-                                     x-text="detectionResult.match_count"></div>
-                            </div>
-                            <div class="result-stat">
-                                <div class="stat-label">Severity</div>
-                                <div style="margin-top: 0.25rem;">
-                                    <span class="badge" :class="severityClass(detectionResult.severity)"
-                                          x-text="detectionResult.severity"></span>
+                    <template x-if="!loading && rules.length === 0 && !error">
+                        <p class="text-muted" style="padding: 1rem;">No rules registered. Load rules from a rules directory.</p>
+                    </template>
+
+                    <!-- Severity-grouped rule catalog -->
+                    <template x-if="!loading && rules.length > 0">
+                        <div>
+                            <template x-for="group in rulesBySeverity()" :key="group.severity">
+                                <div class="severity-group">
+                                    <button class="severity-group-header"
+                                            @click="toggleGroup(group.severity)">
+                                        <span class="severity-group-title">
+                                            <span class="severity-dot" :class="group.severity"></span>
+                                            <span x-text="group.severity.charAt(0).toUpperCase() + group.severity.slice(1)"></span>
+                                            <span class="text-muted text-sm" x-text="'(' + group.rules.length + ')'"></span>
+                                        </span>
+                                        <i class="fa-solid" :class="collapsedGroups[group.severity] ? 'fa-chevron-right' : 'fa-chevron-down'"
+                                           style="font-size: 0.7rem; color: var(--text-secondary);"></i>
+                                    </button>
+
+                                    <template x-if="!collapsedGroups[group.severity]">
+                                        <div class="severity-group-body">
+                                            <template x-for="rule in group.rules" :key="rule.id">
+                                                <div class="rule-card">
+                                                    <div class="rule-card-main">
+                                                        <div class="rule-card-info">
+                                                            <div class="rule-card-name">
+                                                                <span x-text="rule.name"></span>
+                                                                <template x-if="!rule.enabled">
+                                                                    <span class="badge badge-muted" style="font-size: 0.65rem; margin-left: 0.5rem;">DISABLED</span>
+                                                                </template>
+                                                            </div>
+                                                            <div class="text-muted text-xs mt-1" x-text="rule.description"></div>
+
+                                                            <!-- Metadata row -->
+                                                            <div class="rule-meta-row">
+                                                                <!-- MITRE ATT&CK badges -->
+                                                                <template x-for="tech in (rule.mitre_attack || [])" :key="tech">
+                                                                    <span class="mitre-badge" x-text="tech"></span>
+                                                                </template>
+                                                                <!-- Data source tags -->
+                                                                <template x-for="src in (rule.data_sources || [])" :key="src">
+                                                                    <span class="rule-tag" x-text="src"></span>
+                                                                </template>
+                                                                <!-- Event class -->
+                                                                <template x-if="rule.event_class">
+                                                                    <span class="rule-tag rule-tag-ocsf" x-text="rule.event_class"></span>
+                                                                </template>
+                                                                <!-- Schedule -->
+                                                                <span class="text-muted text-xs">
+                                                                    <i class="fa-regular fa-clock"></i>
+                                                                    <span x-text="rule.schedule"></span>
+                                                                </span>
+                                                                <!-- Threshold -->
+                                                                <span class="text-muted text-xs">
+                                                                    threshold: <span class="text-accent" x-text="rule.threshold"></span>
+                                                                </span>
+                                                                <!-- Filter count -->
+                                                                <template x-if="rule.filter_count > 0">
+                                                                    <span class="text-muted text-xs">
+                                                                        <span x-text="rule.filter_count"></span> filter<span x-text="rule.filter_count > 1 ? 's' : ''"></span>
+                                                                    </span>
+                                                                </template>
+                                                            </div>
+                                                        </div>
+
+                                                        <div class="rule-card-actions">
+                                                            <!-- Run status indicator -->
+                                                            <template x-if="runStatus[rule.id]">
+                                                                <span class="run-status-icon"
+                                                                      :class="runStatus[rule.id] === 'triggered' ? 'run-triggered' : (runStatus[rule.id] === 'error' ? 'run-error' : 'run-clean')">
+                                                                    <i :class="runStatus[rule.id] === 'triggered' ? 'fa-solid fa-circle-exclamation' : (runStatus[rule.id] === 'error' ? 'fa-solid fa-triangle-exclamation' : 'fa-solid fa-circle-check')"></i>
+                                                                </span>
+                                                            </template>
+
+                                                            <button class="btn btn-sm"
+                                                                    @click="runDetection(rule.id)"
+                                                                    :disabled="runningRule === rule.id">
+                                                                <template x-if="runningRule === rule.id">
+                                                                    <span><span class="spinner"></span></span>
+                                                                </template>
+                                                                <template x-if="runningRule !== rule.id">
+                                                                    <span><i class="fa-solid fa-play" style="font-size: 0.65rem;"></i> Run</span>
+                                                                </template>
+                                                            </button>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </template>
+                                        </div>
+                                    </template>
                                 </div>
-                            </div>
-                            <div class="result-stat">
-                                <div class="stat-label">Exec Time</div>
-                                <div class="text-accent" style="margin-top: 0.25rem;"
-                                     x-text="formatExecTime(detectionResult.execution_time_ms)"></div>
-                            </div>
-                            <div class="result-stat">
-                                <div class="stat-label">Message</div>
-                                <div class="text-secondary text-sm" style="margin-top: 0.25rem;"
-                                     x-text="detectionResult.message || '\u2014'"></div>
-                            </div>
-                        </div>
-                    </template>
-
-                    <!-- Error display -->
-                    <template x-if="detectionResult.error">
-                        <div class="alert alert-error" x-text="detectionResult.error"></div>
-                    </template>
-
-                    <!-- Sample matches table -->
-                    <template x-if="detectionResult.matches && detectionResult.matches.length > 0">
-                        <div class="mb-4">
-                            <div class="text-secondary text-sm mb-2">
-                                Sample Matches (showing <span x-text="Math.min(detectionResult.matches.length, 10)"></span>
-                                of <span x-text="detectionResult.match_count"></span>)
-                            </div>
-                            <div class="scroll-x scroll-y" style="max-height: 350px;">
-                                <table class="data-table match-table">
-                                    <thead>
-                                        <tr>
-                                            <th>Time</th>
-                                            <th>Activity</th>
-                                            <th>Actor</th>
-                                            <th>Source IP</th>
-                                            <th>Status</th>
-                                            <th>Resources</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        <template x-for="(m, i) in detectionResult.matches.slice(0, 10)" :key="i">
-                                            <tr>
-                                                <td class="no-wrap" x-text="formatMatchTime(m.time_dt || m.time)"></td>
-                                                <td>
-                                                    <span class="text-accent" x-text="extractNested(m, 'api.operation') || m.activity_name || '\u2014'"></span>
-                                                    <template x-if="extractNested(m, 'api.service.name')">
-                                                        <span class="text-muted text-xs"
-                                                              x-text="' \u2014 ' + extractNested(m, 'api.service.name')"></span>
-                                                    </template>
-                                                </td>
-                                                <td x-text="extractNested(m, 'actor.user.name') || extractNested(m, 'actor.session.uid') || '\u2014'"></td>
-                                                <td class="mono-sm"
-                                                    x-text="extractNested(m, 'src_endpoint.ip') || '\u2014'"></td>
-                                                <td>
-                                                    <span :class="m.status === 'Success' ? 'status-ok' : (m.status === 'Failure' ? 'status-error' : '')"
-                                                          x-text="m.status || '\u2014'"></span>
-                                                </td>
-                                                <td class="truncate" style="max-width: 200px;"
-                                                    x-text="extractResources(m) || '\u2014'"></td>
-                                            </tr>
-                                        </template>
-                                    </tbody>
-                                </table>
-                            </div>
-                        </div>
-                    </template>
-
-                    <!-- Investigate button -->
-                    <template x-if="detectionResult.triggered">
-                        <button class="btn btn-primary" @click="investigate()" :disabled="investigating"
-                                style="padding: 0.5rem 1.25rem;">
-                            <template x-if="!investigating"><span>Create Investigation</span></template>
-                            <template x-if="investigating">
-                                <span><span class="spinner"></span> Building graph...</span>
                             </template>
-                        </button>
+                        </div>
                     </template>
+                </div>
+            </template>
+
+            <!-- ═══ TAB 2: History ═══ -->
+            <template x-if="activeTab === 'history'">
+                <div>
+                    <!-- Filters -->
+                    <div class="history-filters">
+                        <label class="filter-toggle">
+                            <input type="checkbox" x-model="historyTriggeredOnly">
+                            <span>Triggered only</span>
+                        </label>
+                        <select class="filter-select" x-model="historySeverityFilter">
+                            <option value="">All severities</option>
+                            <option value="critical">Critical</option>
+                            <option value="high">High</option>
+                            <option value="medium">Medium</option>
+                            <option value="low">Low</option>
+                            <option value="info">Info</option>
+                        </select>
+                        <input type="text" class="filter-input" placeholder="Search rule name..."
+                               x-model="historySearchQuery">
+                    </div>
+
+                    <template x-if="historyLoading">
+                        <div class="text-center" style="padding: 2rem;">
+                            <span class="spinner"></span> Loading history...
+                        </div>
+                    </template>
+
+                    <template x-if="!historyLoading && filteredHistory().length === 0">
+                        <p class="text-muted" style="padding: 1rem;">No detection runs yet. Run a rule from the Rules tab.</p>
+                    </template>
+
+                    <template x-if="!historyLoading && filteredHistory().length > 0">
+                        <div class="history-list">
+                            <template x-for="run in filteredHistory()" :key="run.run_id">
+                                <div class="history-row" :class="run.triggered ? 'history-triggered' : ''">
+                                    <div class="history-row-main">
+                                        <div class="history-row-status">
+                                            <template x-if="run.triggered">
+                                                <span class="badge badge-error">TRIGGERED</span>
+                                            </template>
+                                            <template x-if="!run.triggered && !run.error">
+                                                <span class="badge badge-ok">CLEAN</span>
+                                            </template>
+                                            <template x-if="run.error">
+                                                <span class="badge badge-warn">ERROR</span>
+                                            </template>
+                                        </div>
+                                        <div class="history-row-info">
+                                            <div class="history-row-name" x-text="run.rule_name"></div>
+                                            <div class="history-row-meta">
+                                                <span class="badge badge-sm" :class="severityClass(run.severity)"
+                                                      x-text="run.severity"></span>
+                                                <template x-if="run.match_count > 0">
+                                                    <span class="text-danger text-xs" x-text="run.match_count + ' matches'"></span>
+                                                </template>
+                                                <span class="text-muted text-xs" x-text="formatExecTime(run.execution_time_ms)"></span>
+                                                <span class="text-muted text-xs" x-text="timeAgo(run.executed_at)"></span>
+                                            </div>
+                                        </div>
+                                        <div class="history-row-actions">
+                                            <template x-if="run.triggered">
+                                                <button class="btn btn-sm btn-primary"
+                                                        @click="investigateFromHistory(run)">
+                                                    Investigate
+                                                </button>
+                                            </template>
+                                        </div>
+                                    </div>
+                                    <template x-if="run.error">
+                                        <div class="history-row-error text-xs" x-text="run.error"></div>
+                                    </template>
+                                </div>
+                            </template>
+                        </div>
+                    </template>
+                </div>
+            </template>
+
+            <!-- ═══ Slide-over Detection Result Panel ═══ -->
+            <template x-if="detectionResult">
+                <div class="slide-over-backdrop" @click.self="dismissResult()">
+                    <div class="slide-over" @click.stop>
+                        <div class="slide-over-header">
+                            <span>
+                                Result: <span class="text-primary" x-text="detectionResult.rule_name"></span>
+                            </span>
+                            <button class="btn btn-sm btn-ghost" @click="dismissResult()">
+                                <i class="fa-solid fa-xmark"></i>
+                            </button>
+                        </div>
+
+                        <div class="slide-over-body">
+                            <!-- Status badge -->
+                            <div class="flex items-center gap-4 mb-4">
+                                <template x-if="detectionResult.triggered">
+                                    <span class="badge badge-error" style="font-size: var(--text-md); padding: 0.25rem 0.75rem;">TRIGGERED</span>
+                                </template>
+                                <template x-if="!detectionResult.triggered && !detectionResult.error">
+                                    <span class="badge badge-ok" style="font-size: var(--text-md); padding: 0.25rem 0.75rem;">CLEAN</span>
+                                </template>
+                                <template x-if="detectionResult.error">
+                                    <span class="badge badge-warn" style="font-size: var(--text-md); padding: 0.25rem 0.75rem;">ERROR</span>
+                                </template>
+                                <span class="text-muted text-sm"
+                                      x-text="new Date(detectionResult.executed_at).toLocaleString()"></span>
+                            </div>
+
+                            <!-- Summary stats -->
+                            <template x-if="!detectionResult.error">
+                                <div class="grid grid-4 mb-4">
+                                    <div class="result-stat">
+                                        <div class="stat-label">Matches</div>
+                                        <div class="stat-value-sm"
+                                             :class="detectionResult.match_count > 0 ? 'text-danger' : ''"
+                                             x-text="detectionResult.match_count"></div>
+                                    </div>
+                                    <div class="result-stat">
+                                        <div class="stat-label">Severity</div>
+                                        <div style="margin-top: 0.25rem;">
+                                            <span class="badge" :class="severityClass(detectionResult.severity)"
+                                                  x-text="detectionResult.severity"></span>
+                                        </div>
+                                    </div>
+                                    <div class="result-stat">
+                                        <div class="stat-label">Exec Time</div>
+                                        <div class="text-accent" style="margin-top: 0.25rem;"
+                                             x-text="formatExecTime(detectionResult.execution_time_ms)"></div>
+                                    </div>
+                                    <div class="result-stat">
+                                        <div class="stat-label">Message</div>
+                                        <div class="text-secondary text-sm" style="margin-top: 0.25rem;"
+                                             x-text="detectionResult.message || '\u2014'"></div>
+                                    </div>
+                                </div>
+                            </template>
+
+                            <!-- Error display -->
+                            <template x-if="detectionResult.error">
+                                <div class="alert alert-error" x-text="detectionResult.error"></div>
+                            </template>
+
+                            <!-- Sample matches table -->
+                            <template x-if="detectionResult.matches && detectionResult.matches.length > 0">
+                                <div class="mb-4">
+                                    <div class="text-secondary text-sm mb-2">
+                                        Sample Matches (showing <span x-text="Math.min(detectionResult.matches.length, 10)"></span>
+                                        of <span x-text="detectionResult.match_count"></span>)
+                                    </div>
+                                    <div class="scroll-x scroll-y" style="max-height: 350px;">
+                                        <table class="data-table match-table">
+                                            <thead>
+                                                <tr>
+                                                    <th>Time</th>
+                                                    <th>Activity</th>
+                                                    <th>Actor</th>
+                                                    <th>Source IP</th>
+                                                    <th>Status</th>
+                                                    <th>Resources</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                <template x-for="(m, i) in detectionResult.matches.slice(0, 10)" :key="i">
+                                                    <tr>
+                                                        <td class="no-wrap" x-text="formatMatchTime(m.time_dt || m.time)"></td>
+                                                        <td>
+                                                            <span class="text-accent" x-text="extractNested(m, 'api.operation') || m.activity_name || '\u2014'"></span>
+                                                            <template x-if="extractNested(m, 'api.service.name')">
+                                                                <span class="text-muted text-xs"
+                                                                      x-text="' \u2014 ' + extractNested(m, 'api.service.name')"></span>
+                                                            </template>
+                                                        </td>
+                                                        <td x-text="extractNested(m, 'actor.user.name') || extractNested(m, 'actor.session.uid') || '\u2014'"></td>
+                                                        <td class="mono-sm"
+                                                            x-text="extractNested(m, 'src_endpoint.ip') || '\u2014'"></td>
+                                                        <td>
+                                                            <span :class="m.status === 'Success' ? 'status-ok' : (m.status === 'Failure' ? 'status-error' : '')"
+                                                                  x-text="m.status || '\u2014'"></span>
+                                                        </td>
+                                                        <td class="truncate" style="max-width: 200px;"
+                                                            x-text="extractResources(m) || '\u2014'"></td>
+                                                    </tr>
+                                                </template>
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                            </template>
+
+                            <!-- Investigate button -->
+                            <template x-if="detectionResult.triggered">
+                                <button class="btn btn-primary" @click="investigate()" :disabled="investigating"
+                                        style="padding: 0.5rem 1.25rem;">
+                                    <template x-if="!investigating"><span><i class="fa-solid fa-magnifying-glass"></i> Create Investigation</span></template>
+                                    <template x-if="investigating">
+                                        <span><span class="spinner"></span> Building graph...</span>
+                                    </template>
+                                </button>
+                            </template>
+                        </div>
+                    </div>
                 </div>
             </template>
         </main>

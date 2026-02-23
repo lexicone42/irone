@@ -314,6 +314,16 @@ pub trait DetectionRule: Send + Sync {
     /// Evaluate query results and determine if detection triggered.
     fn evaluate(&self, qr: &QueryResult) -> DetectionResult;
 
+    /// Match threshold (default: 1).
+    fn threshold(&self) -> usize {
+        1
+    }
+
+    /// OCSF event class name, if applicable (default: None).
+    fn event_class_name(&self) -> Option<&str> {
+        None
+    }
+
     /// Serialize rule metadata to a JSON map.
     fn to_dict(&self) -> serde_json::Map<String, Value> {
         serde_json::to_value(self.metadata())
@@ -343,6 +353,10 @@ pub struct SQLDetectionRule {
 impl DetectionRule for SQLDetectionRule {
     fn metadata(&self) -> &DetectionMetadata {
         &self.meta
+    }
+
+    fn threshold(&self) -> usize {
+        self.threshold
     }
 
     fn build_query(&self, start: DateTime<Utc>, end: DateTime<Utc>) -> DetectionQuery {
@@ -466,6 +480,10 @@ impl DetectionRule for DualTargetDetectionRule {
         &self.meta
     }
 
+    fn threshold(&self) -> usize {
+        self.threshold
+    }
+
     fn build_query(&self, start: DateTime<Utc>, end: DateTime<Utc>) -> DetectionQuery {
         DetectionQuery::Sql(
             self.get_query_for_target(&self.default_target, start, end)
@@ -498,6 +516,14 @@ pub struct OCSFDetectionRule {
 impl DetectionRule for OCSFDetectionRule {
     fn metadata(&self) -> &DetectionMetadata {
         &self.meta
+    }
+
+    fn threshold(&self) -> usize {
+        self.threshold
+    }
+
+    fn event_class_name(&self) -> Option<&str> {
+        Some(self.event_class.name())
     }
 
     fn build_query(&self, _start: DateTime<Utc>, _end: DateTime<Utc>) -> DetectionQuery {

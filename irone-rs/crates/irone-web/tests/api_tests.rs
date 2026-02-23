@@ -49,6 +49,7 @@ fn test_state() -> AppState {
         runner: Arc::new(DetectionRunner::new()),
         investigation_store: None,
         investigations: Arc::new(RwLock::new(HashMap::new())),
+        detection_runs: Arc::new(RwLock::new(Vec::new())),
         sdk_config: Arc::new(sdk_config),
     }
 }

@@ -8,8 +8,8 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use irone_core::graph::{
-    EdgeType, EventTag, GraphBuilder, GraphEdge, GraphNode, NodeType, SecurityGraph,
-    extract_timeline_from_graph,
+    EdgeType, EventTag, GraphBuilder, GraphEdge, GraphNode, InvestigationTimeline, NodeType,
+    SecurityGraph, extract_timeline_from_graph,
 };
 use irone_core::reports::graph_to_report_data;
 
@@ -33,6 +33,7 @@ pub fn router() -> Router<AppState> {
         )
         .route("/investigations/{inv_id}/graph", get(get_graph))
         .route("/investigations/{inv_id}/report", get(get_report))
+        .route("/investigations/{inv_id}/timeline", get(get_timeline))
         .route(
             "/investigations/{inv_id}/enrich",
             post(enrich_investigation),
@@ -181,6 +182,9 @@ async fn create_investigation(
     let timeline = extract_timeline_from_graph(&graph, true, true);
     let now = Utc::now();
 
+    let node_count = graph.node_count();
+    let edge_count = graph.edge_count();
+
     let inv = Investigation {
         id: inv_id.clone(),
         name: name.clone(),
@@ -203,8 +207,8 @@ async fn create_investigation(
         name,
         created_at: now.to_rfc3339(),
         status: "active".into(),
-        node_count: 0,
-        edge_count: 0,
+        node_count,
+        edge_count,
     }))
 }
 
@@ -467,6 +471,19 @@ async fn get_report(
     );
 
     Ok(Json(serde_json::to_value(report).unwrap_or_default()))
+}
+
+/// `GET /api/investigations/{inv_id}/timeline` — get timeline data directly.
+async fn get_timeline(
+    State(state): State<AppState>,
+    Path(inv_id): Path<String>,
+) -> Result<Json<InvestigationTimeline>, WebError> {
+    let invs = state.investigations.read().await;
+    let inv = invs
+        .get(&inv_id)
+        .ok_or_else(|| WebError::NotFound(format!("investigation '{inv_id}' not found")))?;
+
+    Ok(Json(inv.timeline.clone()))
 }
 
 /// `POST /api/investigations/{inv_id}/enrich` — re-enrich an investigation.
@@ -860,6 +877,149 @@ fn build_seed_graph(now: DateTime<Utc>) -> SecurityGraph {
         domain_node,
         finding,
         finding2,
+    ] {
+        graph.add_node(node);
+    }
+
+    // --- Event nodes with OCSF properties for narrative generation ---
+    let evt_login = GraphNode {
+        id: "Event:seed-login-bryan".into(),
+        node_type: NodeType::Event,
+        label: "Authentication".into(),
+        properties: {
+            let mut p = HashMap::new();
+            p.insert("class_uid".into(), serde_json::json!(3002));
+            p.insert("actor_user_name".into(), serde_json::json!("bryan"));
+            p.insert("actor_user_type".into(), serde_json::json!("IAMUser"));
+            p.insert("api_service_name".into(), serde_json::json!("AWS Console"));
+            p.insert("src_endpoint_ip".into(), serde_json::json!("73.162.45.100"));
+            p.insert("status".into(), serde_json::json!("Success"));
+            p
+        },
+        first_seen: Some(t0),
+        last_seen: Some(t0),
+        event_count: 1,
+    };
+    let evt_mfa = GraphNode {
+        id: "Event:seed-mfa-deactivate".into(),
+        node_type: NodeType::Event,
+        label: "API Activity".into(),
+        properties: {
+            let mut p = HashMap::new();
+            p.insert("class_uid".into(), serde_json::json!(6003));
+            p.insert("actor_user_name".into(), serde_json::json!("unknown-actor"));
+            p.insert(
+                "api_operation".into(),
+                serde_json::json!("DeactivateMFADevice"),
+            );
+            p.insert("api_service_name".into(), serde_json::json!("iam"));
+            p.insert(
+                "resource_arn".into(),
+                serde_json::json!("arn:aws:iam::651804262336:user/bryan"),
+            );
+            p.insert(
+                "src_endpoint_ip".into(),
+                serde_json::json!("185.220.101.42"),
+            );
+            p
+        },
+        first_seen: Some(t2),
+        last_seen: Some(t2),
+        event_count: 1,
+    };
+    let evt_create_key = GraphNode {
+        id: "Event:seed-create-access-key".into(),
+        node_type: NodeType::Event,
+        label: "API Activity".into(),
+        properties: {
+            let mut p = HashMap::new();
+            p.insert("class_uid".into(), serde_json::json!(6003));
+            p.insert("actor_user_name".into(), serde_json::json!("unknown-actor"));
+            p.insert("api_operation".into(), serde_json::json!("CreateAccessKey"));
+            p.insert("api_service_name".into(), serde_json::json!("iam"));
+            p.insert(
+                "resource_arn".into(),
+                serde_json::json!("arn:aws:iam::651804262336:user/bryan"),
+            );
+            p.insert(
+                "src_endpoint_ip".into(),
+                serde_json::json!("185.220.101.42"),
+            );
+            p
+        },
+        first_seen: Some(t3),
+        last_seen: Some(t3),
+        event_count: 1,
+    };
+    let evt_exfil = GraphNode {
+        id: "Event:seed-s3-getobject".into(),
+        node_type: NodeType::Event,
+        label: "API Activity".into(),
+        properties: {
+            let mut p = HashMap::new();
+            p.insert("class_uid".into(), serde_json::json!(6003));
+            p.insert("actor_user_name".into(), serde_json::json!("unknown-actor"));
+            p.insert("api_operation".into(), serde_json::json!("GetObject"));
+            p.insert("api_service_name".into(), serde_json::json!("s3"));
+            p.insert(
+                "resource_arn".into(),
+                serde_json::json!("arn:aws:s3:::customer-data-prod"),
+            );
+            p.insert(
+                "src_endpoint_ip".into(),
+                serde_json::json!("185.220.101.42"),
+            );
+            p
+        },
+        first_seen: Some(t3),
+        last_seen: Some(t4),
+        event_count: 45,
+    };
+    let evt_dns = GraphNode {
+        id: "Event:seed-dns-c2".into(),
+        node_type: NodeType::Event,
+        label: "DNS Activity".into(),
+        properties: {
+            let mut p = HashMap::new();
+            p.insert("class_uid".into(), serde_json::json!(4003));
+            p.insert("src_endpoint_ip".into(), serde_json::json!("10.0.1.50"));
+            p.insert(
+                "query_hostname".into(),
+                serde_json::json!("c2-callback.evil.com"),
+            );
+            p
+        },
+        first_seen: Some(t3),
+        last_seen: Some(t4),
+        event_count: 150,
+    };
+    let evt_flow = GraphNode {
+        id: "Event:seed-flow-c2".into(),
+        node_type: NodeType::Event,
+        label: "Network Activity".into(),
+        properties: {
+            let mut p = HashMap::new();
+            p.insert("class_uid".into(), serde_json::json!(4001));
+            p.insert("src_endpoint_ip".into(), serde_json::json!("10.0.1.50"));
+            p.insert("dst_endpoint_ip".into(), serde_json::json!("203.0.113.66"));
+            p.insert("protocol_name".into(), serde_json::json!("TCP"));
+            p.insert("dst_port".into(), serde_json::json!(443));
+            p.insert("bytes_in".into(), serde_json::json!(45_000_u64));
+            p.insert("bytes_out".into(), serde_json::json!(150_000_000_u64));
+            p
+        },
+        first_seen: Some(t3),
+        last_seen: Some(t4),
+        event_count: 85,
+    };
+
+    for node in [
+        evt_login,
+        evt_mfa,
+        evt_create_key,
+        evt_exfil,
+        evt_dns,
+        evt_flow,
     ] {
         graph.add_node(node);
     }

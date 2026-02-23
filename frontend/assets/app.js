@@ -64,16 +64,24 @@ function dashboardApp() {
         loading: true,
         data: null,
         error: null,
+        recentInvestigations: [],
 
         async init() {
             try {
-                this.data = await apiFetch("/dashboard");
+                const [dashboard, investigations] = await Promise.all([
+                    apiFetch("/dashboard"),
+                    apiFetch("/investigations").catch(() => []),
+                ]);
+                this.data = dashboard;
+                this.recentInvestigations = (investigations || []).slice(0, 5);
             } catch (e) {
                 this.error = e.message;
             } finally {
                 this.loading = false;
             }
         },
+
+        timeAgo,
     };
 }
 
@@ -144,10 +152,24 @@ function detectionsApp() {
         loading: true,
         error: null,
 
+        // Tab state
+        activeTab: "rules",
+
+        // Severity group collapse state (medium/low/info start collapsed)
+        collapsedGroups: { medium: true, low: true, info: true },
+
         // Detection run state
         runningRule: null,
         detectionResult: null,
         investigating: false,
+        runStatus: {},  // ruleId -> "triggered" | "clean" | "error"
+
+        // History tab state
+        history: [],
+        historyLoading: false,
+        historyTriggeredOnly: false,
+        historySeverityFilter: "",
+        historySearchQuery: "",
 
         async init() {
             try {
@@ -159,17 +181,79 @@ function detectionsApp() {
             }
         },
 
+        // Group rules by severity in display order
+        rulesBySeverity() {
+            const order = ["critical", "high", "medium", "low", "info"];
+            const groups = {};
+            for (const sev of order) groups[sev] = [];
+            for (const rule of this.rules) {
+                const sev = rule.severity || "info";
+                if (!groups[sev]) groups[sev] = [];
+                groups[sev].push(rule);
+            }
+            return order
+                .filter(sev => groups[sev].length > 0)
+                .map(sev => ({ severity: sev, rules: groups[sev] }));
+        },
+
+        toggleGroup(severity) {
+            this.collapsedGroups[severity] = !this.collapsedGroups[severity];
+        },
+
+        async switchToHistory() {
+            this.activeTab = "history";
+            if (this.history.length === 0) await this.loadHistory();
+        },
+
+        async loadHistory() {
+            this.historyLoading = true;
+            try {
+                this.history = await apiFetch("/detections/history?limit=100");
+            } catch (e) {
+                this.error = e.message;
+            } finally {
+                this.historyLoading = false;
+            }
+        },
+
+        filteredHistory() {
+            let runs = this.history;
+            if (this.historyTriggeredOnly) {
+                runs = runs.filter(r => r.triggered);
+            }
+            if (this.historySeverityFilter) {
+                runs = runs.filter(r => r.severity === this.historySeverityFilter);
+            }
+            if (this.historySearchQuery) {
+                const q = this.historySearchQuery.toLowerCase();
+                runs = runs.filter(r => r.rule_name.toLowerCase().includes(q));
+            }
+            return runs;
+        },
+
         async runDetection(ruleId) {
             this.runningRule = ruleId;
             this.detectionResult = null;
             this.error = null;
             try {
-                this.detectionResult = await apiFetch(`/detections/${ruleId}/run`, {
+                const result = await apiFetch(`/detections/${ruleId}/run`, {
                     method: "POST",
                     body: JSON.stringify({ lookback_minutes: 15 }),
                 });
+                this.detectionResult = result;
+                // Update persistent status indicator
+                if (result.error) {
+                    this.runStatus[ruleId] = "error";
+                } else if (result.triggered) {
+                    this.runStatus[ruleId] = "triggered";
+                } else {
+                    this.runStatus[ruleId] = "clean";
+                }
+                // Refresh history if already loaded
+                if (this.history.length > 0) this.loadHistory();
             } catch (e) {
                 this.error = e.message;
+                this.runStatus[ruleId] = "error";
             } finally {
                 this.runningRule = null;
             }
@@ -202,16 +286,18 @@ function detectionsApp() {
             }
         },
 
+        async investigateFromHistory(run) {
+            window.location.href = `/investigations.html?from_rule=${encodeURIComponent(run.rule_id)}`;
+        },
+
         dismissResult() {
             this.detectionResult = null;
         },
 
-        // Extract a dot-path value from nested OCSF objects (e.g. "actor.user.name")
         extractNested(obj, path) {
             return path.split(".").reduce((o, k) => (o && o[k] != null ? o[k] : null), obj);
         },
 
-        // Format match timestamp for display
         formatMatchTime(t) {
             if (!t) return "\u2014";
             try {
@@ -222,7 +308,6 @@ function detectionsApp() {
             }
         },
 
-        // Format execution time nicely
         formatExecTime(ms) {
             if (ms == null) return "\u2014";
             if (ms < 1) return (ms * 1000).toFixed(0) + "\u00b5s";
@@ -230,7 +315,6 @@ function detectionsApp() {
             return (ms / 1000).toFixed(2) + "s";
         },
 
-        // Extract resource info from OCSF match
         extractResources(m) {
             const resources = m.resources;
             if (Array.isArray(resources) && resources.length > 0) {
@@ -247,6 +331,8 @@ function detectionsApp() {
             if (severity === "medium") return "badge-warn";
             return "badge-ok";
         },
+
+        timeAgo,
     };
 }
 
@@ -322,10 +408,16 @@ function investigationsApp() {
         error: null,
 
         // Create form
+        createTab: "identifiers",   // "identifiers" | "detection"
         newName: "",
         newUsers: "",
         newIps: "",
         creating: false,
+
+        // From-detection form
+        triggeredRuns: [],
+        selectedDetectionRunId: "",
+        detectionSourceName: "",
 
         // Detail view
         activeInv: null,
@@ -349,6 +441,7 @@ function investigationsApp() {
         async init() {
             await this.loadList();
             this.loadSources();
+            this.loadTriggeredRuns();
             // Deep-link: open investigation from URL hash (e.g. #inv-abc123)
             const hash = window.location.hash.slice(1);
             if (hash && hash.startsWith("inv-")) {
@@ -363,6 +456,19 @@ function investigationsApp() {
                 // Sources are optional — if endpoint fails, dropdown won't show
                 this.availableSources = [];
             }
+        },
+
+        async loadTriggeredRuns() {
+            try {
+                const history = await apiFetch("/detections/history?limit=100");
+                this.triggeredRuns = history.filter(r => r.triggered);
+            } catch {
+                this.triggeredRuns = [];
+            }
+        },
+
+        get selectedDetectionRun() {
+            return this.triggeredRuns.find(r => r.run_id === this.selectedDetectionRunId) || null;
         },
 
         async loadList() {
@@ -395,6 +501,30 @@ function investigationsApp() {
                 this.newSourceName = "";
                 await this.loadList();
                 await this.openDetail(inv.id);
+            } catch (e) {
+                this.error = e.message;
+            } finally {
+                this.creating = false;
+            }
+        },
+
+        async createFromDetection() {
+            if (!this.selectedDetectionRunId) return;
+            const run = this.selectedDetectionRun;
+            if (!run) return;
+            this.creating = true;
+            this.error = null;
+            try {
+                const payload = { rule_id: run.rule_id };
+                if (this.detectionSourceName) payload.source_name = this.detectionSourceName;
+                const resp = await apiFetch("/investigations/from-detection", {
+                    method: "POST",
+                    body: JSON.stringify(payload),
+                });
+                this.selectedDetectionRunId = "";
+                this.detectionSourceName = "";
+                await this.loadList();
+                await this.openDetail(resp.investigation_id);
             } catch (e) {
                 this.error = e.message;
             } finally {

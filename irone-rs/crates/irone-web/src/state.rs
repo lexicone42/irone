@@ -9,7 +9,7 @@ use tokio::sync::RwLock;
 use irone_core::catalog::DataCatalog;
 use irone_core::detections::DetectionRunner;
 use irone_core::graph::{InvestigationTimeline, SecurityGraph};
-use irone_persistence::store::InvestigationStore;
+use irone_persistence::store::{DetectionRunRecord, InvestigationStore};
 
 use crate::config::WebConfig;
 
@@ -34,6 +34,7 @@ pub struct AppState {
     pub runner: Arc<DetectionRunner>,
     pub investigation_store: Option<Arc<InvestigationStore>>,
     pub investigations: Arc<RwLock<HashMap<String, Investigation>>>,
+    pub detection_runs: Arc<RwLock<Vec<DetectionRunRecord>>>,
     pub sdk_config: Arc<aws_config::SdkConfig>,
 }
 
@@ -70,56 +71,61 @@ pub async fn create_app_state(config: WebConfig) -> AppState {
         }
     }
 
-    // Open investigation store + load persisted investigations (all sync, one blocking task)
+    // Open investigation store + load persisted data (all sync, one blocking task)
     let db_path = config.investigations_db_path.clone();
-    let (investigation_store, investigations) = if db_path.is_empty() {
-        (None, HashMap::new())
+    let (investigation_store, investigations, detection_runs) = if db_path.is_empty() {
+        (None, HashMap::new(), Vec::new())
     } else {
-        match tokio::task::spawn_blocking(
-            move || -> Option<(Arc<InvestigationStore>, HashMap<String, Investigation>)> {
-                let store = match InvestigationStore::open(Path::new(&db_path)) {
-                    Ok(s) => Arc::new(s),
-                    Err(e) => {
-                        tracing::error!(err = %e, "failed to open investigation store");
-                        return None;
-                    }
-                };
-                let mut investigations = HashMap::new();
-                if let Ok(summaries) = store.list_investigations() {
-                    for summary in summaries {
-                        if let Ok(Some(loaded)) = store.load_investigation(&summary.id) {
-                            let timeline = store
-                                .load_timeline(&summary.id)
-                                .ok()
-                                .flatten()
-                                .unwrap_or_else(|| InvestigationTimeline::new(&summary.id));
-                            investigations.insert(
-                                summary.id.clone(),
-                                Investigation {
-                                    id: summary.id,
-                                    name: loaded.name,
-                                    graph: loaded.graph,
-                                    timeline,
-                                    created_at: loaded.created_at,
-                                    status: loaded.status,
-                                },
-                            );
-                        }
+        #[allow(clippy::type_complexity)]
+        match tokio::task::spawn_blocking(move || -> Option<(
+            Arc<InvestigationStore>,
+            HashMap<String, Investigation>,
+            Vec<DetectionRunRecord>,
+        )> {
+            let store = match InvestigationStore::open(Path::new(&db_path)) {
+                Ok(s) => Arc::new(s),
+                Err(e) => {
+                    tracing::error!(err = %e, "failed to open investigation store");
+                    return None;
+                }
+            };
+            let mut investigations = HashMap::new();
+            if let Ok(summaries) = store.list_investigations() {
+                for summary in summaries {
+                    if let Ok(Some(loaded)) = store.load_investigation(&summary.id) {
+                        let timeline = store
+                            .load_timeline(&summary.id)
+                            .ok()
+                            .flatten()
+                            .unwrap_or_else(|| InvestigationTimeline::new(&summary.id));
+                        investigations.insert(
+                            summary.id.clone(),
+                            Investigation {
+                                id: summary.id,
+                                name: loaded.name,
+                                graph: loaded.graph,
+                                timeline,
+                                created_at: loaded.created_at,
+                                status: loaded.status,
+                            },
+                        );
                     }
                 }
-                tracing::info!(
-                    count = investigations.len(),
-                    "loaded persisted investigations"
-                );
-                Some((store, investigations))
-            },
-        )
+            }
+            let detection_runs = store.list_detection_runs(500, None).unwrap_or_default();
+            tracing::info!(
+                inv_count = investigations.len(),
+                run_count = detection_runs.len(),
+                "loaded persisted data"
+            );
+            Some((store, investigations, detection_runs))
+        })
         .await
         .ok()
         .flatten()
         {
-            Some((store, invs)) => (Some(store), invs),
-            None => (None, HashMap::new()),
+            Some((store, invs, runs)) => (Some(store), invs, runs),
+            None => (None, HashMap::new(), Vec::new()),
         }
     };
 
@@ -132,6 +138,7 @@ pub async fn create_app_state(config: WebConfig) -> AppState {
         runner: Arc::new(runner),
         investigation_store,
         investigations: Arc::new(RwLock::new(investigations)),
+        detection_runs: Arc::new(RwLock::new(detection_runs)),
         sdk_config: Arc::new(sdk_config),
     }
 }
@@ -161,6 +168,7 @@ mod tests {
         let state = create_app_state(config).await;
         assert!(state.investigation_store.is_none());
         assert!(state.investigations.read().await.is_empty());
+        assert!(state.detection_runs.read().await.is_empty());
         assert!(state.catalog.read().await.is_empty());
     }
 

@@ -12,8 +12,11 @@ use irone_core::graph::{GraphEdge, GraphNode, SecurityGraph};
 use crate::error::Result;
 
 // ---------------------------------------------------------------------------
-// Table definitions — 5 tables mirroring the Python DuckDB schema
+// Table definitions — 6 tables
 // ---------------------------------------------------------------------------
+
+/// `run_id` -> serialized `DetectionRunRecord`
+const DETECTION_RUNS: TableDefinition<&str, &[u8]> = TableDefinition::new("detection_runs");
 
 /// `inv_id` -> serialized `InvestigationMetadata`
 const INVESTIGATIONS: TableDefinition<&str, &[u8]> = TableDefinition::new("investigations");
@@ -30,6 +33,26 @@ const TIMELINE_EVENTS: TableDefinition<(&str, &str), &[u8]> =
 
 /// (`inv_id`, `artifact_type`) -> content bytes
 const ARTIFACTS: TableDefinition<(&str, &str), &[u8]> = TableDefinition::new("artifacts");
+
+// ---------------------------------------------------------------------------
+// Detection run record — public, stored in DETECTION_RUNS table
+// ---------------------------------------------------------------------------
+
+/// Record of a single detection rule execution (metadata only, no match rows).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DetectionRunRecord {
+    pub run_id: String,
+    pub rule_id: String,
+    pub rule_name: String,
+    pub triggered: bool,
+    pub severity: String,
+    pub match_count: usize,
+    pub execution_time_ms: f64,
+    pub executed_at: DateTime<Utc>,
+    pub error: Option<String>,
+    pub source_name: Option<String>,
+    pub lookback_minutes: i64,
+}
 
 // ---------------------------------------------------------------------------
 // Internal metadata record stored in the INVESTIGATIONS table
@@ -104,10 +127,11 @@ impl InvestigationStore {
         Ok(Self { db })
     }
 
-    /// Create all 5 tables if they don't already exist (idempotent).
+    /// Create all 6 tables if they don't already exist (idempotent).
     fn ensure_tables(db: &Database) -> Result<()> {
         let write_txn = db.begin_write()?;
         // Opening a table in a write transaction creates it if absent
+        let _ = write_txn.open_table(DETECTION_RUNS)?;
         let _ = write_txn.open_table(INVESTIGATIONS)?;
         let _ = write_txn.open_table(GRAPH_NODES)?;
         let _ = write_txn.open_table(GRAPH_EDGES)?;
@@ -254,6 +278,62 @@ impl InvestigationStore {
         }
         write_txn.commit()?;
         Ok(())
+    }
+
+    // -----------------------------------------------------------------------
+    // Detection run persistence
+    // -----------------------------------------------------------------------
+
+    /// Persist a detection run record.
+    pub fn save_detection_run(&self, record: &DetectionRunRecord) -> Result<()> {
+        let bytes = serde_json::to_vec(record)?;
+        let write_txn = self.db.begin_write()?;
+        {
+            let mut table = write_txn.open_table(DETECTION_RUNS)?;
+            table.insert(record.run_id.as_str(), bytes.as_slice())?;
+        }
+        write_txn.commit()?;
+        Ok(())
+    }
+
+    /// List detection runs, optionally filtered by `rule_id`, sorted newest-first.
+    pub fn list_detection_runs(
+        &self,
+        limit: usize,
+        rule_id_filter: Option<&str>,
+    ) -> Result<Vec<DetectionRunRecord>> {
+        let read_txn = self.db.begin_read()?;
+        let table = read_txn.open_table(DETECTION_RUNS)?;
+
+        let mut records = Vec::new();
+        for entry in table.iter()? {
+            let (_key, value) = entry?;
+            let record: DetectionRunRecord = serde_json::from_slice(value.value())?;
+            if let Some(filter) = rule_id_filter
+                && record.rule_id != filter
+            {
+                continue;
+            }
+            records.push(record);
+        }
+
+        // Sort newest first
+        records.sort_by(|a, b| b.executed_at.cmp(&a.executed_at));
+        records.truncate(limit);
+        Ok(records)
+    }
+
+    /// Load a single detection run by ID.
+    pub fn get_detection_run(&self, run_id: &str) -> Result<Option<DetectionRunRecord>> {
+        let read_txn = self.db.begin_read()?;
+        let table = read_txn.open_table(DETECTION_RUNS)?;
+        match table.get(run_id)? {
+            Some(guard) => {
+                let record: DetectionRunRecord = serde_json::from_slice(guard.value())?;
+                Ok(Some(record))
+            }
+            None => Ok(None),
+        }
     }
 
     // -----------------------------------------------------------------------
@@ -1139,5 +1219,114 @@ mod tests {
         // Both should see the same data
         assert!(table1.get("inv-mvcc").unwrap().is_some());
         assert!(table2.get("inv-mvcc").unwrap().is_some());
+    }
+
+    // -----------------------------------------------------------------------
+    // TestDetectionRunPersistence
+    // -----------------------------------------------------------------------
+
+    fn make_run(
+        run_id: &str,
+        rule_id: &str,
+        triggered: bool,
+        ts: DateTime<Utc>,
+    ) -> DetectionRunRecord {
+        DetectionRunRecord {
+            run_id: run_id.into(),
+            rule_id: rule_id.into(),
+            rule_name: format!("Rule {rule_id}"),
+            triggered,
+            severity: "high".into(),
+            match_count: if triggered { 5 } else { 0 },
+            execution_time_ms: 42.0,
+            executed_at: ts,
+            error: None,
+            source_name: Some("security-lake".into()),
+            lookback_minutes: 60,
+        }
+    }
+
+    #[test]
+    fn test_detection_run_roundtrip() {
+        let store = InvestigationStore::open_temp().unwrap();
+        let ts = Utc.with_ymd_and_hms(2024, 8, 1, 12, 0, 0).unwrap();
+        let record = make_run("run-1", "rule-a", true, ts);
+
+        store.save_detection_run(&record).unwrap();
+        let loaded = store.get_detection_run("run-1").unwrap().unwrap();
+
+        assert_eq!(loaded.run_id, "run-1");
+        assert_eq!(loaded.rule_id, "rule-a");
+        assert!(loaded.triggered);
+        assert_eq!(loaded.severity, "high");
+        assert_eq!(loaded.match_count, 5);
+        assert_eq!(loaded.executed_at, ts);
+        assert_eq!(loaded.source_name.as_deref(), Some("security-lake"));
+    }
+
+    #[test]
+    fn test_detection_run_filter_by_rule() {
+        let store = InvestigationStore::open_temp().unwrap();
+        let t1 = Utc.with_ymd_and_hms(2024, 8, 1, 12, 0, 0).unwrap();
+        let t2 = Utc.with_ymd_and_hms(2024, 8, 1, 13, 0, 0).unwrap();
+        let t3 = Utc.with_ymd_and_hms(2024, 8, 1, 14, 0, 0).unwrap();
+
+        store
+            .save_detection_run(&make_run("run-1", "rule-a", true, t1))
+            .unwrap();
+        store
+            .save_detection_run(&make_run("run-2", "rule-b", false, t2))
+            .unwrap();
+        store
+            .save_detection_run(&make_run("run-3", "rule-a", false, t3))
+            .unwrap();
+
+        let all = store.list_detection_runs(100, None).unwrap();
+        assert_eq!(all.len(), 3);
+
+        let rule_a = store.list_detection_runs(100, Some("rule-a")).unwrap();
+        assert_eq!(rule_a.len(), 2);
+        assert!(rule_a.iter().all(|r| r.rule_id == "rule-a"));
+    }
+
+    #[test]
+    fn test_detection_run_limit() {
+        let store = InvestigationStore::open_temp().unwrap();
+        for i in 0..10 {
+            let ts = Utc.with_ymd_and_hms(2024, 8, 1, i, 0, 0).unwrap();
+            store
+                .save_detection_run(&make_run(&format!("run-{i}"), "rule-a", false, ts))
+                .unwrap();
+        }
+
+        let limited = store.list_detection_runs(3, None).unwrap();
+        assert_eq!(limited.len(), 3);
+    }
+
+    #[test]
+    fn test_detection_run_ordering() {
+        let store = InvestigationStore::open_temp().unwrap();
+        let t_old = Utc.with_ymd_and_hms(2024, 7, 1, 0, 0, 0).unwrap();
+        let t_new = Utc.with_ymd_and_hms(2024, 8, 1, 0, 0, 0).unwrap();
+
+        // Insert older first
+        store
+            .save_detection_run(&make_run("run-old", "rule-a", false, t_old))
+            .unwrap();
+        store
+            .save_detection_run(&make_run("run-new", "rule-a", true, t_new))
+            .unwrap();
+
+        let runs = store.list_detection_runs(10, None).unwrap();
+        assert_eq!(runs[0].run_id, "run-new"); // newest first
+        assert_eq!(runs[1].run_id, "run-old");
+    }
+
+    #[test]
+    fn test_detection_run_empty_store() {
+        let store = InvestigationStore::open_temp().unwrap();
+        let runs = store.list_detection_runs(100, None).unwrap();
+        assert!(runs.is_empty());
+        assert!(store.get_detection_run("nonexistent").unwrap().is_none());
     }
 }

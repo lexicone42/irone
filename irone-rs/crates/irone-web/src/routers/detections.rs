@@ -3,8 +3,10 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 use irone_core::detections::DetectionResult;
+use irone_persistence::store::DetectionRunRecord;
 
 use crate::error::WebError;
 use crate::state::AppState;
@@ -14,6 +16,7 @@ pub fn router() -> Router<AppState> {
     Router::new()
         .route("/rules", get(list_rules))
         .route("/rules/{rule_id}", get(get_rule))
+        .route("/detections/history", get(detection_history))
         .route("/detections/{rule_id}/run", post(run_detection))
 }
 
@@ -52,6 +55,56 @@ pub struct RuleSummary {
     pub enabled: bool,
     pub tags: Vec<String>,
     pub mitre_attack: Vec<String>,
+    pub data_sources: Vec<String>,
+    pub schedule: String,
+    pub event_class: Option<String>,
+    pub threshold: usize,
+    pub filter_count: usize,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct HistoryFilter {
+    #[serde(default = "default_history_limit")]
+    pub limit: usize,
+    pub rule_id: Option<String>,
+}
+
+const fn default_history_limit() -> usize {
+    50
+}
+
+/// Detection run summary for history API responses.
+#[derive(Debug, Clone, Serialize)]
+pub struct DetectionRunSummary {
+    pub run_id: String,
+    pub rule_id: String,
+    pub rule_name: String,
+    pub triggered: bool,
+    pub severity: String,
+    pub match_count: usize,
+    pub execution_time_ms: f64,
+    pub executed_at: String,
+    pub error: Option<String>,
+    pub source_name: Option<String>,
+    pub lookback_minutes: i64,
+}
+
+impl From<&DetectionRunRecord> for DetectionRunSummary {
+    fn from(r: &DetectionRunRecord) -> Self {
+        Self {
+            run_id: r.run_id.clone(),
+            rule_id: r.rule_id.clone(),
+            rule_name: r.rule_name.clone(),
+            triggered: r.triggered,
+            severity: r.severity.clone(),
+            match_count: r.match_count,
+            execution_time_ms: r.execution_time_ms,
+            executed_at: r.executed_at.to_rfc3339(),
+            error: r.error.clone(),
+            source_name: r.source_name.clone(),
+            lookback_minutes: r.lookback_minutes,
+        }
+    }
 }
 
 /// Capped detection result for API responses (max 20 matches).
@@ -106,6 +159,11 @@ async fn list_rules(
                 enabled: meta.enabled,
                 tags: meta.tags.clone(),
                 mitre_attack: meta.mitre_attack.clone(),
+                data_sources: meta.data_sources.clone(),
+                schedule: meta.schedule.clone(),
+                event_class: r.event_class_name().map(String::from),
+                threshold: r.threshold(),
+                filter_count: r.filters().len(),
             }
         })
         .collect();
@@ -122,6 +180,22 @@ async fn get_rule(
         .get_rule(&rule_id)
         .ok_or_else(|| WebError::NotFound(format!("rule '{rule_id}' not found")))?;
     Ok(Json(serde_json::Value::Object(rule.to_dict())))
+}
+
+/// `GET /api/detections/history` — list recent detection runs.
+async fn detection_history(
+    State(state): State<AppState>,
+    Query(filter): Query<HistoryFilter>,
+) -> Json<Vec<DetectionRunSummary>> {
+    let runs = state.detection_runs.read().await;
+    let limit = filter.limit.min(500);
+    let summaries: Vec<DetectionRunSummary> = runs
+        .iter()
+        .filter(|r| filter.rule_id.as_ref().is_none_or(|id| r.rule_id == *id))
+        .take(limit)
+        .map(DetectionRunSummary::from)
+        .collect();
+    Json(summaries)
 }
 
 /// `POST /api/detections/{rule_id}/run` — execute a detection rule.
@@ -158,6 +232,7 @@ async fn run_detection(
             .cloned()
             .ok_or_else(|| WebError::BadRequest("no Security Lake source configured".into()))?
     };
+    let source_name = source.name.clone();
     drop(catalog);
 
     // Build connector and run detection
@@ -173,6 +248,38 @@ async fn run_detection(
             body.lookback_minutes,
         )
         .await;
+
+    // Persist detection run record (fire-and-forget)
+    let record = DetectionRunRecord {
+        run_id: Uuid::new_v4().to_string(),
+        rule_id: result.rule_id.clone(),
+        rule_name: result.rule_name.clone(),
+        triggered: result.triggered,
+        severity: result.severity.to_string(),
+        match_count: result.match_count,
+        execution_time_ms: result.execution_time_ms,
+        executed_at: result.executed_at,
+        error: result.error.clone(),
+        source_name: Some(source_name),
+        lookback_minutes: body.lookback_minutes,
+    };
+
+    // Insert into in-memory cache (newest first, cap at 500)
+    {
+        let mut runs = state.detection_runs.write().await;
+        runs.insert(0, record.clone());
+        runs.truncate(500);
+    }
+
+    // Persist to redb (fire-and-forget, same pattern as investigations)
+    if let Some(store) = state.investigation_store.clone() {
+        let record_clone = record;
+        tokio::task::spawn_blocking(move || {
+            if let Err(e) = store.save_detection_run(&record_clone) {
+                tracing::warn!(err = %e, "failed to persist detection run");
+            }
+        });
+    }
 
     Ok(Json(result.into()))
 }
