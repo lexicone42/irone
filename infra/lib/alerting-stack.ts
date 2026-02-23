@@ -11,6 +11,12 @@ export interface AlertingStackProps extends cdk.StackProps {
   readonly healthCacheTableName: string;
   /** Path to cargo-lambda output for irone-alerting (undefined = dummy). */
   readonly alertingLambdaCodePath?: string;
+  /** S3 bucket for investigation artifacts. */
+  readonly reportBucket?: string;
+  /** Step Functions state machine ARN for investigation enrichment. */
+  readonly investigationStateMachineArn?: string;
+  /** DynamoDB table for investigation metadata. */
+  readonly investigationsTableName?: string;
 }
 
 export class AlertingStack extends cdk.Stack {
@@ -51,12 +57,20 @@ export class AlertingStack extends cdk.Stack {
       codePath: props.alertingLambdaCodePath,
       functionName: "secdash-alerting",
       description: "irone alerting (Rust, EventBridge scheduled)",
-      memorySize: 512,
+      memorySize: 1024,
       timeout: 300,
       environment: {
         SECDASH_ALERTS_TOPIC_ARN: alertsTopic.topicArn,
         SECDASH_CRITICAL_ALERTS_TOPIC_ARN: criticalAlertsTopic.topicArn,
         SECDASH_HEALTH_CACHE_TABLE: props.healthCacheTableName,
+        SECDASH_SECURITY_LAKE_DB: "amazon_security_lake_glue_db_us_west_2",
+        SECDASH_USE_DIRECT_QUERY: "true",
+        SECDASH_REGION: this.region,
+        SECDASH_REPORT_BUCKET: props.reportBucket ?? "",
+        SECDASH_INVESTIGATION_STATE_MACHINE_ARN: props.investigationStateMachineArn ?? "",
+        SECDASH_INVESTIGATIONS_TABLE: props.investigationsTableName ?? "secdash_investigations",
+        SECDASH_SECURITY_HUB_ENABLED: "true",
+        SECDASH_ACCOUNT_ID: this.account,
         RUST_LOG: "info",
       },
     });
@@ -71,6 +85,95 @@ export class AlertingStack extends cdk.Stack {
         actions: ["dynamodb:GetItem", "dynamodb:Query", "dynamodb:Scan"],
         resources: [
           `arn:aws:dynamodb:${this.region}:${this.account}:table/secdash_health_cache`,
+        ],
+      })
+    );
+
+    // DynamoDB write for investigation records
+    alertingLambda.function.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: ["dynamodb:PutItem", "dynamodb:GetItem"],
+        resources: [
+          `arn:aws:dynamodb:${this.region}:${this.account}:table/${props.investigationsTableName ?? "secdash_investigations"}`,
+        ],
+      })
+    );
+
+    // Security Lake: Athena, Glue, LakeFormation, S3 (same as health-checker)
+    alertingLambda.function.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: [
+          "athena:StartQueryExecution",
+          "athena:GetQueryExecution",
+          "athena:GetQueryResults",
+          "athena:StopQueryExecution",
+        ],
+        resources: ["*"],
+      })
+    );
+    alertingLambda.function.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: [
+          "glue:GetCatalog",
+          "glue:GetDatabase",
+          "glue:GetDatabases",
+          "glue:GetTable",
+          "glue:GetTables",
+        ],
+        resources: ["*"],
+      })
+    );
+    alertingLambda.function.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: ["lakeformation:GetDataAccess"],
+        resources: ["*"],
+      })
+    );
+    alertingLambda.function.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: ["s3:GetObject", "s3:PutObject", "s3:ListBucket", "s3:GetBucketLocation"],
+        resources: [
+          "arn:aws:s3:::aws-security-data-lake-*",
+          "arn:aws:s3:::aws-security-data-lake-*/*",
+          "arn:aws:s3:::aws-athena-query-results-*",
+          "arn:aws:s3:::aws-athena-query-results-*/*",
+        ],
+      })
+    );
+    alertingLambda.function.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: ["sts:GetCallerIdentity"],
+        resources: ["*"],
+      })
+    );
+
+    // S3 write for investigation artifacts (detection_result.json, graph.json)
+    if (props.reportBucket) {
+      alertingLambda.function.addToRolePolicy(
+        new iam.PolicyStatement({
+          actions: ["s3:PutObject"],
+          resources: [`arn:aws:s3:::${props.reportBucket}/investigations/*`],
+        })
+      );
+    }
+
+    // Step Functions: start enrichment execution
+    if (props.investigationStateMachineArn) {
+      alertingLambda.function.addToRolePolicy(
+        new iam.PolicyStatement({
+          actions: ["states:StartExecution"],
+          resources: [props.investigationStateMachineArn],
+        })
+      );
+    }
+
+    // Security Hub: push detection findings
+    alertingLambda.function.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: ["securityhub:BatchImportFindings"],
+        resources: [
+          `arn:aws:securityhub:${this.region}:${this.account}:product/${this.account}/default`,
+          `arn:aws:securityhub:${this.region}::product/*/default`,
         ],
       })
     );

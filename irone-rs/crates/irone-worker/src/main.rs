@@ -141,6 +141,14 @@ async fn handler(event: LambdaEvent<WorkerEvent>) -> Result<WorkerResult, Error>
         }
     }
 
+    // 3c. IAM context enrichment: look up policies and trust for principals in the graph
+    if let Some(identifiers) = builder.last_identifiers().cloned() {
+        let iam_enricher = irone_aws::iam::IamEnricher::new(&sdk_config);
+        iam_enricher
+            .enrich_graph(builder.graph_mut(), &identifiers)
+            .await;
+    }
+
     let graph = builder.into_graph();
     let timeline = extract_timeline_from_graph(&graph, true, true);
 

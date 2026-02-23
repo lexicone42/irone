@@ -18,6 +18,8 @@ aws-sdk-athena = { workspace = true }
 aws-sdk-s3 = { workspace = true }
 aws-sdk-dynamodb = { workspace = true }
 aws-sdk-sns = { workspace = true }
+aws-sdk-securityhub = { workspace = true }
+aws-sdk-iam = { workspace = true }
 csv = { workspace = true }
 iceberg = { workspace = true }
 iceberg-catalog-glue = { workspace = true }

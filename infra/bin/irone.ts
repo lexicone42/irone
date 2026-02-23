@@ -73,5 +73,8 @@ const alerting = new AlertingStack(app, "secdash-alerting", {
   env,
   healthCacheTableName: "secdash_health_cache",
   alertingLambdaCodePath: lambdaCodePath("irone-alerting"),
+  reportBucket: web.reportBucketName,
+  investigationStateMachineArn: pipeline.stateMachineArn,
+  investigationsTableName: pipeline.investigationsTableName,
 });
-alerting.addDependency(irone);
+alerting.addDependency(pipeline);

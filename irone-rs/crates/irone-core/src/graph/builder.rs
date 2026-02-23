@@ -181,6 +181,12 @@ impl GraphBuilder {
         &self.graph
     }
 
+    /// Get a mutable reference to the underlying graph for direct modification
+    /// (e.g., injecting IAM context into node properties).
+    pub fn graph_mut(&mut self) -> &mut SecurityGraph {
+        &mut self.graph
+    }
+
     /// Consume the builder and return the graph without cloning.
     pub fn into_graph(self) -> SecurityGraph {
         self.graph

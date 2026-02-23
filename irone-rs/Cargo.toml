@@ -8,6 +8,7 @@ members = [
     "crates/irone-web",
     "crates/irone-health-checker",
     "crates/irone-worker",
+    "crates/irone-alerting",
 ]
 
 [workspace.package]
@@ -56,6 +57,8 @@ aws-sdk-s3 = "1"
 aws-sdk-dynamodb = "1"
 aws-sdk-sfn = "1"
 aws-sdk-sns = "1"
+aws-sdk-securityhub = "1"
+aws-sdk-iam = "1"
 
 # Auth (l42-cognito-passkey token handler)
 l42-token-handler = { path = "../../l42cognitopasskey/rust" }

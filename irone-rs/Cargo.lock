@@ -529,6 +529,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "aws-sdk-iam"
+version = "1.105.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "40c899b661942ca188b45e61a26e68eb464e108e088e4b0a48165b835b566ff8"
+dependencies = [
+ "aws-credential-types",
+ "aws-runtime",
+ "aws-smithy-async",
+ "aws-smithy-http",
+ "aws-smithy-json",
+ "aws-smithy-observability",
+ "aws-smithy-query",
+ "aws-smithy-runtime",
+ "aws-smithy-runtime-api",
+ "aws-smithy-types",
+ "aws-smithy-xml",
+ "aws-types",
+ "fastrand",
+ "http 0.2.12",
+ "http 1.4.0",
+ "regex-lite",
+ "tracing",
+]
+
+[[package]]
 name = "aws-sdk-s3"
 version = "1.124.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -561,6 +586,30 @@ dependencies = [
  "sha2",
  "tracing",
  "url",
+]
+
+[[package]]
+name = "aws-sdk-securityhub"
+version = "1.105.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e39aaa63bd392f81788ae71c783d8ce1a2c5241046646acddba57edad8e977ce"
+dependencies = [
+ "aws-credential-types",
+ "aws-runtime",
+ "aws-smithy-async",
+ "aws-smithy-http",
+ "aws-smithy-json",
+ "aws-smithy-observability",
+ "aws-smithy-runtime",
+ "aws-smithy-runtime-api",
+ "aws-smithy-types",
+ "aws-types",
+ "bytes",
+ "fastrand",
+ "http 0.2.12",
+ "http 1.4.0",
+ "regex-lite",
+ "tracing",
 ]
 
 [[package]]
@@ -2739,6 +2788,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "irone-alerting"
+version = "0.1.0"
+dependencies = [
+ "aws-config",
+ "aws-sdk-dynamodb",
+ "aws-sdk-s3",
+ "aws-sdk-securityhub",
+ "aws-sdk-sfn",
+ "aws-sdk-sns",
+ "chrono",
+ "irone-aws",
+ "irone-core",
+ "lambda_runtime",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+]
+
+[[package]]
 name = "irone-auth"
 version = "0.1.0"
 dependencies = [
@@ -2770,7 +2841,9 @@ dependencies = [
  "aws-config",
  "aws-sdk-athena",
  "aws-sdk-dynamodb",
+ "aws-sdk-iam",
  "aws-sdk-s3",
+ "aws-sdk-securityhub",
  "aws-sdk-sns",
  "bytes",
  "chrono",
@@ -2872,6 +2945,7 @@ name = "irone-worker"
 version = "0.1.0"
 dependencies = [
  "aws-config",
+ "aws-sdk-iam",
  "aws-sdk-s3",
  "chrono",
  "irone-aws",

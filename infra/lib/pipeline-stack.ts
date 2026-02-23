@@ -106,6 +106,22 @@ export class PipelineStack extends cdk.Stack {
       })
     );
 
+    // IAM context enrichment: look up policies and trust for investigation principals
+    worker.function.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: [
+          "iam:GetUser",
+          "iam:ListAttachedUserPolicies",
+          "iam:ListUserPolicies",
+          "iam:ListMFADevices",
+          "iam:GetRole",
+          "iam:ListAttachedRolePolicies",
+          "iam:ListRolePolicies",
+        ],
+        resources: ["*"],
+      })
+    );
+
     // --- Step Function: investigation pipeline ---
 
     // State: Enrich (invoke worker Lambda)
