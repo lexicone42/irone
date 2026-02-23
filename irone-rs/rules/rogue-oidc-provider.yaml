@@ -1,0 +1,30 @@
+id: detect-rogue-oidc-provider
+name: IAM OIDC Provider Created
+description: >
+  Detects creation of new OpenID Connect identity providers in the AWS account.
+  Attackers register their own OIDC provider and modify role trust policies to
+  allow assumption via attacker-controlled tokens. OIDC provider creation is an
+  extremely rare operation in most accounts — any occurrence outside known
+  deployment windows is suspicious.
+author: irone contributors
+severity: critical
+event_class: api_activity
+limit: 1000
+threshold: 1
+tags:
+  - persistence
+  - iam
+  - oidc
+  - identity-provider
+mitre_attack:
+  - T1098.001
+references:
+  - https://attack.mitre.org/techniques/T1098/001/
+  - https://hackingthe.cloud/aws/exploitation/oidc_identity_provider_abuse/ # Nick Frichette
+data_sources:
+  - cloudtrail
+filters:
+  - field: api.operation
+    equals: CreateOpenIDConnectProvider
+  - field: api.service.name
+    equals: iam.amazonaws.com

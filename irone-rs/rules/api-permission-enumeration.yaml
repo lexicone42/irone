@@ -5,6 +5,7 @@ description: >
   which may indicate an attacker probing for accessible permissions after
   obtaining credentials. Focuses on IAMUser type to exclude AssumedRole
   service-to-service failures and AWSService background noise.
+author: irone contributors
 severity: high
 event_class: api_activity
 limit: 5000
@@ -15,6 +16,10 @@ tags:
 mitre_attack:
   - T1580
   - T1526
+references:
+  - https://attack.mitre.org/techniques/T1580/
+  - https://attack.mitre.org/techniques/T1526/
+  - https://github.com/andresriancho/enumerate-iam
 data_sources:
   - cloudtrail
 filters:

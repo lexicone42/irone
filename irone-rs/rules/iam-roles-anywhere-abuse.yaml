@@ -1,0 +1,33 @@
+id: detect-iam-roles-anywhere
+name: IAM Roles Anywhere Trust Anchor or Profile Created
+description: >
+  Detects creation of IAM Roles Anywhere trust anchors or profiles. Attackers
+  register a malicious Certificate Authority as a trust anchor, create a profile,
+  and generate AWS credentials from outside AWS using X.509 certificates. Trust
+  anchor creation is rare infrastructure provisioning — any occurrence outside of
+  known deployment windows is suspicious.
+author: irone contributors
+severity: critical
+event_class: api_activity
+limit: 1000
+threshold: 1
+tags:
+  - persistence
+  - iam
+  - roles-anywhere
+  - certificate
+mitre_attack:
+  - T1098.001
+references:
+  - https://attack.mitre.org/techniques/T1098/001/
+  - https://hackingthe.cloud/aws/exploitation/iam_roles_anywhere_abuse/ # Nick Frichette
+  - https://docs.aws.amazon.com/rolesanywhere/latest/userguide/introduction.html
+data_sources:
+  - cloudtrail
+filters:
+  - field: api.operation
+    in:
+      - CreateTrustAnchor
+      - CreateProfile
+  - field: api.service.name
+    equals: rolesanywhere.amazonaws.com

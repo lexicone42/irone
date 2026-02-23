@@ -1,0 +1,36 @@
+id: detect-guardduty-tampering
+name: GuardDuty Configuration Tampering
+description: >
+  Detects modifications to GuardDuty detector configuration, trusted IP lists,
+  suppression filters, or publishing destinations. Attackers disable or blind
+  GuardDuty to operate undetected. Any GuardDuty configuration change should be
+  rare and warrants immediate investigation.
+author: irone contributors
+severity: critical
+event_class: api_activity
+limit: 1000
+threshold: 1
+tags:
+  - defense-evasion
+  - guardduty
+  - monitoring-tampering
+mitre_attack:
+  - T1562.001
+references:
+  - https://attack.mitre.org/techniques/T1562/001/
+  - https://hackingthe.cloud/aws/post_exploitation/guardduty_disruption/ # Nick Frichette
+  - https://docs.aws.amazon.com/guardduty/latest/ug/guardduty_managing.html
+data_sources:
+  - cloudtrail
+filters:
+  - field: api.operation
+    in:
+      - UpdateDetector
+      - DeleteDetector
+      - CreateIPSet
+      - UpdateIPSet
+      - CreateFilter
+      - DeletePublishingDestination
+      - UpdatePublishingDestination
+  - field: api.service.name
+    equals: guardduty.amazonaws.com

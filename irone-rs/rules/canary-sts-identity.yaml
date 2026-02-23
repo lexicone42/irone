@@ -6,6 +6,7 @@ description: >
   Threshold of 1 ensures it fires on a single call. Useful for
   end-to-end testing of the detection → investigation → enrichment
   pipeline without waiting for real security events.
+author: irone contributors
 severity: low
 event_class: api_activity
 limit: 100
@@ -14,6 +15,7 @@ tags:
   - canary
   - testing
 mitre_attack: []
+references: []
 data_sources:
   - cloudtrail
 filters:

@@ -6,6 +6,7 @@ description: >
   ~288, health+alerting ~960, web ~420, others ~130). Threshold set above this
   baseline to catch genuine spikes: abuse, misconfiguration, or compromised
   credentials triggering mass invocations.
+author: irone contributors
 severity: medium
 event_class: api_activity
 limit: 5000
@@ -16,6 +17,8 @@ tags:
   - resource-abuse
 mitre_attack:
   - T1648
+references:
+  - https://attack.mitre.org/techniques/T1648/
 data_sources:
   - lambda-execution
 filters:

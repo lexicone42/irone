@@ -7,6 +7,7 @@ description: >
   OCSF DnsActivity events from Route 53 Resolver logs capture each query.
   Threshold of 500 queries in the lookback window significantly exceeds
   normal resolver activity for most VPCs.
+author: irone contributors
 severity: high
 event_class: dns_activity
 limit: 5000
@@ -18,6 +19,9 @@ tags:
 mitre_attack:
   - T1071.004
   - T1048.003
+references:
+  - https://attack.mitre.org/techniques/T1071/004/
+  - https://attack.mitre.org/techniques/T1048/003/
 data_sources:
   - route53-resolver
 filters: []

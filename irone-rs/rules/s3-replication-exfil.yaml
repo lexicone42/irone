@@ -1,0 +1,32 @@
+id: detect-s3-replication-exfil
+name: S3 Bucket Replication Configuration Change
+description: >
+  Detects S3 bucket replication configuration changes, which may indicate an
+  attacker setting up cross-account data replication for exfiltration. S3
+  replication silently copies all new objects to a destination bucket, which
+  can be in an attacker-controlled account. PutBucketReplication is rarely
+  called in normal operations and warrants investigation.
+author: irone contributors
+severity: high
+event_class: api_activity
+limit: 1000
+threshold: 1
+tags:
+  - exfiltration
+  - s3
+  - data-replication
+mitre_attack:
+  - T1537
+references:
+  - https://attack.mitre.org/techniques/T1537/
+  - https://hackingthe.cloud/aws/exploitation/s3_bucket_replication_exfiltration/ # Ben Bridts
+  - https://docs.aws.amazon.com/AmazonS3/latest/userguide/replication.html
+data_sources:
+  - cloudtrail
+filters:
+  - field: api.operation
+    in:
+      - PutBucketReplication
+      - PutReplicationConfiguration
+  - field: api.service.name
+    equals: s3.amazonaws.com

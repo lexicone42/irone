@@ -1,0 +1,33 @@
+id: detect-role-chain-juggling
+name: Excessive STS AssumeRole Activity
+description: >
+  Detects a high volume of sts:AssumeRole calls from the same principal,
+  which may indicate role chain juggling — a persistence technique where an
+  attacker chains AssumeRole calls in a loop to continuously refresh credential
+  expiration. Circular trust policies (Role A trusts Role B trusts Role A)
+  enable indefinite access even after the original credentials are revoked.
+  Threshold of 15 in the lookback window catches refresh loops while allowing
+  normal cross-account role assumptions.
+author: irone contributors
+severity: high
+event_class: api_activity
+limit: 5000
+threshold: 15
+tags:
+  - persistence
+  - sts
+  - credential-abuse
+mitre_attack:
+  - T1078.004
+references:
+  - https://attack.mitre.org/techniques/T1078/004/
+  - https://hackingthe.cloud/aws/post_exploitation/role_chain_juggling/ # Nick Frichette
+data_sources:
+  - cloudtrail
+filters:
+  - field: api.operation
+    equals: AssumeRole
+  - field: api.service.name
+    equals: sts.amazonaws.com
+  - field: status_id
+    equals: "1"

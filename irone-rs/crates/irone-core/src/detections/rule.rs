@@ -122,6 +122,8 @@ pub struct DetectionMetadata {
     #[serde(default)]
     pub mitre_attack: Vec<String>,
     #[serde(default)]
+    pub references: Vec<String>,
+    #[serde(default)]
     pub data_sources: Vec<String>,
     #[serde(default = "default_schedule")]
     pub schedule: String,
@@ -559,6 +561,7 @@ mod tests {
             severity: Severity::High,
             tags: vec!["test".into()],
             mitre_attack: vec!["T1078".into()],
+            references: vec![],
             data_sources: vec!["cloudtrail".into()],
             schedule: "rate(5 minutes)".into(),
             enabled: true,

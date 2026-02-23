@@ -7,6 +7,7 @@ description: >
   resets or session revocation. Any access key creation should be correlated
   with expected provisioning activity. OCSF AccountChange events capture
   CreateAccessKey operations.
+author: irone contributors
 severity: medium
 event_class: account_change
 limit: 1000
@@ -17,6 +18,8 @@ tags:
   - persistence
 mitre_attack:
   - T1098.001
+references:
+  - https://attack.mitre.org/techniques/T1098/001/
 data_sources:
   - cloudtrail
 filters:

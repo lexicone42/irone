@@ -80,6 +80,7 @@ fn test_state_with_rules() -> AppState {
             severity: Severity::High,
             tags: vec![],
             mitre_attack: vec![],
+            references: vec![],
             data_sources: vec![],
             schedule: "rate(5 minutes)".into(),
             enabled: true,

@@ -366,6 +366,7 @@ fn parse_metadata(
         severity,
         tags: get_str_vec("tags"),
         mitre_attack: get_str_vec("mitre_attack"),
+        references: get_str_vec("references"),
         data_sources: get_str_vec("data_sources"),
         schedule: {
             let s = get_str("schedule");

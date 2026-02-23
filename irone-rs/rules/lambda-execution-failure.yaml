@@ -5,6 +5,7 @@ description: >
   normal, a pattern of failures on security-critical functions (token handlers,
   auth edge functions) may indicate misconfiguration, resource exhaustion,
   or an attacker probing function behavior.
+author: irone contributors
 severity: medium
 event_class: api_activity
 limit: 1000
@@ -15,6 +16,8 @@ tags:
   - error-monitoring
 mitre_attack:
   - T1499
+references:
+  - https://attack.mitre.org/techniques/T1499/
 data_sources:
   - lambda-execution
 filters:

@@ -6,6 +6,7 @@ description: >
   MFA devices to maintain persistent access. Any MFA device change is a
   high-severity signal that warrants investigation. OCSF AccountChange
   events from CloudTrail capture IAM MFA operations.
+author: irone contributors
 severity: high
 event_class: account_change
 limit: 1000
@@ -17,6 +18,9 @@ tags:
 mitre_attack:
   - T1556.006
   - T1098
+references:
+  - https://attack.mitre.org/techniques/T1556/006/
+  - https://attack.mitre.org/techniques/T1098/
 data_sources:
   - cloudtrail
 filters:

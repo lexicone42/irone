@@ -6,6 +6,7 @@ description: >
   running DGA-based malware generate many DNS queries for randomly generated
   domains, most of which return NXDOMAIN. A threshold of 100 NXDOMAIN
   responses in the lookback window is well above normal error rates.
+author: irone contributors
 severity: medium
 event_class: dns_activity
 limit: 5000
@@ -17,6 +18,9 @@ tags:
 mitre_attack:
   - T1568.002
   - T1071.004
+references:
+  - https://attack.mitre.org/techniques/T1568/002/
+  - https://attack.mitre.org/techniques/T1071/004/
 data_sources:
   - route53-resolver
 filters:

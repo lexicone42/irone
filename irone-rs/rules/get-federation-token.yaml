@@ -1,0 +1,31 @@
+id: detect-get-federation-token
+name: STS GetFederationToken Call
+description: >
+  Detects sts:GetFederationToken API calls. Federation tokens create temporary
+  credentials that survive access key deactivation — even after the compromised
+  IAM user's access key is disabled, previously issued federation tokens remain
+  valid until expiry. This API is rarely used in normal operations and any call
+  warrants investigation, especially with long durations or broad permissions.
+author: irone contributors
+severity: high
+event_class: api_activity
+limit: 1000
+threshold: 1
+tags:
+  - persistence
+  - sts
+  - credential-abuse
+mitre_attack:
+  - T1078.004
+  - T1550.001
+references:
+  - https://attack.mitre.org/techniques/T1078/004/
+  - https://attack.mitre.org/techniques/T1550/001/
+  - https://hackingthe.cloud/aws/post_exploitation/get_federation_token/ # Nick Frichette
+data_sources:
+  - cloudtrail
+filters:
+  - field: api.operation
+    equals: GetFederationToken
+  - field: api.service.name
+    equals: sts.amazonaws.com

@@ -3,6 +3,7 @@ name: IAM Privilege Escalation
 description: >
   Detects IAM policy changes that could indicate privilege escalation.
   Monitors for API calls that attach or create policies on users/roles.
+author: irone contributors
 severity: high
 event_class: api_activity
 limit: 5000
@@ -13,6 +14,9 @@ tags:
 mitre_attack:
   - T1098
   - T1098.003
+references:
+  - https://attack.mitre.org/techniques/T1098/
+  - https://rhinosecuritylabs.com/aws/aws-privilege-escalation-methods-mitigation/
 data_sources:
   - cloudtrail
 filters:

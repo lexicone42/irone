@@ -1,0 +1,33 @@
+id: detect-cloudtrail-tampering
+name: CloudTrail Logging Tampering
+description: >
+  Detects attempts to stop, delete, or modify CloudTrail logging configuration.
+  Disabling CloudTrail is the most direct form of defense evasion in AWS — once
+  logging stops, all subsequent actions become invisible. Any CloudTrail
+  modification is a critical-severity event requiring immediate response.
+author: irone contributors
+severity: critical
+event_class: api_activity
+limit: 1000
+threshold: 1
+tags:
+  - defense-evasion
+  - cloudtrail
+  - logging-tampering
+mitre_attack:
+  - T1562.008
+references:
+  - https://attack.mitre.org/techniques/T1562/008/
+  - https://hackingthe.cloud/aws/post_exploitation/cloudtrail_log_deletion/ # Nick Frichette
+  - https://docs.aws.amazon.com/awscloudtrail/latest/userguide/cloudtrail-delete-trails-console.html
+data_sources:
+  - cloudtrail
+filters:
+  - field: api.operation
+    in:
+      - StopLogging
+      - DeleteTrail
+      - PutEventSelectors
+      - UpdateTrail
+  - field: api.service.name
+    equals: cloudtrail.amazonaws.com

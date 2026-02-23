@@ -4,6 +4,7 @@ description: >
   Detects AssumeRoleWithWebIdentity calls from GitHub Actions OIDC.
   In a controlled environment, only known repositories should be assuming
   roles via OIDC federation. Any unexpected repo is a supply-chain signal.
+author: irone contributors
 severity: high
 event_class: authentication
 limit: 1000
@@ -16,6 +17,10 @@ tags:
 mitre_attack:
   - T1078.004
   - T1195.002
+references:
+  - https://attack.mitre.org/techniques/T1078/004/
+  - https://attack.mitre.org/techniques/T1195/002/
+  - https://docs.github.com/en/actions/security-for-github-actions/security-hardening-your-deployments/configuring-openid-connect-in-amazon-web-services
 data_sources:
   - cloudtrail
 filters:

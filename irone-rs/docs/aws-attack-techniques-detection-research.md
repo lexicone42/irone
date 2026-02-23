@@ -290,13 +290,13 @@ These are harder to detect but important for understanding attacker tradecraft:
 
 Based on impact, feasibility, and gap severity:
 
-1. **GuardDuty Tampering** — direct defense evasion, trivial to detect, critical gap
-2. **CloudTrail Tampering** — same reasoning, any logging modification is high-severity
-3. **S3 Replication Exfiltration** — novel exfil technique, simple API pattern
-4. **GetFederationToken Persistence** — one API call, rarely legitimate
-5. **Role Chain Juggling** — temporal pattern detection, extends existing AssumeRole monitoring
-6. **Rogue OIDC Provider** — rare event, high-confidence signal
-7. **IAM Roles Anywhere Abuse** — rare event, high-confidence signal
+1. ~~**GuardDuty Tampering**~~ — **IMPLEMENTED** → `guardduty-tampering.yaml`
+2. ~~**CloudTrail Tampering**~~ — **IMPLEMENTED** → `cloudtrail-tampering.yaml`
+3. ~~**S3 Replication Exfiltration**~~ — **IMPLEMENTED** → `s3-replication-exfil.yaml`
+4. ~~**GetFederationToken Persistence**~~ — **IMPLEMENTED** → `get-federation-token.yaml`
+5. ~~**Role Chain Juggling**~~ — **IMPLEMENTED** → `role-chain-juggling.yaml`
+6. ~~**Rogue OIDC Provider**~~ — **IMPLEMENTED** → `rogue-oidc-provider.yaml`
+7. ~~**IAM Roles Anywhere Abuse**~~ — **IMPLEMENTED** → `iam-roles-anywhere-abuse.yaml`
 8. **ECR Image Poisoning** — important for container workloads
 9. **SSM Command Execution** — post-exploitation detection
 10. **S3 ACL Backdoor** — persistence mechanism

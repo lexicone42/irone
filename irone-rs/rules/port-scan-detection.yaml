@@ -5,6 +5,7 @@ description: >
   indicative of port scanning or network reconnaissance. Triggers when 50+
   rejected flows are observed in the lookback window. VPC Flow Logs report
   rejected connections with status_id=2 in OCSF NetworkActivity events.
+author: irone contributors
 severity: high
 event_class: network_activity
 limit: 5000
@@ -15,6 +16,8 @@ tags:
   - port-scan
 mitre_attack:
   - T1046
+references:
+  - https://attack.mitre.org/techniques/T1046/
 data_sources:
   - vpc-flow-logs
 filters:

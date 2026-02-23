@@ -3,6 +3,7 @@ name: Root Account Console Login
 description: >
   Detects AWS root account console login events.
   Root account usage should be extremely rare and is a critical security signal.
+author: irone contributors
 severity: critical
 event_class: authentication
 limit: 1000
@@ -12,6 +13,9 @@ tags:
   - root-account
 mitre_attack:
   - T1078.004
+references:
+  - https://attack.mitre.org/techniques/T1078/004/
+  - https://docs.aws.amazon.com/IAM/latest/UserGuide/id_root-user.html
 data_sources:
   - cloudtrail
 filters:
