@@ -58,7 +58,7 @@ export class AlertingStack extends cdk.Stack {
       functionName: "secdash-alerting",
       description: "irone alerting (Rust, EventBridge scheduled)",
       memorySize: 1024,
-      timeout: 300,
+      timeout: 900,
       environment: {
         SECDASH_ALERTS_TOPIC_ARN: alertsTopic.topicArn,
         SECDASH_CRITICAL_ALERTS_TOPIC_ARN: criticalAlertsTopic.topicArn,

@@ -6,6 +6,7 @@
 #   ./scripts/deploy_rust_lambda.sh web           # deploy only irone-web
 #   ./scripts/deploy_rust_lambda.sh health        # deploy only irone-health-checker
 #   ./scripts/deploy_rust_lambda.sh worker        # deploy only irone-worker
+#   ./scripts/deploy_rust_lambda.sh alerting       # deploy only irone-alerting
 #   ./scripts/deploy_rust_lambda.sh web worker    # deploy web + worker
 #   ./scripts/deploy_rust_lambda.sh --skip-build  # reuse existing zips
 #
@@ -27,6 +28,7 @@ SKIP_BUILD=false
 DEPLOY_WEB=false
 DEPLOY_HEALTH=false
 DEPLOY_WORKER=false
+DEPLOY_ALERTING=false
 TARGET_SPECIFIED=false
 
 for arg in "$@"; do
@@ -35,6 +37,7 @@ for arg in "$@"; do
         web) DEPLOY_WEB=true; TARGET_SPECIFIED=true ;;
         health) DEPLOY_HEALTH=true; TARGET_SPECIFIED=true ;;
         worker) DEPLOY_WORKER=true; TARGET_SPECIFIED=true ;;
+        alerting) DEPLOY_ALERTING=true; TARGET_SPECIFIED=true ;;
         --help|-h)
             head -16 "$0" | tail -14
             exit 0
@@ -48,6 +51,7 @@ if [[ "$TARGET_SPECIFIED" == false ]]; then
     DEPLOY_WEB=true
     DEPLOY_HEALTH=true
     DEPLOY_WORKER=true
+    DEPLOY_ALERTING=true
 fi
 
 # --- Auto-detect Lambda function names ---
@@ -97,6 +101,22 @@ if [[ "$DEPLOY_WORKER" == true && -z "${SECDASH_WORKER_LAMBDA_NAME:-}" ]]; then
     fi
 fi
 
+if [[ "$DEPLOY_ALERTING" == true && -z "${SECDASH_ALERTING_LAMBDA_NAME:-}" ]]; then
+    echo "Detecting alerting Lambda function name..."
+    SECDASH_ALERTING_LAMBDA_NAME=$(
+        aws lambda list-functions --region "$REGION" \
+            --query "Functions[?starts_with(FunctionName, 'secdash-alerting')].FunctionName" \
+            --output text 2>/dev/null | head -1
+    )
+    if [[ -z "$SECDASH_ALERTING_LAMBDA_NAME" ]]; then
+        echo "WARNING: Could not find a Lambda function starting with 'secdash-alerting'."
+        echo "Set SECDASH_ALERTING_LAMBDA_NAME explicitly, or deploy CDK first."
+        DEPLOY_ALERTING=false
+    else
+        echo "  Found: $SECDASH_ALERTING_LAMBDA_NAME"
+    fi
+fi
+
 # --- Auto-detect S3 bucket ---
 if [[ -z "${SECDASH_S3_BUCKET:-}" ]]; then
     echo "Detecting S3 bucket from Lambda config..."
@@ -120,6 +140,7 @@ echo "Deploy config:"
 [[ "$DEPLOY_WEB" == true ]] && echo "  Web Lambda:     $SECDASH_WEB_LAMBDA_NAME"
 [[ "$DEPLOY_HEALTH" == true ]] && echo "  Health Lambda:  $SECDASH_HEALTH_LAMBDA_NAME"
 [[ "$DEPLOY_WORKER" == true ]] && echo "  Worker Lambda:  $SECDASH_WORKER_LAMBDA_NAME"
+[[ "$DEPLOY_ALERTING" == true ]] && echo "  Alerting Lambda: $SECDASH_ALERTING_LAMBDA_NAME"
 echo "  Bucket:         $SECDASH_S3_BUCKET"
 echo "  S3 prefix:      $S3_KEY_PREFIX"
 echo "  Region:         $REGION"
@@ -137,6 +158,7 @@ fi
 WEB_ZIP="$IRONE_RS_DIR/target/lambda/irone-web/bootstrap.zip"
 HEALTH_ZIP="$IRONE_RS_DIR/target/lambda/irone-health-checker/bootstrap.zip"
 WORKER_ZIP="$IRONE_RS_DIR/target/lambda/irone-worker/bootstrap.zip"
+ALERTING_ZIP="$IRONE_RS_DIR/target/lambda/irone-alerting/bootstrap.zip"
 
 # --- Bundle Cedar policies into irone-web zip ---
 CEDAR_SRC="$PROJECT_ROOT/../l42cognitopasskey/rust/cedar"
@@ -166,18 +188,22 @@ if [[ -d "$RULES_DIR" ]]; then
     fi
 fi
 
-# --- Bundle detection rules into irone-worker zip ---
-if [[ "$DEPLOY_WORKER" == true && -d "$RULES_DIR" ]]; then
-    RULE_COUNT=$(find "$RULES_DIR" -name '*.yaml' | wc -l)
-    if [[ "$RULE_COUNT" -gt 0 && -f "$WORKER_ZIP" ]]; then
-        echo "Bundling $RULE_COUNT detection rules into irone-worker zip..."
-        RULES_TMP=$(mktemp -d)
-        cp -r "$RULES_DIR" "$RULES_TMP/rules"
-        (cd "$RULES_TMP" && zip -qr "$WORKER_ZIP" rules/)
-        rm -rf "$RULES_TMP"
-        echo "  Detection rules bundled."
+# --- Bundle detection rules into irone-worker and irone-alerting zips ---
+for target_name in worker alerting; do
+    deploy_var="DEPLOY_${target_name^^}"
+    zip_var="${target_name^^}_ZIP"
+    if [[ "${!deploy_var}" == true && -d "$RULES_DIR" ]]; then
+        RULE_COUNT=$(find "$RULES_DIR" -name '*.yaml' | wc -l)
+        if [[ "$RULE_COUNT" -gt 0 && -f "${!zip_var}" ]]; then
+            echo "Bundling $RULE_COUNT detection rules into irone-$target_name zip..."
+            RULES_TMP=$(mktemp -d)
+            cp -r "$RULES_DIR" "$RULES_TMP/rules"
+            (cd "$RULES_TMP" && zip -qr "${!zip_var}" rules/)
+            rm -rf "$RULES_TMP"
+            echo "  Detection rules bundled."
+        fi
     fi
-fi
+done
 
 # --- Helper: deploy one Lambda ---
 deploy_lambda() {
@@ -245,6 +271,12 @@ if [[ "$DEPLOY_WORKER" == true ]]; then
     deploy_lambda "$SECDASH_WORKER_LAMBDA_NAME" "$WORKER_ZIP" "${S3_KEY_PREFIX}irone-worker.zip"
 fi
 
+if [[ "$DEPLOY_ALERTING" == true ]]; then
+    echo ""
+    echo "Deploying irone-alerting..."
+    deploy_lambda "$SECDASH_ALERTING_LAMBDA_NAME" "$ALERTING_ZIP" "${S3_KEY_PREFIX}irone-alerting.zip"
+fi
+
 echo ""
 echo "Deploy complete."
 if [[ "$DEPLOY_WEB" == true ]]; then
@@ -256,4 +288,7 @@ if [[ "$DEPLOY_HEALTH" == true ]]; then
 fi
 if [[ "$DEPLOY_WORKER" == true ]]; then
     echo "  irone-worker:         $SECDASH_WORKER_LAMBDA_NAME"
+fi
+if [[ "$DEPLOY_ALERTING" == true ]]; then
+    echo "  irone-alerting:       $SECDASH_ALERTING_LAMBDA_NAME"
 fi

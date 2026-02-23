@@ -40,28 +40,21 @@ else
 fi
 
 # Verify bootstrap binaries exist
-for crate in irone-web irone-health-checker; do
+for crate in irone-web irone-health-checker irone-worker irone-alerting; do
     bootstrap="$IRONE_RS_DIR/target/lambda/$crate/bootstrap"
     if [[ ! -f "$bootstrap" ]]; then
-        echo "ERROR: Bootstrap not found: $bootstrap"
-        echo "Run without --skip-build or build manually first."
-        exit 1
+        echo "WARNING: Bootstrap not found: $bootstrap (will use dummy placeholder)"
+    else
+        echo "  $crate: $(du -h "$bootstrap" | cut -f1)"
     fi
-    echo "  $crate: $(du -h "$bootstrap" | cut -f1)"
 done
 
-# irone-alerting may not exist yet (crate not built)
-alerting_bootstrap="$IRONE_RS_DIR/target/lambda/irone-alerting/bootstrap"
-if [[ -f "$alerting_bootstrap" ]]; then
-    echo "  irone-alerting: $(du -h "$alerting_bootstrap" | cut -f1)"
-else
-    echo "  irone-alerting: not built (will use dummy placeholder)"
-fi
-
-# --- Step 2: Bundle Cedar policies into irone-web output ---
+# --- Step 2: Bundle assets into Lambda output directories ---
 CEDAR_SRC="$PROJECT_ROOT/../l42cognitopasskey/rust/cedar"
 WEB_LAMBDA_DIR="$IRONE_RS_DIR/target/lambda/irone-web"
+RULES_DIR="$IRONE_RS_DIR/rules"
 
+# Cedar policies → irone-web
 if [[ -d "$CEDAR_SRC" ]]; then
     echo "Bundling Cedar policies into irone-web..."
     rm -rf "$WEB_LAMBDA_DIR/cedar"
@@ -69,6 +62,21 @@ if [[ -d "$CEDAR_SRC" ]]; then
     echo "  Cedar policies: $(find "$WEB_LAMBDA_DIR/cedar" -type f | wc -l) files"
 else
     echo "WARNING: Cedar policies not found at $CEDAR_SRC — deploying without authorization"
+fi
+
+# Detection rules → irone-web, irone-worker, irone-alerting
+if [[ -d "$RULES_DIR" ]]; then
+    RULE_COUNT=$(find "$RULES_DIR" -name '*.yaml' | wc -l)
+    for crate in irone-web irone-worker irone-alerting; do
+        crate_dir="$IRONE_RS_DIR/target/lambda/$crate"
+        if [[ -f "$crate_dir/bootstrap" ]]; then
+            rm -rf "$crate_dir/rules"
+            cp -r "$RULES_DIR" "$crate_dir/rules"
+            echo "  Bundled $RULE_COUNT rules into $crate"
+        fi
+    done
+else
+    echo "WARNING: Detection rules not found at $RULES_DIR"
 fi
 
 # --- Step 3: CDK deploy ---
