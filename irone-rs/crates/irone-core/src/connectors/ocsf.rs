@@ -205,6 +205,22 @@ pub enum ColumnFilter {
     /// Raw SQL expression — used for Athena-specific features like `any_match()`.
     /// Iceberg ignores this variant gracefully.
     RawSql(String),
+    /// Match rows where a List<Struct> column contains an element with a string
+    /// field equal to the given value. Athena: `any_match(list, x -> x.field = value)`.
+    /// Iceberg: Arrow-level list traversal.
+    ListContains {
+        list_path: String,
+        field: String,
+        value: String,
+    },
+    /// Match rows where a List<Struct> column contains an element with a string
+    /// field matching any of the given values.
+    /// Athena: `any_match(list, x -> x.field IN (values))`.
+    ListContainsAny {
+        list_path: String,
+        field: String,
+        values: Vec<String>,
+    },
 }
 
 impl ColumnFilter {
@@ -253,6 +269,28 @@ impl ColumnFilter {
                 format!("({})", parts.join(" AND "))
             }
             Self::RawSql(sql) => sql.clone(),
+            Self::ListContains {
+                list_path,
+                field,
+                value,
+            } => {
+                let col = Self::quote_ocsf_path(list_path);
+                let safe = sanitize_string(value);
+                format!("any_match({col}, x -> x.\"{field}\" = '{safe}')")
+            }
+            Self::ListContainsAny {
+                list_path,
+                field,
+                values,
+            } => {
+                let col = Self::quote_ocsf_path(list_path);
+                let in_list = values
+                    .iter()
+                    .map(|v| format!("'{}'", sanitize_string(v)))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!("any_match({col}, x -> x.\"{field}\" IN ({in_list}))")
+            }
         }
     }
 }
@@ -573,6 +611,44 @@ mod tests {
         };
         let sql = f.to_sql();
         assert!(sql.contains("O''Brien"));
+        assert!(!sql.contains("--"));
+    }
+
+    #[test]
+    fn column_filter_list_contains_sql() {
+        let f = ColumnFilter::ListContains {
+            list_path: "resources".into(),
+            field: "uid".into(),
+            value: "arn:aws:s3:::my-bucket".into(),
+        };
+        assert_eq!(
+            f.to_sql(),
+            r#"any_match("resources", x -> x."uid" = 'arn:aws:s3:::my-bucket')"#
+        );
+    }
+
+    #[test]
+    fn column_filter_list_contains_any_sql() {
+        let f = ColumnFilter::ListContainsAny {
+            list_path: "resources".into(),
+            field: "uid".into(),
+            values: vec!["arn:aws:s3:::bucket1".into(), "arn:aws:s3:::bucket2".into()],
+        };
+        assert_eq!(
+            f.to_sql(),
+            r#"any_match("resources", x -> x."uid" IN ('arn:aws:s3:::bucket1', 'arn:aws:s3:::bucket2'))"#
+        );
+    }
+
+    #[test]
+    fn column_filter_list_contains_sanitizes() {
+        let f = ColumnFilter::ListContains {
+            list_path: "resources".into(),
+            field: "uid".into(),
+            value: "arn'; DROP TABLE--".into(),
+        };
+        let sql = f.to_sql();
+        assert!(sql.contains("arn''"));
         assert!(!sql.contains("--"));
     }
 }

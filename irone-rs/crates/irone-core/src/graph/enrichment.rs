@@ -3,7 +3,7 @@ use tracing::{debug, warn};
 
 use crate::connectors::ocsf::{ColumnFilter, OCSFEventClass, SecurityLakeQueries};
 use crate::connectors::result::QueryResult;
-use crate::connectors::sql_utils::{sanitize_string, validate_ipv4};
+use crate::connectors::sql_utils::validate_ipv4;
 
 /// Enriches investigation graphs with related Security Lake events.
 ///
@@ -463,9 +463,10 @@ impl<'a, S: SecurityLakeQueries> SecurityLakeEnricher<'a, S> {
 
     /// Get all events involving a specific resource ARN.
     ///
-    /// Uses Athena's `any_match()` on the OCSF `resources` array to find events
-    /// that reference the given ARN. Queries `ApiActivity` only since API calls
-    /// are the primary source of resource-level audit events.
+    /// Queries the OCSF `resources` array to find events that reference the
+    /// given ARN. Works on both Athena (`any_match`) and Iceberg (Arrow list
+    /// traversal). Queries `ApiActivity` only since API calls are the primary
+    /// source of resource-level audit events.
     pub async fn enrich_by_resource(
         &self,
         arn: &str,
@@ -481,10 +482,11 @@ impl<'a, S: SecurityLakeQueries> SecurityLakeEnricher<'a, S> {
             return QueryResult::empty();
         }
 
-        let safe_arn = sanitize_string(arn);
-        let filters = [ColumnFilter::RawSql(format!(
-            "any_match(\"resources\", x -> x.\"uid\" = '{safe_arn}')"
-        ))];
+        let filters = [ColumnFilter::ListContains {
+            list_path: "resources".into(),
+            field: "uid".into(),
+            value: arn.to_string(),
+        }];
 
         match self
             .connector
@@ -515,8 +517,8 @@ impl<'a, S: SecurityLakeQueries> SecurityLakeEnricher<'a, S> {
 
     /// Get all events involving a batch of resource ARNs.
     ///
-    /// Uses Athena's `any_match()` with `IN (...)` to query multiple ARNs
-    /// in a single query. Only queries `ApiActivity`.
+    /// Queries the OCSF `resources` array to find events referencing any of the
+    /// given ARNs. Works on both Athena and Iceberg. Only queries `ApiActivity`.
     pub async fn enrich_resources_batch(
         &self,
         arns: &[String],
@@ -534,14 +536,11 @@ impl<'a, S: SecurityLakeQueries> SecurityLakeEnricher<'a, S> {
             return QueryResult::empty();
         }
 
-        let in_list = valid_arns
-            .iter()
-            .map(|a| format!("'{}'", sanitize_string(a)))
-            .collect::<Vec<_>>()
-            .join(", ");
-        let filters = [ColumnFilter::RawSql(format!(
-            "any_match(\"resources\", x -> x.\"uid\" IN ({in_list}))"
-        ))];
+        let filters = [ColumnFilter::ListContainsAny {
+            list_path: "resources".into(),
+            field: "uid".into(),
+            values: valid_arns.iter().map(|a| (*a).to_string()).collect(),
+        }];
 
         match self
             .connector

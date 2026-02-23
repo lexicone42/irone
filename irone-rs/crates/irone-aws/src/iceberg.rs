@@ -12,7 +12,9 @@
 
 use std::collections::HashMap;
 
-use arrow_array::{Array, BooleanArray, Int32Array, RecordBatch, StringArray, cast::AsArray};
+use arrow_array::{
+    Array, BooleanArray, Int32Array, ListArray, RecordBatch, StringArray, cast::AsArray,
+};
 use arrow_ord::cmp::eq;
 use arrow_schema::DataType;
 use arrow_select::filter::filter_record_batch;
@@ -58,6 +60,20 @@ enum ArrowRowFilter {
     Or(Vec<ArrowRowFilter>),
     /// Conjunction of filters.
     And(Vec<ArrowRowFilter>),
+    /// Match rows where a List<Struct> column contains an element with a field
+    /// equal to the given value (Arrow equivalent of `any_match`).
+    ListContains {
+        list_path: Vec<String>,
+        field: String,
+        value: String,
+    },
+    /// Match rows where a List<Struct> column contains an element with a field
+    /// matching any of the given values.
+    ListContainsAny {
+        list_path: Vec<String>,
+        field: String,
+        values: Vec<String>,
+    },
 }
 
 impl ArrowRowFilter {
@@ -129,6 +145,18 @@ impl ArrowRowFilter {
                 }
                 Ok(result)
             }
+
+            Self::ListContains {
+                list_path,
+                field,
+                value,
+            } => list_any_match(batch, list_path, field, |s| s == value),
+
+            Self::ListContainsAny {
+                list_path,
+                field,
+                values,
+            } => list_any_match(batch, list_path, field, |s| values.iter().any(|v| v == s)),
         }
     }
 
@@ -140,27 +168,25 @@ impl ArrowRowFilter {
     }
 }
 
-/// Traverse nested `StructArray` columns to resolve a string leaf.
+/// Traverse nested `StructArray` columns to resolve any leaf column.
 ///
 /// Given a path like `["actor", "user", "name"]`, navigates
-/// `batch→actor (StructArray)→user (StructArray)→name (StringArray)`.
-/// Handles `LargeUtf8` → `Utf8` cast for Security Lake compatibility.
-fn resolve_nested_string_column(
+/// `batch→actor (StructArray)→user (StructArray)→name (any Array)`.
+/// Returns the raw `Arc<dyn Array>` at the leaf — callers handle type casting.
+fn resolve_nested_column(
     batch: &RecordBatch,
     path: &[String],
-) -> Result<StringArray, AwsError> {
+) -> Result<std::sync::Arc<dyn Array>, AwsError> {
     if path.is_empty() {
         return Err(AwsError::QueryFailed("empty column path".into()));
     }
 
-    // Start from the batch schema
     let col_idx = batch
         .schema()
         .index_of(&path[0])
         .map_err(|_| AwsError::QueryFailed(format!("column '{}' not found in batch", path[0])))?;
     let mut current: std::sync::Arc<dyn Array> = std::sync::Arc::clone(batch.column(col_idx));
 
-    // Navigate intermediate struct levels
     for segment in &path[1..] {
         let struct_arr = current
             .as_any()
@@ -182,17 +208,27 @@ fn resolve_nested_string_column(
         current = std::sync::Arc::clone(struct_arr.column(field_idx));
     }
 
-    // Leaf must be Utf8 or LargeUtf8
-    match current.data_type() {
+    Ok(current)
+}
+
+/// Traverse nested `StructArray` columns to resolve a string leaf.
+///
+/// Delegates to [`resolve_nested_column`] then handles `Utf8`/`LargeUtf8` casting.
+fn resolve_nested_string_column(
+    batch: &RecordBatch,
+    path: &[String],
+) -> Result<StringArray, AwsError> {
+    let leaf = resolve_nested_column(batch, path)?;
+    match leaf.data_type() {
         DataType::Utf8 => {
-            let arr = current
+            let arr = leaf
                 .as_any()
                 .downcast_ref::<StringArray>()
                 .ok_or_else(|| AwsError::QueryFailed("downcast to StringArray failed".into()))?;
             Ok(arr.clone())
         }
         DataType::LargeUtf8 => {
-            let casted = arrow_cast::cast(&current, &DataType::Utf8)
+            let casted = arrow_cast::cast(&leaf, &DataType::Utf8)
                 .map_err(|e| AwsError::QueryFailed(format!("LargeUtf8→Utf8 cast failed: {e}")))?;
             let arr = casted
                 .as_any()
@@ -206,6 +242,103 @@ fn resolve_nested_string_column(
             "expected string column at end of path, got {dt:?}"
         ))),
     }
+}
+
+/// Check if any element in a `List<Struct>` column has a string field matching a predicate.
+///
+/// For each row, resolves the list column at `list_path`, iterates its elements
+/// (which must be structs), extracts the named `field` as a string, and returns
+/// `true` if `predicate(field_value)` is true for any element.
+///
+/// This is the Arrow equivalent of Athena's `any_match(list, x -> x.field = value)`.
+fn list_any_match(
+    batch: &RecordBatch,
+    list_path: &[String],
+    field: &str,
+    predicate: impl Fn(&str) -> bool,
+) -> Result<BooleanArray, AwsError> {
+    let list_col = resolve_nested_column(batch, list_path)?;
+    let list_arr = list_col
+        .as_any()
+        .downcast_ref::<ListArray>()
+        .ok_or_else(|| {
+            AwsError::QueryFailed(format!(
+                "expected ListArray at '{}', got {:?}",
+                list_path.last().unwrap_or(&String::new()),
+                list_col.data_type()
+            ))
+        })?;
+
+    // The values inside the list must be a StructArray
+    let values = list_arr.values();
+    let struct_arr = values
+        .as_any()
+        .downcast_ref::<arrow_array::StructArray>()
+        .ok_or_else(|| {
+            AwsError::QueryFailed(format!(
+                "expected List<Struct>, got List<{:?}>",
+                values.data_type()
+            ))
+        })?;
+
+    // Find the target field within the struct
+    let field_idx = struct_arr
+        .fields()
+        .iter()
+        .position(|f| f.name() == field)
+        .ok_or_else(|| {
+            AwsError::QueryFailed(format!(
+                "field '{field}' not found in list struct (fields: {:?})",
+                struct_arr
+                    .fields()
+                    .iter()
+                    .map(|f| f.name().as_str())
+                    .collect::<Vec<_>>()
+            ))
+        })?;
+    let field_col = struct_arr.column(field_idx);
+
+    // Get the string values — handle Utf8 and LargeUtf8
+    let str_values: StringArray = match field_col.data_type() {
+        DataType::Utf8 => field_col
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .ok_or_else(|| AwsError::QueryFailed("downcast to StringArray failed".into()))?
+            .clone(),
+        DataType::LargeUtf8 => {
+            let casted = arrow_cast::cast(field_col, &DataType::Utf8)
+                .map_err(|e| AwsError::QueryFailed(format!("LargeUtf8→Utf8 cast: {e}")))?;
+            casted
+                .as_any()
+                .downcast_ref::<StringArray>()
+                .ok_or_else(|| AwsError::QueryFailed("downcast after cast failed".into()))?
+                .clone()
+        }
+        dt => {
+            return Err(AwsError::QueryFailed(format!(
+                "expected string field '{field}' in list struct, got {dt:?}"
+            )));
+        }
+    };
+
+    // For each row, check if any element in its list slice matches.
+    // Offsets are non-negative i32 from Arrow's ListArray, so the cast is safe.
+    #[allow(clippy::cast_sign_loss)]
+    let bits: Vec<bool> = (0..batch.num_rows())
+        .map(|row| {
+            if list_arr.is_null(row) {
+                return false;
+            }
+            let offsets = list_arr.value_offsets();
+            let start = offsets[row] as usize;
+            let end = offsets[row + 1] as usize;
+            (start..end).any(|elem_idx| {
+                !str_values.is_null(elem_idx) && predicate(str_values.value(elem_idx))
+            })
+        })
+        .collect();
+
+    Ok(BooleanArray::from(bits))
 }
 
 /// Convert `ColumnFilter` predicates to an `ArrowRowFilter`.
@@ -267,6 +400,24 @@ fn single_column_filter_to_arrow(filter: &ColumnFilter) -> Option<ArrowRowFilter
             );
             None
         }
+        ColumnFilter::ListContains {
+            list_path,
+            field,
+            value,
+        } => Some(ArrowRowFilter::ListContains {
+            list_path: list_path.split('.').map(String::from).collect(),
+            field: field.clone(),
+            value: value.clone(),
+        }),
+        ColumnFilter::ListContainsAny {
+            list_path,
+            field,
+            values,
+        } => Some(ArrowRowFilter::ListContainsAny {
+            list_path: list_path.split('.').map(String::from).collect(),
+            field: field.clone(),
+            values: values.clone(),
+        }),
     }
 }
 
@@ -1177,5 +1328,152 @@ mod tests {
         let filters = vec![ColumnFilter::RawSql("any_match(...)".into())];
         let result = column_filters_to_arrow(&filters);
         assert!(result.is_none());
+    }
+
+    /// Helper: build a batch with a `resources` column of type List<Struct{uid, type}>.
+    fn resources_batch(rows: &[Option<Vec<(&str, &str)>>]) -> RecordBatch {
+        use arrow_array::{
+            RecordBatch,
+            builder::{ListBuilder, StringBuilder, StructBuilder},
+        };
+        use arrow_schema::{Field, Fields, Schema};
+        use std::sync::Arc;
+
+        let uid_field = Field::new("uid", DataType::Utf8, true);
+        let type_field = Field::new("type", DataType::Utf8, true);
+        let struct_fields = Fields::from(vec![uid_field.clone(), type_field.clone()]);
+
+        let mut list_builder = ListBuilder::new(StructBuilder::from_fields(
+            struct_fields.clone(),
+            rows.len(),
+        ));
+
+        for row in rows {
+            match row {
+                Some(elements) => {
+                    let struct_builder = list_builder.values();
+                    for (uid, typ) in elements {
+                        struct_builder
+                            .field_builder::<StringBuilder>(0)
+                            .unwrap()
+                            .append_value(uid);
+                        struct_builder
+                            .field_builder::<StringBuilder>(1)
+                            .unwrap()
+                            .append_value(typ);
+                        struct_builder.append(true);
+                    }
+                    list_builder.append(true);
+                }
+                None => {
+                    list_builder.append_null();
+                }
+            }
+        }
+
+        let list_arr = list_builder.finish();
+        let struct_type = DataType::Struct(struct_fields);
+        let list_type = DataType::List(Arc::new(Field::new_list_field(struct_type, true)));
+
+        let schema = Arc::new(Schema::new(vec![Field::new("resources", list_type, true)]));
+
+        RecordBatch::try_new(schema, vec![Arc::new(list_arr)]).unwrap()
+    }
+
+    #[test]
+    fn list_contains_matches_single_element() {
+        let batch = resources_batch(&[
+            Some(vec![("arn:aws:s3:::bucket1", "AWS::S3::Bucket")]),
+            Some(vec![(
+                "arn:aws:ec2:us-west-2:123:instance/i-abc",
+                "AWS::EC2::Instance",
+            )]),
+            Some(vec![
+                ("arn:aws:s3:::bucket1", "AWS::S3::Bucket"),
+                ("arn:aws:s3:::bucket2", "AWS::S3::Bucket"),
+            ]),
+        ]);
+
+        let filter = ArrowRowFilter::ListContains {
+            list_path: vec!["resources".into()],
+            field: "uid".into(),
+            value: "arn:aws:s3:::bucket1".into(),
+        };
+        let filtered = filter.apply(&batch).unwrap();
+        assert_eq!(filtered.num_rows(), 2); // rows 0 and 2
+    }
+
+    #[test]
+    fn list_contains_no_match() {
+        let batch = resources_batch(&[
+            Some(vec![("arn:aws:s3:::bucket1", "AWS::S3::Bucket")]),
+            Some(vec![("arn:aws:s3:::bucket2", "AWS::S3::Bucket")]),
+        ]);
+
+        let filter = ArrowRowFilter::ListContains {
+            list_path: vec!["resources".into()],
+            field: "uid".into(),
+            value: "arn:aws:s3:::nonexistent".into(),
+        };
+        let filtered = filter.apply(&batch).unwrap();
+        assert_eq!(filtered.num_rows(), 0);
+    }
+
+    #[test]
+    fn list_contains_handles_null_rows() {
+        let batch = resources_batch(&[
+            Some(vec![("arn:aws:s3:::bucket1", "AWS::S3::Bucket")]),
+            None, // null list
+            Some(vec![("arn:aws:s3:::bucket1", "AWS::S3::Bucket")]),
+        ]);
+
+        let filter = ArrowRowFilter::ListContains {
+            list_path: vec!["resources".into()],
+            field: "uid".into(),
+            value: "arn:aws:s3:::bucket1".into(),
+        };
+        let filtered = filter.apply(&batch).unwrap();
+        assert_eq!(filtered.num_rows(), 2);
+    }
+
+    #[test]
+    fn list_contains_any_matches_multiple_values() {
+        let batch = resources_batch(&[
+            Some(vec![("arn:aws:s3:::bucket1", "AWS::S3::Bucket")]),
+            Some(vec![("arn:aws:s3:::bucket2", "AWS::S3::Bucket")]),
+            Some(vec![("arn:aws:s3:::bucket3", "AWS::S3::Bucket")]),
+        ]);
+
+        let filter = ArrowRowFilter::ListContainsAny {
+            list_path: vec!["resources".into()],
+            field: "uid".into(),
+            values: vec!["arn:aws:s3:::bucket1".into(), "arn:aws:s3:::bucket3".into()],
+        };
+        let filtered = filter.apply(&batch).unwrap();
+        assert_eq!(filtered.num_rows(), 2);
+    }
+
+    #[test]
+    fn list_contains_empty_list_no_match() {
+        let batch = resources_batch(&[Some(vec![])]);
+
+        let filter = ArrowRowFilter::ListContains {
+            list_path: vec!["resources".into()],
+            field: "uid".into(),
+            value: "arn:aws:s3:::bucket1".into(),
+        };
+        let filtered = filter.apply(&batch).unwrap();
+        assert_eq!(filtered.num_rows(), 0);
+    }
+
+    #[test]
+    fn column_filter_list_contains_converts_to_arrow() {
+        let filters = vec![ColumnFilter::ListContains {
+            list_path: "resources".into(),
+            field: "uid".into(),
+            value: "arn:aws:s3:::bucket1".into(),
+        }];
+        let result = column_filters_to_arrow(&filters);
+        assert!(result.is_some());
     }
 }
