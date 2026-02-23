@@ -12,6 +12,7 @@ use irone_core::graph::{InvestigationTimeline, SecurityGraph};
 use irone_persistence::store::{DetectionRunRecord, InvestigationStore};
 
 use crate::config::WebConfig;
+use crate::investigation_store::DynamoInvestigationStore;
 
 /// A single in-memory investigation.
 #[derive(Debug, Clone, Serialize)]
@@ -36,11 +37,18 @@ pub struct AppState {
     pub investigations: Arc<RwLock<HashMap<String, Investigation>>>,
     pub detection_runs: Arc<RwLock<Vec<DetectionRunRecord>>>,
     pub sdk_config: Arc<aws_config::SdkConfig>,
+    /// DynamoDB-backed investigation store (active when `investigations_table` is set).
+    pub dynamo_investigation_store: Option<DynamoInvestigationStore>,
+    /// S3 client for investigation artifacts (active when pipeline is enabled).
+    pub s3_client: Option<aws_sdk_s3::Client>,
+    /// Step Functions client for starting enrichment executions.
+    pub sfn_client: Option<aws_sdk_sfn::Client>,
 }
 
 /// Build application state from config.
 ///
 /// Called once at startup and wired into the axum router.
+#[allow(clippy::too_many_lines)]
 pub async fn create_app_state(config: WebConfig) -> AppState {
     let mut catalog = DataCatalog::new();
 
@@ -132,6 +140,27 @@ pub async fn create_app_state(config: WebConfig) -> AppState {
     // AWS SDK config
     let sdk_config = aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await;
 
+    // Pipeline clients (only when investigation_state_machine_arn is set)
+    let pipeline_enabled = !config.investigation_state_machine_arn.is_empty();
+    let dynamo_investigation_store = if config.investigations_table.is_empty() {
+        None
+    } else {
+        Some(DynamoInvestigationStore::new(
+            &sdk_config,
+            config.investigations_table.clone(),
+        ))
+    };
+    let s3_client = if pipeline_enabled {
+        Some(aws_sdk_s3::Client::new(&sdk_config))
+    } else {
+        None
+    };
+    let sfn_client = if pipeline_enabled {
+        Some(aws_sdk_sfn::Client::new(&sdk_config))
+    } else {
+        None
+    };
+
     AppState {
         config: Arc::new(config),
         catalog: Arc::new(RwLock::new(catalog)),
@@ -140,6 +169,9 @@ pub async fn create_app_state(config: WebConfig) -> AppState {
         investigations: Arc::new(RwLock::new(investigations)),
         detection_runs: Arc::new(RwLock::new(detection_runs)),
         sdk_config: Arc::new(sdk_config),
+        dynamo_investigation_store,
+        s3_client,
+        sfn_client,
     }
 }
 
@@ -170,6 +202,9 @@ mod tests {
         assert!(state.investigations.read().await.is_empty());
         assert!(state.detection_runs.read().await.is_empty());
         assert!(state.catalog.read().await.is_empty());
+        assert!(state.dynamo_investigation_store.is_none());
+        assert!(state.s3_client.is_none());
+        assert!(state.sfn_client.is_none());
     }
 
     #[tokio::test]

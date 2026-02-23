@@ -51,6 +51,9 @@ fn test_state() -> AppState {
         investigations: Arc::new(RwLock::new(HashMap::new())),
         detection_runs: Arc::new(RwLock::new(Vec::new())),
         sdk_config: Arc::new(sdk_config),
+        dynamo_investigation_store: None,
+        s3_client: None,
+        sfn_client: None,
     }
 }
 

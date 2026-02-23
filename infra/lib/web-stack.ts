@@ -13,11 +13,17 @@ export interface WebStackProps extends cdk.StackProps {
   readonly cognitoDomain: string;
   /** Path to cargo-lambda output for irone-web (undefined = dummy placeholder). */
   readonly webLambdaCodePath?: string;
+  /** Step Functions state machine ARN for investigation pipeline (optional). */
+  readonly investigationStateMachineArn?: string;
+  /** DynamoDB investigations table name (optional). */
+  readonly investigationsTableName?: string;
 }
 
 export class WebStack extends cdk.Stack {
   /** The HTTP API, exposed for CloudFront origin in irone-stack. */
   public readonly httpApi: HttpApi;
+  /** Report bucket name, exposed for pipeline stack. */
+  public readonly reportBucketName: string;
 
   constructor(scope: Construct, id: string, props: WebStackProps) {
     super(scope, id, {
@@ -47,6 +53,7 @@ export class WebStack extends cdk.Stack {
     (
       reportBucket.node.defaultChild as s3.CfnBucket
     ).overrideLogicalId("ReportBucket577F0FCD");
+    this.reportBucketName = reportBucket.bucketName;
 
     // --- Lambda: web API ---
     const webLambda = new RustLambda(this, "FastAPI", {
@@ -71,6 +78,13 @@ export class WebStack extends cdk.Stack {
         SECDASH_CEDAR_POLICY_DIR: "cedar",
         SECDASH_RULES_DIR: "rules",
         RUST_LOG: "info",
+        // Investigation pipeline (Step Functions) — empty = disabled (legacy in-memory mode)
+        ...(props.investigationStateMachineArn
+          ? { SECDASH_INVESTIGATION_STATE_MACHINE_ARN: props.investigationStateMachineArn }
+          : {}),
+        ...(props.investigationsTableName
+          ? { SECDASH_INVESTIGATIONS_TABLE: props.investigationsTableName }
+          : {}),
         // NOTE: SECDASH_COGNITO_CLIENT_SECRET and SECDASH_SESSION_SECRET_KEY
         // are currently set as plaintext env vars on the deployed Lambda.
         // TODO: Migrate to Secrets Manager and reference via secretsmanager: dynamic ref.
@@ -159,6 +173,36 @@ export class WebStack extends cdk.Stack {
         resources: ["*"],
       })
     );
+
+    // Step Functions: start investigation pipeline executions
+    if (props.investigationStateMachineArn) {
+      webLambda.function.addToRolePolicy(
+        new iam.PolicyStatement({
+          actions: ["states:StartExecution"],
+          resources: [props.investigationStateMachineArn],
+        })
+      );
+    }
+
+    // DynamoDB: investigations table
+    if (props.investigationsTableName) {
+      webLambda.function.addToRolePolicy(
+        new iam.PolicyStatement({
+          actions: [
+            "dynamodb:GetItem",
+            "dynamodb:PutItem",
+            "dynamodb:UpdateItem",
+            "dynamodb:DeleteItem",
+            "dynamodb:Query",
+            "dynamodb:Scan",
+          ],
+          resources: [
+            `arn:aws:dynamodb:${this.region}:${this.account}:table/${props.investigationsTableName}`,
+            `arn:aws:dynamodb:${this.region}:${this.account}:table/${props.investigationsTableName}/index/*`,
+          ],
+        })
+      );
+    }
 
     // --- API Gateway v2 (HTTP API) ---
     const integration = new HttpLambdaIntegration(

@@ -54,6 +54,10 @@ pub struct AppConfig {
     // Service token for headless API access (bypasses session auth)
     pub service_token: String,
 
+    // Investigation pipeline (Step Functions)
+    pub investigation_state_machine_arn: String,
+    pub investigations_table: String,
+
     // Frontend
     pub frontend_url: String,
 }
@@ -97,6 +101,9 @@ impl Default for AppConfig {
             cedar_enabled: true,
 
             service_token: String::new(),
+
+            investigation_state_machine_arn: String::new(),
+            investigations_table: String::new(),
 
             frontend_url: String::new(),
         }

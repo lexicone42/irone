@@ -14,6 +14,7 @@ use irone_core::graph::{
 use irone_core::reports::graph_to_report_data;
 
 use crate::error::WebError;
+use crate::investigation_store::InvestigationMetadata;
 use crate::state::{AppState, Investigation};
 
 /// Build the investigations sub-router.
@@ -124,7 +125,29 @@ pub struct CytoscapeElement {
 // -- Handlers --
 
 /// `GET /api/investigations` — list all investigations.
-async fn list_investigations(State(state): State<AppState>) -> Json<Vec<InvestigationSummary>> {
+async fn list_investigations(
+    State(state): State<AppState>,
+) -> Result<Json<Vec<InvestigationSummary>>, WebError> {
+    // DynamoDB path
+    if let Some(ref ddb_store) = state.dynamo_investigation_store {
+        let metas = ddb_store.list_investigations().await.map_err(|e| {
+            WebError::Internal(format!("failed to list investigations from DynamoDB: {e}"))
+        })?;
+        let summaries = metas
+            .into_iter()
+            .map(|m| InvestigationSummary {
+                id: m.id,
+                name: m.name,
+                created_at: m.created_at,
+                status: m.status,
+                node_count: m.node_count,
+                edge_count: m.edge_count,
+            })
+            .collect();
+        return Ok(Json(summaries));
+    }
+
+    // In-memory fallback
     let invs = state.investigations.read().await;
     let mut summaries: Vec<InvestigationSummary> = invs
         .values()
@@ -138,7 +161,7 @@ async fn list_investigations(State(state): State<AppState>) -> Json<Vec<Investig
         })
         .collect();
     summaries.sort_by(|a, b| b.created_at.cmp(&a.created_at));
-    Json(summaries)
+    Ok(Json(summaries))
 }
 
 /// `POST /api/investigations` — create from identifiers.
@@ -213,6 +236,7 @@ async fn create_investigation(
 }
 
 /// `POST /api/investigations/from-detection` — full detection→graph→timeline pipeline.
+#[allow(clippy::too_many_lines)]
 async fn create_from_detection(
     State(state): State<AppState>,
     Json(body): Json<CreateFromDetectionRequest>,
@@ -223,6 +247,7 @@ async fn create_from_detection(
         .get_rule(&body.rule_id)
         .ok_or_else(|| WebError::NotFound(format!("rule '{}' not found", body.rule_id)))?;
     let rule_data_sources = rule.metadata().data_sources.clone();
+    let rule_name = rule.metadata().name.clone();
 
     // 2. Resolve source: explicit name, rule's preferred data_source, or first SL source
     let catalog = state.catalog.read().await;
@@ -247,9 +272,10 @@ async fn create_from_detection(
     };
     drop(catalog);
 
-    // 3. Run detection
+    // 3. Run detection synchronously (fast with filter pushdown, ~2-5s)
+    let use_direct = state.config.use_direct_query;
     let connector =
-        irone_aws::create_connector(source, &state.sdk_config, state.config.use_direct_query).await;
+        irone_aws::create_connector(source.clone(), &state.sdk_config, use_direct).await;
     let result = state
         .runner
         .run_rule(
@@ -261,70 +287,211 @@ async fn create_from_detection(
         )
         .await;
 
-    // Gate: detection error
-    if let Some(ref err) = result.error {
-        return Err(WebError::Internal(format!("detection error: {err}")));
+    if result.error.is_some() {
+        return Err(WebError::Internal(format!(
+            "detection failed: {}",
+            result.error.as_deref().unwrap_or("unknown")
+        )));
     }
 
-    // Gate: not triggered
-    if !result.triggered {
-        return Ok(Json(CreateFromDetectionResponse {
-            investigation_id: String::new(),
-            name: String::new(),
-            triggered: false,
-            match_count: 0,
-            node_count: 0,
-            edge_count: 0,
-        }));
-    }
-
-    // 3. Build graph with enrichment — Arrow-level string filters ensure
-    //    only matching rows survive, keeping within the API Gateway 29s limit.
+    // 4. Build minimal graph from detection matches (no enrichment yet)
     let mut builder = GraphBuilder::new();
-    Box::pin(builder.build_from_detection::<irone_aws::ConnectorKind>(
-        &result,
-        Some(&connector),
-        body.enrichment_window_minutes,
-        200,
-        true,
-    ))
-    .await;
+    Box::pin(builder.build_from_detection::<irone_aws::ConnectorKind>(&result, None, 0, 0, true))
+        .await;
     let graph = builder.into_graph();
+    let node_count = graph.nodes.len();
+    let edge_count = graph.edges.len();
 
-    // 4. Extract timeline
-    let timeline = extract_timeline_from_graph(&graph, true, true);
-
-    // 5. Create investigation
+    // 5. Create investigation with detection results
     let inv_id = uuid::Uuid::new_v4().to_string();
-    let rule_name = result.rule_name.clone();
     let name = body
         .name
         .unwrap_or_else(|| format!("{} - {}", rule_name, Utc::now().format("%Y-%m-%d")));
 
-    let node_count = graph.node_count();
-    let edge_count = graph.edge_count();
+    let triggered = result.triggered;
     let match_count = result.match_count;
 
-    let inv = Investigation {
-        id: inv_id.clone(),
-        name: name.clone(),
-        graph,
-        timeline,
-        created_at: Utc::now(),
-        status: "active".into(),
-    };
+    let status = if triggered { "enriching" } else { "active" };
 
-    persist_investigation(&state, &inv).await;
-    state
-        .investigations
-        .write()
-        .await
-        .insert(inv_id.clone(), inv);
+    let pipeline_enabled = !state.config.investigation_state_machine_arn.is_empty();
+
+    if pipeline_enabled {
+        // --- Step Functions pipeline path ---
+        let s3_client = state.s3_client.as_ref().ok_or_else(|| {
+            WebError::Internal("pipeline enabled but S3 client not initialized".into())
+        })?;
+        let bucket = &state.config.report_bucket;
+        let now = Utc::now();
+
+        // Write DetectionResult to S3
+        let detection_json = serde_json::to_vec(&result).map_err(|e| {
+            WebError::Internal(format!("failed to serialize detection result: {e}"))
+        })?;
+        s3_client
+            .put_object()
+            .bucket(bucket)
+            .key(format!("investigations/{inv_id}/detection_result.json"))
+            .body(detection_json.into())
+            .content_type("application/json")
+            .send()
+            .await
+            .map_err(|e| {
+                WebError::Internal(format!("failed to write detection result to S3: {e}"))
+            })?;
+
+        // Write minimal graph to S3 for immediate display
+        let graph_json = serde_json::to_vec(&graph)
+            .map_err(|e| WebError::Internal(format!("failed to serialize graph: {e}")))?;
+        s3_client
+            .put_object()
+            .bucket(bucket)
+            .key(format!("investigations/{inv_id}/graph.json"))
+            .body(graph_json.into())
+            .content_type("application/json")
+            .send()
+            .await
+            .map_err(|e| WebError::Internal(format!("failed to write graph to S3: {e}")))?;
+
+        // Create DynamoDB record
+        if let Some(ref ddb_store) = state.dynamo_investigation_store {
+            let source_name = body
+                .source_name
+                .as_deref()
+                .unwrap_or(&source.name)
+                .to_string();
+            let meta = InvestigationMetadata {
+                id: inv_id.clone(),
+                name: name.clone(),
+                status: status.into(),
+                rule_id: body.rule_id.clone(),
+                source_name: source_name.clone(),
+                triggered,
+                match_count,
+                node_count,
+                edge_count,
+                created_at: now.to_rfc3339(),
+                updated_at: now.to_rfc3339(),
+                sfn_execution_arn: None,
+                error: None,
+            };
+            ddb_store.create_investigation(&meta).await.map_err(|e| {
+                WebError::Internal(format!("failed to create DynamoDB record: {e}"))
+            })?;
+
+            // Start Step Function execution if detection triggered
+            if triggered && let Some(ref sfn_client) = state.sfn_client {
+                let sfn_input = serde_json::json!({
+                    "action": "enrich",
+                    "investigation_id": inv_id,
+                    "rule_id": body.rule_id,
+                    "source_name": source_name,
+                    "enrichment_window_minutes": body.enrichment_window_minutes,
+                    "bucket": bucket,
+                });
+
+                let exec = sfn_client
+                    .start_execution()
+                    .state_machine_arn(&state.config.investigation_state_machine_arn)
+                    .name(format!("inv-{inv_id}"))
+                    .input(sfn_input.to_string())
+                    .send()
+                    .await
+                    .map_err(|e| {
+                        WebError::Internal(format!("failed to start Step Function: {e}"))
+                    })?;
+
+                tracing::info!(
+                    inv_id = %inv_id,
+                    execution_arn = %exec.execution_arn(),
+                    "started Step Function enrichment"
+                );
+            }
+        }
+
+        // Also store in-memory for immediate reads (cache)
+        let inv = Investigation {
+            id: inv_id.clone(),
+            name: name.clone(),
+            graph,
+            timeline: InvestigationTimeline::default(),
+            created_at: now,
+            status: status.into(),
+        };
+        state
+            .investigations
+            .write()
+            .await
+            .insert(inv_id.clone(), inv);
+    } else {
+        // --- Legacy in-memory path (local dev) ---
+        let inv = Investigation {
+            id: inv_id.clone(),
+            name: name.clone(),
+            graph,
+            timeline: InvestigationTimeline::default(),
+            created_at: Utc::now(),
+            status: status.into(),
+        };
+        state
+            .investigations
+            .write()
+            .await
+            .insert(inv_id.clone(), inv);
+
+        if triggered {
+            let bg_state = state.clone();
+            let bg_inv_id = inv_id.clone();
+            let enrichment_window = body.enrichment_window_minutes;
+
+            tokio::spawn(async move {
+                let bg_connector =
+                    irone_aws::create_connector(source, &bg_state.sdk_config, use_direct).await;
+
+                let mut builder = GraphBuilder::new();
+                Box::pin(builder.build_from_detection::<irone_aws::ConnectorKind>(
+                    &result,
+                    Some(&bg_connector),
+                    enrichment_window,
+                    1000,
+                    true,
+                ))
+                .await;
+                let graph = builder.into_graph();
+                let timeline = extract_timeline_from_graph(&graph, true, true);
+
+                let inv_snapshot = {
+                    let mut invs = bg_state.investigations.write().await;
+                    if let Some(inv) = invs.get_mut(&bg_inv_id) {
+                        inv.graph = graph;
+                        inv.timeline = timeline;
+                        inv.status = "active".into();
+                        Some(inv.clone())
+                    } else {
+                        None
+                    }
+                };
+
+                if let Some(ref inv) = inv_snapshot {
+                    persist_investigation(&bg_state, inv).await;
+                }
+
+                tracing::info!(
+                    inv_id = %bg_inv_id,
+                    "background enrichment complete"
+                );
+            });
+        } else {
+            let invs = state.investigations.read().await;
+            if let Some(inv) = invs.get(&inv_id) {
+                persist_investigation(&state, inv).await;
+            }
+        }
+    }
 
     Ok(Json(CreateFromDetectionResponse {
         investigation_id: inv_id,
         name,
-        triggered: true,
+        triggered,
         match_count,
         node_count,
         edge_count,
@@ -336,6 +503,40 @@ async fn get_investigation(
     State(state): State<AppState>,
     Path(inv_id): Path<String>,
 ) -> Result<Json<serde_json::Value>, WebError> {
+    // DynamoDB path: return metadata + graph summary from S3 if available
+    if let Some(ref ddb_store) = state.dynamo_investigation_store {
+        let meta = ddb_store
+            .get_investigation(&inv_id)
+            .await
+            .map_err(|e| WebError::Internal(format!("DynamoDB read failed: {e}")))?
+            .ok_or_else(|| WebError::NotFound(format!("investigation '{inv_id}' not found")))?;
+
+        // Try to load graph summary from S3 for enriched investigations
+        let graph_summary = if meta.status == "active" {
+            load_graph_from_s3(&state, &inv_id)
+                .await
+                .map(|g| g.summary())
+                .ok()
+        } else {
+            None
+        };
+
+        return Ok(Json(serde_json::json!({
+            "id": meta.id,
+            "name": meta.name,
+            "created_at": meta.created_at,
+            "status": meta.status,
+            "graph_summary": graph_summary,
+            "node_count": meta.node_count,
+            "edge_count": meta.edge_count,
+            "rule_id": meta.rule_id,
+            "triggered": meta.triggered,
+            "match_count": meta.match_count,
+            "error": meta.error,
+        })));
+    }
+
+    // In-memory fallback
     let invs = state.investigations.read().await;
     let inv = invs
         .get(&inv_id)
@@ -360,6 +561,15 @@ async fn get_graph(
     State(state): State<AppState>,
     Path(inv_id): Path<String>,
 ) -> Result<Json<CytoscapeElements>, WebError> {
+    // S3 path: load graph from S3
+    if state.s3_client.is_some() {
+        let graph = load_graph_from_s3(&state, &inv_id).await.map_err(|e| {
+            WebError::NotFound(format!("graph not found for investigation '{inv_id}': {e}"))
+        })?;
+        return Ok(Json(graph_to_cytoscape(&graph)));
+    }
+
+    // In-memory fallback
     let invs = state.investigations.read().await;
     let inv = invs
         .get(&inv_id)
@@ -454,6 +664,20 @@ async fn get_report(
     State(state): State<AppState>,
     Path(inv_id): Path<String>,
 ) -> Result<Json<serde_json::Value>, WebError> {
+    // S3 path: load graph + timeline from S3
+    if state.s3_client.is_some() {
+        let graph = load_graph_from_s3(&state, &inv_id).await.map_err(|e| {
+            WebError::NotFound(format!("graph not found for investigation '{inv_id}': {e}"))
+        })?;
+        let timeline = load_timeline_from_s3(&state, &inv_id)
+            .await
+            .unwrap_or_else(|_| InvestigationTimeline::new(&inv_id));
+        let (start, end) = timeline.time_range();
+        let report = graph_to_report_data(&graph, &inv_id, "", "", start, end, Some(&timeline));
+        return Ok(Json(serde_json::to_value(report).unwrap_or_default()));
+    }
+
+    // In-memory fallback
     let invs = state.investigations.read().await;
     let inv = invs
         .get(&inv_id)
@@ -478,6 +702,17 @@ async fn get_timeline(
     State(state): State<AppState>,
     Path(inv_id): Path<String>,
 ) -> Result<Json<InvestigationTimeline>, WebError> {
+    // S3 path
+    if state.s3_client.is_some() {
+        let timeline = load_timeline_from_s3(&state, &inv_id).await.map_err(|e| {
+            WebError::NotFound(format!(
+                "timeline not found for investigation '{inv_id}': {e}"
+            ))
+        })?;
+        return Ok(Json(timeline));
+    }
+
+    // In-memory fallback
     let invs = state.investigations.read().await;
     let inv = invs
         .get(&inv_id)
@@ -487,11 +722,51 @@ async fn get_timeline(
 }
 
 /// `POST /api/investigations/{inv_id}/enrich` — re-enrich an investigation.
+#[allow(clippy::too_many_lines)]
 async fn enrich_investigation(
     State(state): State<AppState>,
     Path(inv_id): Path<String>,
 ) -> Result<Json<serde_json::Value>, WebError> {
-    // Get existing investigation
+    // Pipeline path: start a new Step Function execution
+    if let Some(ref sfn_client) = state.sfn_client
+        && let Some(ref ddb_store) = state.dynamo_investigation_store
+    {
+        let meta = ddb_store
+            .get_investigation(&inv_id)
+            .await
+            .map_err(|e| WebError::Internal(format!("DynamoDB read failed: {e}")))?
+            .ok_or_else(|| WebError::NotFound(format!("investigation '{inv_id}' not found")))?;
+
+        // Mark as enriching
+        let _ = ddb_store
+            .update_status(&inv_id, "enriching", None, None, None)
+            .await;
+
+        let sfn_input = serde_json::json!({
+            "action": "enrich",
+            "investigation_id": inv_id,
+            "rule_id": meta.rule_id,
+            "source_name": meta.source_name,
+            "enrichment_window_minutes": 120,
+            "bucket": state.config.report_bucket,
+        });
+
+        sfn_client
+            .start_execution()
+            .state_machine_arn(&state.config.investigation_state_machine_arn)
+            .name(format!("enrich-{inv_id}-{}", Utc::now().timestamp()))
+            .input(sfn_input.to_string())
+            .send()
+            .await
+            .map_err(|e| WebError::Internal(format!("failed to start Step Function: {e}")))?;
+
+        return Ok(Json(serde_json::json!({
+            "enriching": true,
+            "investigation_id": inv_id,
+        })));
+    }
+
+    // In-memory fallback path
     let inv = {
         let invs = state.investigations.read().await;
         invs.get(&inv_id)
@@ -499,7 +774,6 @@ async fn enrich_investigation(
             .ok_or_else(|| WebError::NotFound(format!("investigation '{inv_id}' not found")))?
     };
 
-    // Find a Security Lake source for enrichment
     let catalog = state.catalog.read().await;
     let sl_sources = catalog.filter_by_tag("security-lake");
     let source = sl_sources
@@ -509,11 +783,9 @@ async fn enrich_investigation(
         .ok_or_else(|| WebError::BadRequest("no Security Lake source configured".into()))?;
     drop(catalog);
 
-    // Build connector and re-enrich
     let connector =
         irone_aws::create_connector(source, &state.sdk_config, state.config.use_direct_query).await;
 
-    // Extract identifiers from existing graph
     let principals: Vec<String> = inv
         .graph
         .get_nodes_by_type(&NodeType::Principal)
@@ -538,7 +810,6 @@ async fn enrich_investigation(
     let node_count = graph.node_count();
     let edge_count = graph.edge_count();
 
-    // Update in-memory
     let mut invs = state.investigations.write().await;
     if let Some(existing) = invs.get_mut(&inv_id) {
         existing.graph = graph;
@@ -546,7 +817,6 @@ async fn enrich_investigation(
     }
     drop(invs);
 
-    // Persist only the updated graph and timeline (avoid cloning entire Investigation)
     if let Some(ref store) = state.investigation_store {
         let invs = state.investigations.read().await;
         if let Some(inv) = invs.get(&inv_id) {
@@ -617,6 +887,19 @@ async fn delete_investigation(
     State(state): State<AppState>,
     Path(inv_id): Path<String>,
 ) -> Result<Json<serde_json::Value>, WebError> {
+    // DynamoDB path
+    if let Some(ref ddb_store) = state.dynamo_investigation_store {
+        ddb_store
+            .delete_investigation(&inv_id)
+            .await
+            .map_err(|e| WebError::Internal(format!("DynamoDB delete failed: {e}")))?;
+        // Also remove from in-memory cache
+        state.investigations.write().await.remove(&inv_id);
+        // Note: S3 artifacts are left for TTL/lifecycle cleanup
+        return Ok(Json(serde_json::json!({ "deleted": inv_id })));
+    }
+
+    // In-memory fallback
     let removed = state.investigations.write().await.remove(&inv_id);
     if removed.is_none() {
         return Err(WebError::NotFound(format!(
@@ -624,7 +907,6 @@ async fn delete_investigation(
         )));
     }
 
-    // Cascade delete from persistence
     if let Some(ref store) = state.investigation_store {
         let store = Arc::clone(store);
         let id = inv_id.clone();
@@ -1192,6 +1474,141 @@ fn make_seed_edge(
         last_seen: Some(time),
         event_count: 1,
     }
+}
+
+/// Load a `SecurityGraph` from S3 for the given investigation.
+async fn load_graph_from_s3(state: &AppState, inv_id: &str) -> Result<SecurityGraph, String> {
+    let s3_client = state
+        .s3_client
+        .as_ref()
+        .ok_or_else(|| "S3 client not initialized".to_string())?;
+    let bucket = &state.config.report_bucket;
+    let key = format!("investigations/{inv_id}/graph.json");
+
+    let bytes = s3_client
+        .get_object()
+        .bucket(bucket)
+        .key(&key)
+        .send()
+        .await
+        .map_err(|e| format!("S3 GetObject failed: {e}"))?
+        .body
+        .collect()
+        .await
+        .map_err(|e| format!("S3 body read failed: {e}"))?
+        .into_bytes();
+
+    serde_json::from_slice(&bytes).map_err(|e| format!("graph deserialization failed: {e}"))
+}
+
+/// Load an `InvestigationTimeline` from S3 for the given investigation.
+async fn load_timeline_from_s3(
+    state: &AppState,
+    inv_id: &str,
+) -> Result<InvestigationTimeline, String> {
+    let s3_client = state
+        .s3_client
+        .as_ref()
+        .ok_or_else(|| "S3 client not initialized".to_string())?;
+    let bucket = &state.config.report_bucket;
+    let key = format!("investigations/{inv_id}/timeline.json");
+
+    let bytes = s3_client
+        .get_object()
+        .bucket(bucket)
+        .key(&key)
+        .send()
+        .await
+        .map_err(|e| format!("S3 GetObject failed: {e}"))?
+        .body
+        .collect()
+        .await
+        .map_err(|e| format!("S3 body read failed: {e}"))?
+        .into_bytes();
+
+    serde_json::from_slice(&bytes).map_err(|e| format!("timeline deserialization failed: {e}"))
+}
+
+/// Convert a `SecurityGraph` to Cytoscape.js elements format.
+fn graph_to_cytoscape(graph: &SecurityGraph) -> CytoscapeElements {
+    let mut elements = Vec::new();
+
+    for node in graph.nodes.values() {
+        let mut data = serde_json::Map::new();
+        data.insert("id".into(), serde_json::Value::String(node.id.clone()));
+        data.insert(
+            "label".into(),
+            serde_json::Value::String(node.label.clone()),
+        );
+        data.insert(
+            "node_type".into(),
+            serde_json::Value::String(node.node_type.to_string()),
+        );
+        if let Some(t) = node.first_seen {
+            data.insert(
+                "first_seen".into(),
+                serde_json::Value::String(t.to_rfc3339()),
+            );
+        }
+        if let Some(t) = node.last_seen {
+            data.insert(
+                "last_seen".into(),
+                serde_json::Value::String(t.to_rfc3339()),
+            );
+        }
+        data.insert(
+            "event_count".into(),
+            serde_json::Value::Number(node.event_count.into()),
+        );
+        elements.push(CytoscapeElement {
+            group: "nodes",
+            data,
+        });
+    }
+
+    for edge in &graph.edges {
+        let mut data = serde_json::Map::new();
+        data.insert("id".into(), serde_json::Value::String(edge.id.clone()));
+        data.insert(
+            "source".into(),
+            serde_json::Value::String(edge.source_id.clone()),
+        );
+        data.insert(
+            "target".into(),
+            serde_json::Value::String(edge.target_id.clone()),
+        );
+        data.insert(
+            "edge_type".into(),
+            serde_json::Value::String(edge.edge_type.to_string()),
+        );
+        data.insert("weight".into(), serde_json::json!(edge.weight));
+        data.insert(
+            "event_count".into(),
+            serde_json::Value::Number(edge.event_count.into()),
+        );
+        if !edge.properties.is_empty() {
+            data.insert("properties".into(), serde_json::json!(edge.properties));
+        }
+        if let Some(t) = edge.first_seen {
+            data.insert(
+                "first_seen".into(),
+                serde_json::Value::String(t.to_rfc3339()),
+            );
+        }
+        if let Some(t) = edge.last_seen {
+            data.insert(
+                "last_seen".into(),
+                serde_json::Value::String(t.to_rfc3339()),
+            );
+        }
+        elements.push(CytoscapeElement {
+            group: "edges",
+            data,
+        });
+    }
+
+    let summary = serde_json::to_value(graph.summary()).unwrap_or_default();
+    CytoscapeElements { elements, summary }
 }
 
 async fn persist_investigation(state: &AppState, inv: &Investigation) {

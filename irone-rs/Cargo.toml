@@ -7,6 +7,7 @@ members = [
     "crates/irone-persistence",
     "crates/irone-web",
     "crates/irone-health-checker",
+    "crates/irone-worker",
 ]
 
 [workspace.package]
@@ -53,6 +54,7 @@ aws-config = { version = "1", features = ["behavior-version-latest"] }
 aws-sdk-athena = "1"
 aws-sdk-s3 = "1"
 aws-sdk-dynamodb = "1"
+aws-sdk-sfn = "1"
 aws-sdk-sns = "1"
 
 # Auth (l42-cognito-passkey token handler)
