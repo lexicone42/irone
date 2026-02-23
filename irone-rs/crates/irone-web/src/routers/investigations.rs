@@ -8,8 +8,8 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use irone_core::graph::{
-    EdgeType, EventTag, GraphBuilder, GraphEdge, GraphNode, InvestigationTimeline, NodeType,
-    SecurityGraph, extract_timeline_from_graph,
+    AttackNarrative, EdgeType, EventTag, GraphBuilder, GraphEdge, GraphNode, InvestigationTimeline,
+    NodeType, SecurityGraph, extract_attack_paths, extract_timeline_from_graph,
 };
 use irone_core::reports::graph_to_report_data;
 
@@ -35,6 +35,11 @@ pub fn router() -> Router<AppState> {
         .route("/investigations/{inv_id}/graph", get(get_graph))
         .route("/investigations/{inv_id}/report", get(get_report))
         .route("/investigations/{inv_id}/timeline", get(get_timeline))
+        .route(
+            "/investigations/{inv_id}/attack-paths",
+            get(get_attack_paths),
+        )
+        .route("/investigations/{inv_id}/anomalies", get(get_anomalies))
         .route(
             "/investigations/{inv_id}/enrich",
             post(enrich_investigation),
@@ -719,6 +724,65 @@ async fn get_timeline(
         .ok_or_else(|| WebError::NotFound(format!("investigation '{inv_id}' not found")))?;
 
     Ok(Json(inv.timeline.clone()))
+}
+
+/// `GET /api/investigations/{inv_id}/attack-paths` — extracted kill chain narratives.
+async fn get_attack_paths(
+    State(state): State<AppState>,
+    Path(inv_id): Path<String>,
+) -> Result<Json<Vec<AttackNarrative>>, WebError> {
+    // S3 path: try pre-computed attack_paths.json first, fall back to on-demand
+    if state.s3_client.is_some() {
+        if let Ok(paths) = load_attack_paths_from_s3(&state, &inv_id).await {
+            return Ok(Json(paths));
+        }
+        // Fall back to computing from graph
+        let graph = load_graph_from_s3(&state, &inv_id).await.map_err(|e| {
+            WebError::NotFound(format!("graph not found for investigation '{inv_id}': {e}"))
+        })?;
+        return Ok(Json(extract_attack_paths(&graph)));
+    }
+
+    // In-memory fallback
+    let invs = state.investigations.read().await;
+    let inv = invs
+        .get(&inv_id)
+        .ok_or_else(|| WebError::NotFound(format!("investigation '{inv_id}' not found")))?;
+
+    Ok(Json(extract_attack_paths(&inv.graph)))
+}
+
+/// `GET /api/investigations/{inv_id}/anomalies` — entity anomaly scores from enrichment.
+async fn get_anomalies(
+    State(state): State<AppState>,
+    Path(inv_id): Path<String>,
+) -> Result<Json<serde_json::Value>, WebError> {
+    // S3 path: load graph and extract anomaly scores from metadata
+    if state.s3_client.is_some() {
+        let graph = load_graph_from_s3(&state, &inv_id).await.map_err(|e| {
+            WebError::NotFound(format!("graph not found for investigation '{inv_id}': {e}"))
+        })?;
+        let scores = graph
+            .metadata
+            .get("anomaly_scores")
+            .cloned()
+            .unwrap_or(serde_json::Value::Array(vec![]));
+        return Ok(Json(scores));
+    }
+
+    // In-memory fallback
+    let invs = state.investigations.read().await;
+    let inv = invs
+        .get(&inv_id)
+        .ok_or_else(|| WebError::NotFound(format!("investigation '{inv_id}' not found")))?;
+
+    let scores = inv
+        .graph
+        .metadata
+        .get("anomaly_scores")
+        .cloned()
+        .unwrap_or(serde_json::Value::Array(vec![]));
+    Ok(Json(scores))
 }
 
 /// `POST /api/investigations/{inv_id}/enrich` — re-enrich an investigation.
@@ -1527,6 +1591,34 @@ async fn load_timeline_from_s3(
         .into_bytes();
 
     serde_json::from_slice(&bytes).map_err(|e| format!("timeline deserialization failed: {e}"))
+}
+
+/// Load pre-computed attack paths from S3 for the given investigation.
+async fn load_attack_paths_from_s3(
+    state: &AppState,
+    inv_id: &str,
+) -> Result<Vec<AttackNarrative>, String> {
+    let s3_client = state
+        .s3_client
+        .as_ref()
+        .ok_or_else(|| "S3 client not initialized".to_string())?;
+    let bucket = &state.config.report_bucket;
+    let key = format!("investigations/{inv_id}/attack_paths.json");
+
+    let bytes = s3_client
+        .get_object()
+        .bucket(bucket)
+        .key(&key)
+        .send()
+        .await
+        .map_err(|e| format!("S3 GetObject failed: {e}"))?
+        .body
+        .collect()
+        .await
+        .map_err(|e| format!("S3 body read failed: {e}"))?
+        .into_bytes();
+
+    serde_json::from_slice(&bytes).map_err(|e| format!("attack_paths deserialization failed: {e}"))
 }
 
 /// Convert a `SecurityGraph` to Cytoscape.js elements format.

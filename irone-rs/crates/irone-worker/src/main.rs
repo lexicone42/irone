@@ -1,6 +1,6 @@
 use chrono::Duration;
 use irone_core::catalog::DataCatalog;
-use irone_core::graph::{GraphBuilder, extract_timeline_from_graph};
+use irone_core::graph::{GraphBuilder, extract_attack_paths, extract_timeline_from_graph};
 use lambda_runtime::{Error, LambdaEvent, service_fn};
 use serde::{Deserialize, Serialize};
 
@@ -22,6 +22,7 @@ struct WorkerResult {
     investigation_id: String,
     node_count: usize,
     edge_count: usize,
+    attack_path_count: usize,
 }
 
 #[allow(clippy::too_many_lines)]
@@ -177,6 +178,29 @@ async fn handler(event: LambdaEvent<WorkerEvent>) -> Result<WorkerResult, Error>
         .send()
         .await?;
 
+    // 5. Compute attack paths and write to S3 if non-empty
+    let attack_paths = extract_attack_paths(&graph);
+    let attack_path_count = attack_paths.len();
+
+    if !attack_paths.is_empty() {
+        let attack_paths_json = serde_json::to_vec(&attack_paths)?;
+        let attack_paths_key = format!(
+            "investigations/{}/attack_paths.json",
+            payload.investigation_id
+        );
+
+        s3_client
+            .put_object()
+            .bucket(&payload.bucket)
+            .key(&attack_paths_key)
+            .body(attack_paths_json.into())
+            .content_type("application/json")
+            .send()
+            .await?;
+
+        tracing::info!(attack_path_count, "wrote attack_paths.json to S3");
+    }
+
     tracing::info!(
         investigation_id = %payload.investigation_id,
         "wrote graph.json and timeline.json to S3"
@@ -186,6 +210,7 @@ async fn handler(event: LambdaEvent<WorkerEvent>) -> Result<WorkerResult, Error>
         investigation_id: payload.investigation_id,
         node_count,
         edge_count,
+        attack_path_count,
     })
 }
 

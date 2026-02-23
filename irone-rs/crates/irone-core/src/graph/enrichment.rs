@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 use tracing::{debug, info, warn};
 
 use crate::connectors::ocsf::{
@@ -14,7 +15,7 @@ use crate::connectors::sql_utils::validate_ipv4;
 /// Measures how far an entity's event count deviates from the mean across all
 /// entities of the same kind. A score > 1.0 means the entity has more than
 /// 1 standard deviation above average activity.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EntityAnomalyScore {
     /// Entity identifier (user name, IP address, service name, etc.).
     pub entity: String,

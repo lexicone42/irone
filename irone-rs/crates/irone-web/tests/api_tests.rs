@@ -521,3 +521,33 @@ async fn from_detection_source_not_found() {
     assert_eq!(status, StatusCode::NOT_FOUND);
     assert!(body["error"].as_str().unwrap().contains("not found"));
 }
+
+// ===== Attack Paths =====
+
+#[tokio::test]
+async fn get_attack_paths_empty() {
+    // Graph with no SecurityFinding nodes → empty attack paths
+    let app = build_router(test_state_with_investigation(), None);
+    let (status, body) = get(app, "/api/investigations/inv-1/attack-paths").await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(body.as_array().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn get_attack_paths_not_found() {
+    let app = build_router(test_state(), None);
+    let (status, body) = get(app, "/api/investigations/nope/attack-paths").await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert!(body["error"].as_str().unwrap().contains("not found"));
+}
+
+// ===== Anomalies =====
+
+#[tokio::test]
+async fn get_anomalies_empty() {
+    // Graph without enrichment → empty anomaly scores
+    let app = build_router(test_state_with_investigation(), None);
+    let (status, body) = get(app, "/api/investigations/inv-1/anomalies").await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(body.as_array().unwrap().is_empty());
+}
