@@ -73,7 +73,7 @@ function dashboardApp() {
                     apiFetch("/investigations").catch(() => []),
                 ]);
                 this.data = dashboard;
-                this.recentInvestigations = (investigations || []).slice(0, 5);
+                this.recentInvestigations = (Array.isArray(investigations) ? investigations : []).slice(0, 5);
             } catch (e) {
                 this.error = e.message;
             } finally {
@@ -477,7 +477,8 @@ function investigationsApp() {
         async loadList() {
             this.loading = true;
             try {
-                this.investigations = await apiFetch("/investigations");
+                const resp = await apiFetch("/investigations");
+                this.investigations = Array.isArray(resp) ? resp : [];
             } catch (e) {
                 this.error = e.message;
             } finally {

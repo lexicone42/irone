@@ -2,6 +2,7 @@ import * as cdk from "aws-cdk-lib";
 import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
 import * as iam from "aws-cdk-lib/aws-iam";
 import * as s3 from "aws-cdk-lib/aws-s3";
+import * as secretsmanager from "aws-cdk-lib/aws-secretsmanager";
 import { HttpApi } from "@aws-cdk/aws-apigatewayv2-alpha";
 import { HttpLambdaIntegration } from "@aws-cdk/aws-apigatewayv2-integrations-alpha";
 import { Construct } from "constructs";
@@ -10,6 +11,8 @@ import { RustLambda } from "./constructs/rust-lambda.js";
 export interface WebStackProps extends cdk.StackProps {
   readonly userPoolId: string;
   readonly userPoolClientId: string;
+  /** Cognito client secret (SecretValue from auth stack). */
+  readonly userPoolClientSecret: cdk.SecretValue;
   readonly cognitoDomain: string;
   /** Path to cargo-lambda output for irone-web (undefined = dummy placeholder). */
   readonly webLambdaCodePath?: string;
@@ -42,6 +45,16 @@ export class WebStack extends cdk.Stack {
     (
       sessionsTable.node.defaultChild as dynamodb.CfnTable
     ).overrideLogicalId("SessionTableA016F679");
+
+    // --- Secrets Manager: session secret key ---
+    const sessionSecret = new secretsmanager.Secret(this, "SessionSecretKey", {
+      secretName: "secdash/session-secret-key",
+      description: "irone session encryption key",
+      generateSecretString: {
+        excludePunctuation: true,
+        passwordLength: 64,
+      },
+    });
 
     // --- S3: report bucket ---
     const reportBucket = new s3.Bucket(this, "ReportBucket", {
@@ -78,6 +91,8 @@ export class WebStack extends cdk.Stack {
         SECDASH_CEDAR_POLICY_DIR: "cedar",
         SECDASH_RULES_DIR: "rules",
         RUST_LOG: "info",
+        SECDASH_COGNITO_CLIENT_SECRET: props.userPoolClientSecret.unsafeUnwrap(),
+        SECDASH_SESSION_SECRET_KEY: sessionSecret.secretValue.unsafeUnwrap(),
         // Investigation pipeline (Step Functions) — empty = disabled (legacy in-memory mode)
         ...(props.investigationStateMachineArn
           ? { SECDASH_INVESTIGATION_STATE_MACHINE_ARN: props.investigationStateMachineArn }
@@ -85,10 +100,6 @@ export class WebStack extends cdk.Stack {
         ...(props.investigationsTableName
           ? { SECDASH_INVESTIGATIONS_TABLE: props.investigationsTableName }
           : {}),
-        // NOTE: SECDASH_COGNITO_CLIENT_SECRET and SECDASH_SESSION_SECRET_KEY
-        // are currently set as plaintext env vars on the deployed Lambda.
-        // TODO: Migrate to Secrets Manager and reference via secretsmanager: dynamic ref.
-        // For now, they're managed out-of-band to avoid drift on initial adoption.
       },
     });
 
@@ -165,6 +176,9 @@ export class WebStack extends cdk.Stack {
         ],
       })
     );
+
+    // Secrets Manager: session secret
+    sessionSecret.grantRead(webLambda.function);
 
     // STS
     webLambda.function.addToRolePolicy(
