@@ -40,7 +40,6 @@ const web = new WebStack(app, "secdash-web", {
   userPoolClientSecret: auth.userPoolClient.userPoolClientSecret,
   cognitoDomain: `secdash-auth-${env.account}.auth.${env.region}.amazoncognito.com`,
   webLambdaCodePath: lambdaCodePath("irone-web"),
-  // Pipeline props wired after pipeline stack is created (see below)
 });
 web.addDependency(auth);
 
@@ -51,11 +50,6 @@ const pipeline = new PipelineStack(app, "secdash-pipeline", {
   workerCodePath: lambdaCodePath("irone-worker"),
 });
 pipeline.addDependency(web);
-// Note: web Lambda env vars for SFN ARN and investigations table are set
-// out-of-band after first CDK deploy (to avoid circular dependency).
-// Use: aws lambda update-function-configuration --environment to add:
-//   SECDASH_INVESTIGATION_STATE_MACHINE_ARN=<pipeline.stateMachineArn>
-//   SECDASH_INVESTIGATIONS_TABLE=<pipeline.investigationsTableName>
 
 // --- 3. Irone (CloudFront + frontend + health checker) ---
 const irone = new IroneStack(app, "secdash-iris", {

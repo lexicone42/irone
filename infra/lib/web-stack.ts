@@ -16,10 +16,6 @@ export interface WebStackProps extends cdk.StackProps {
   readonly cognitoDomain: string;
   /** Path to cargo-lambda output for irone-web (undefined = dummy placeholder). */
   readonly webLambdaCodePath?: string;
-  /** Step Functions state machine ARN for investigation pipeline (optional). */
-  readonly investigationStateMachineArn?: string;
-  /** DynamoDB investigations table name (optional). */
-  readonly investigationsTableName?: string;
 }
 
 export class WebStack extends cdk.Stack {
@@ -45,6 +41,11 @@ export class WebStack extends cdk.Stack {
     (
       sessionsTable.node.defaultChild as dynamodb.CfnTable
     ).overrideLogicalId("SessionTableA016F679");
+
+    // --- Secrets Manager: import service token (created out-of-band) ---
+    const serviceTokenSecret = secretsmanager.Secret.fromSecretNameV2(
+      this, "ServiceTokenSecret", "secdash/service-token"
+    );
 
     // --- Secrets Manager: session secret key ---
     const sessionSecret = new secretsmanager.Secret(this, "SessionSecretKey", {
@@ -93,13 +94,11 @@ export class WebStack extends cdk.Stack {
         RUST_LOG: "info",
         SECDASH_COGNITO_CLIENT_SECRET: props.userPoolClientSecret.unsafeUnwrap(),
         SECDASH_SESSION_SECRET_KEY: sessionSecret.secretValue.unsafeUnwrap(),
-        // Investigation pipeline (Step Functions) — empty = disabled (legacy in-memory mode)
-        ...(props.investigationStateMachineArn
-          ? { SECDASH_INVESTIGATION_STATE_MACHINE_ARN: props.investigationStateMachineArn }
-          : {}),
-        ...(props.investigationsTableName
-          ? { SECDASH_INVESTIGATIONS_TABLE: props.investigationsTableName }
-          : {}),
+        SECDASH_SERVICE_TOKEN: serviceTokenSecret.secretValue.unsafeUnwrap(),
+        // Investigation pipeline — names match pipeline-stack.ts hardcoded values
+        SECDASH_INVESTIGATION_STATE_MACHINE_ARN:
+          `arn:aws:states:${this.region}:${this.account}:stateMachine:secdash-investigation-pipeline`,
+        SECDASH_INVESTIGATIONS_TABLE: "secdash_investigations",
       },
     });
 
@@ -177,8 +176,9 @@ export class WebStack extends cdk.Stack {
       })
     );
 
-    // Secrets Manager: session secret
+    // Secrets Manager: session secret + service token
     sessionSecret.grantRead(webLambda.function);
+    serviceTokenSecret.grantRead(webLambda.function);
 
     // STS
     webLambda.function.addToRolePolicy(
@@ -189,34 +189,32 @@ export class WebStack extends cdk.Stack {
     );
 
     // Step Functions: start investigation pipeline executions
-    if (props.investigationStateMachineArn) {
-      webLambda.function.addToRolePolicy(
-        new iam.PolicyStatement({
-          actions: ["states:StartExecution"],
-          resources: [props.investigationStateMachineArn],
-        })
-      );
-    }
+    webLambda.function.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: ["states:StartExecution"],
+        resources: [
+          `arn:aws:states:${this.region}:${this.account}:stateMachine:secdash-investigation-pipeline`,
+        ],
+      })
+    );
 
     // DynamoDB: investigations table
-    if (props.investigationsTableName) {
-      webLambda.function.addToRolePolicy(
-        new iam.PolicyStatement({
-          actions: [
-            "dynamodb:GetItem",
-            "dynamodb:PutItem",
-            "dynamodb:UpdateItem",
-            "dynamodb:DeleteItem",
-            "dynamodb:Query",
-            "dynamodb:Scan",
-          ],
-          resources: [
-            `arn:aws:dynamodb:${this.region}:${this.account}:table/${props.investigationsTableName}`,
-            `arn:aws:dynamodb:${this.region}:${this.account}:table/${props.investigationsTableName}/index/*`,
-          ],
-        })
-      );
-    }
+    webLambda.function.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: [
+          "dynamodb:GetItem",
+          "dynamodb:PutItem",
+          "dynamodb:UpdateItem",
+          "dynamodb:DeleteItem",
+          "dynamodb:Query",
+          "dynamodb:Scan",
+        ],
+        resources: [
+          `arn:aws:dynamodb:${this.region}:${this.account}:table/secdash_investigations`,
+          `arn:aws:dynamodb:${this.region}:${this.account}:table/secdash_investigations/index/*`,
+        ],
+      })
+    );
 
     // --- API Gateway v2 (HTTP API) ---
     const integration = new HttpLambdaIntegration(
