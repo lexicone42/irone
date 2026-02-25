@@ -101,6 +101,15 @@
                 </div>
             </section>
 
+            <!-- Enrollment banner (shown when redirected from passkey gate) -->
+            <template x-if="enrollmentRequired">
+                <div class="alert alert-warning mb-4">
+                    <strong><i class="fa-solid fa-shield-halved"></i> Passkey Required</strong>
+                    &mdash; Register a passkey to access the dashboard. Device-bound keys
+                    (YubiKey, Touch ID, Windows Hello) are required.
+                </div>
+            </template>
+
             <!-- Passkey Management -->
             <section class="settings-section">
                 <h2><i class="fa-solid fa-fingerprint"></i> Passkeys</h2>
@@ -182,6 +191,7 @@
                 passkeyError: '',
                 passkeySuccess: '',
                 passkeySupported: true,
+                enrollmentRequired: new URLSearchParams(window.location.search).has('enroll'),
 
                 async init() {
                     // Wait for auth wrapper to initialize

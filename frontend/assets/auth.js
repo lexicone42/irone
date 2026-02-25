@@ -59,6 +59,39 @@ const auth = (() => {
         return _l42Module;
     }
 
+    // ─── Passkey enrollment gate ─────────────────────────────────
+
+    /**
+     * If the user authenticated via password or SSO (not passkey), check
+     * whether they have any passkeys registered. If not, redirect to the
+     * settings page so they can enroll one before accessing the dashboard.
+     */
+    async function _enforcePasskeyEnrollment() {
+        const l42 = await _initL42();
+        if (!l42) return;
+
+        const method = typeof l42.getAuthMethod === 'function'
+            ? l42.getAuthMethod()
+            : null;
+
+        // Already logged in with passkey — no gate needed
+        if (method === 'passkey') return;
+
+        // Check if user has any passkeys registered
+        try {
+            const passkeys = await l42.listPasskeys();
+            if (passkeys && passkeys.length > 0) return; // has passkeys, OK
+        } catch {
+            // listPasskeys requires admin scope; if it fails, skip the gate
+            // rather than locking the user out
+            return;
+        }
+
+        // No passkeys registered — redirect to settings
+        _redirecting = true;
+        window.location.href = "/settings.html?enroll=1";
+    }
+
     // ─── Public API ──────────────────────────────────────────────
 
     /** Initialize auth — call on every page load. All callers await the same promise. */
@@ -89,6 +122,12 @@ const auth = (() => {
             const resp = await fetch("/auth/me");
             if (resp.ok) {
                 _user = await resp.json();
+
+                // Passkey enrollment gate: if user logged in without a passkey,
+                // redirect to settings to register one (skip if already on settings).
+                if (path !== "/settings.html" && path !== "/callback.html") {
+                    await _enforcePasskeyEnrollment();
+                }
                 return;
             }
         } catch {
