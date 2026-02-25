@@ -170,7 +170,8 @@
             }
         }
 
-        initConfig();
+        // Initialize config first, then enable form interactions
+        await initConfig();
 
         // On auth state change, redirect to dashboard
         onAuthStateChange((isAuth) => {

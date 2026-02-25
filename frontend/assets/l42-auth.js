@@ -571,7 +571,12 @@ function autoConfigureFromWindow() {
             scopes: Array.isArray(windowConfig.scopes)
                 ? windowConfig.scopes.join(' ')
                 : windowConfig.scopes,
-            allowedDomains: windowConfig.allowedDomains
+            allowedDomains: windowConfig.allowedDomains,
+            tokenEndpoint: windowConfig.tokenEndpoint,
+            refreshEndpoint: windowConfig.refreshEndpoint,
+            logoutEndpoint: windowConfig.logoutEndpoint,
+            sessionEndpoint: windowConfig.sessionEndpoint,
+            validateCredentialEndpoint: windowConfig.validateCredentialEndpoint,
         });
     }
 }
