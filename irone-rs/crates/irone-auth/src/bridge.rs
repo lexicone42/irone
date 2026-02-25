@@ -55,6 +55,11 @@ fn to_l42_config(app: &AppConfig) -> L42Config {
         aaguid_allowlist: Vec::new(),
         require_device_bound: true,
         service_token: None,
+        additional_audience: if app.cognito_passkey_client_id.is_empty() {
+            Vec::new()
+        } else {
+            vec![app.cognito_passkey_client_id.clone()]
+        },
     }
 }
 
