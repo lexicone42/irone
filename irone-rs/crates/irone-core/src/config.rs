@@ -42,6 +42,8 @@ pub struct AppConfig {
     pub cognito_domain: String,
     pub cognito_region: String,
     pub cognito_redirect_uri: String,
+    /// Public client ID for browser passkey/password auth (no client secret).
+    pub cognito_passkey_client_id: String,
 
     // Session
     pub session_secret_key: String,
@@ -93,6 +95,7 @@ impl Default for AppConfig {
             cognito_domain: String::new(),
             cognito_region: "us-west-2".into(),
             cognito_redirect_uri: String::new(),
+            cognito_passkey_client_id: String::new(),
 
             session_secret_key: "change-me-in-production".into(),
             session_backend: "memory".into(),

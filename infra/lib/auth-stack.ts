@@ -5,6 +5,7 @@ import { Construct } from "constructs";
 export class AuthStack extends cdk.Stack {
   public readonly userPool: cognito.UserPool;
   public readonly userPoolClient: cognito.UserPoolClient;
+  public readonly passkeyClient: cognito.UserPoolClient;
 
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
     super(scope, id, {
@@ -33,9 +34,9 @@ export class AuthStack extends cdk.Stack {
     const cfnUserPool =
       this.userPool.node.defaultChild as cognito.CfnUserPool;
     cfnUserPool.overrideLogicalId("UserPool6BA7E5F2");
-    // Match deployed SignInPolicy (allows password + passkey sign-in)
+    // Sign-in policy: password + passkey (WebAuthn)
     cfnUserPool.addPropertyOverride("Policies.SignInPolicy", {
-      AllowedFirstAuthFactors: ["PASSWORD", "EMAIL_OTP"],
+      AllowedFirstAuthFactors: ["PASSWORD", "WEB_AUTHN", "EMAIL_OTP"],
     });
 
     // --- User Pool Domain ---
@@ -73,6 +74,47 @@ export class AuthStack extends cdk.Stack {
     (
       this.userPoolClient.node.defaultChild as cognito.CfnUserPoolClient
     ).overrideLogicalId("UserPoolWebDashboardClient1022FBB9");
+
+    // --- Passkey Client (public, browser-side WebAuthn) ---
+    // Passkeys require ALLOW_USER_AUTH + no client secret (browser can't compute SECRET_HASH).
+    // aws.cognito.signin.user.admin scope is required for passkey management (list/delete).
+    this.passkeyClient = this.userPool.addClient("PasskeyClient", {
+      userPoolClientName: "secdash-passkey",
+      generateSecret: false,
+      oAuth: {
+        flows: { authorizationCodeGrant: true },
+        scopes: [
+          cognito.OAuthScope.OPENID,
+          cognito.OAuthScope.EMAIL,
+          cognito.OAuthScope.COGNITO_ADMIN,
+        ],
+        callbackUrls: [
+          "https://irone.lexicone.com/callback.html",
+          "http://localhost:8000/callback.html",
+        ],
+        logoutUrls: [
+          "https://irone.lexicone.com/",
+          "http://localhost:8000/",
+        ],
+      },
+      authFlows: {
+        userPassword: true,
+        userSrp: true,
+      },
+      accessTokenValidity: cdk.Duration.minutes(60),
+      idTokenValidity: cdk.Duration.minutes(60),
+      refreshTokenValidity: cdk.Duration.minutes(43200),
+    });
+    // CDK escape hatch: add ALLOW_USER_AUTH + ALLOW_CUSTOM_AUTH (not exposed in L2)
+    const cfnPasskeyClient =
+      this.passkeyClient.node.defaultChild as cognito.CfnUserPoolClient;
+    cfnPasskeyClient.addPropertyOverride("ExplicitAuthFlows", [
+      "ALLOW_USER_PASSWORD_AUTH",
+      "ALLOW_USER_SRP_AUTH",
+      "ALLOW_CUSTOM_AUTH",
+      "ALLOW_USER_AUTH",
+      "ALLOW_REFRESH_TOKEN_AUTH",
+    ]);
 
     // --- 5 RBAC Groups (matching deployed names) ---
     const groups = [
@@ -135,6 +177,11 @@ export class AuthStack extends cdk.Stack {
       description: "Web Dashboard Cognito Client ID",
       value: this.userPoolClient.userPoolClientId,
       exportName: "secdash-shared-auth-WebClientId",
+    });
+    new cdk.CfnOutput(this, "PasskeyClientId", {
+      description: "Passkey (public) Cognito Client ID for browser WebAuthn",
+      value: this.passkeyClient.userPoolClientId,
+      exportName: "secdash-shared-auth-PasskeyClientId",
     });
     new cdk.CfnOutput(this, "UserPoolDomain", {
       description: "Cognito Hosted UI Domain",

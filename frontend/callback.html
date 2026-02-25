@@ -19,42 +19,59 @@
         </div>
     </div>
 
-    <script>
-        (async () => {
-            const params = new URLSearchParams(window.location.search);
-            const code = params.get("code");
-            const error = params.get("error");
-            const errorDesc = params.get("error_description");
+    <script type="module">
+        import { exchangeCodeForTokens } from '/assets/l42-auth.js';
 
-            const statusEl = document.getElementById("status");
-            const errorEl = document.getElementById("error");
+        const params = new URLSearchParams(window.location.search);
+        const code = params.get('code');
+        const state = params.get('state');
+        const error = params.get('error');
+        const errorDesc = params.get('error_description');
 
-            if (error) {
-                statusEl.style.display = "none";
-                errorEl.style.display = "block";
-                errorEl.textContent = errorDesc || error;
-                setTimeout(() => { window.location.href = "/login.html"; }, 3000);
-                return;
-            }
+        const statusEl = document.getElementById('status');
+        const errorEl = document.getElementById('error');
 
-            if (!code) {
-                statusEl.style.display = "none";
-                errorEl.style.display = "block";
-                errorEl.textContent = "Missing authorization code.";
-                setTimeout(() => { window.location.href = "/login.html"; }, 2000);
-                return;
+        if (error) {
+            statusEl.style.display = 'none';
+            errorEl.style.display = 'block';
+            errorEl.textContent = errorDesc || error;
+            setTimeout(() => { window.location.href = '/login.html'; }, 3000);
+        } else if (!code) {
+            statusEl.style.display = 'none';
+            errorEl.style.display = 'block';
+            errorEl.textContent = 'Missing authorization code.';
+            setTimeout(() => { window.location.href = '/login.html'; }, 2000);
+        } else {
+            // Initialize L42 config before exchanging code
+            try {
+                const resp = await fetch('/api/auth/config');
+                const config = await resp.json();
+                window.L42_AUTH_CONFIG = {
+                    clientId: config.passkey_client_id || config.cognito_client_id,
+                    domain: config.cognito_domain,
+                    region: config.cognito_region,
+                    redirectUri: window.location.origin + '/callback.html',
+                    tokenEndpoint: '/auth/token',
+                    refreshEndpoint: '/auth/refresh',
+                    logoutEndpoint: '/auth/logout',
+                    sessionEndpoint: '/auth/session',
+                    scopes: ['openid', 'email', 'aws.cognito.signin.user.admin'],
+                };
+            } catch {
+                // Config fetch failed — try exchange anyway
             }
 
             try {
-                await auth.handleCallback(code);
-                window.location.href = "/";
-            } catch (e) {
-                statusEl.style.display = "none";
-                errorEl.style.display = "block";
-                errorEl.textContent = "Authentication failed: " + e.message;
-                setTimeout(() => { window.location.href = "/login.html"; }, 3000);
+                await exchangeCodeForTokens(code, state);
+                statusEl.textContent = 'Success! Redirecting...';
+                setTimeout(() => { window.location.href = '/'; }, 500);
+            } catch (err) {
+                statusEl.style.display = 'none';
+                errorEl.style.display = 'block';
+                errorEl.textContent = 'Authentication failed: ' + err.message;
+                setTimeout(() => { window.location.href = '/login.html'; }, 3000);
             }
-        })();
+        }
     </script>
 </body>
 </html>

@@ -13,6 +13,8 @@ export interface WebStackProps extends cdk.StackProps {
   readonly userPoolClientId: string;
   /** Cognito client secret (SecretValue from auth stack). */
   readonly userPoolClientSecret: cdk.SecretValue;
+  /** Public passkey client ID (no secret, ALLOW_USER_AUTH). */
+  readonly passkeyClientId: string;
   readonly cognitoDomain: string;
   /** Path to cargo-lambda output for irone-web (undefined = dummy placeholder). */
   readonly webLambdaCodePath?: string;
@@ -87,6 +89,7 @@ export class WebStack extends cdk.Stack {
         SECDASH_FRONTEND_URL: "https://irone.lexicone.com",
         SECDASH_COGNITO_REDIRECT_URI:
           "https://irone.lexicone.com/auth/callback",
+        SECDASH_COGNITO_PASSKEY_CLIENT_ID: props.passkeyClientId,
         SECDASH_USE_DIRECT_QUERY: "true",
         SECDASH_AUTH_ENABLED: "true",
         SECDASH_CEDAR_POLICY_DIR: "cedar",

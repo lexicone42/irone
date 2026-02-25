@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Settings — irone</title>
+    <link rel="stylesheet" href="/assets/terminal.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+    <script src="/assets/auth.js"></script>
+    <script src="/assets/app.js"></script>
+    <style>
+        .passkey-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0.75rem 1rem;
+            background: var(--bg-raised);
+            border: 1px solid var(--border-subtle);
+            border-radius: 8px;
+            margin-bottom: 0.5rem;
+        }
+        .passkey-item-info {
+            display: flex;
+            flex-direction: column;
+            gap: 0.15rem;
+        }
+        .passkey-name {
+            font-family: var(--font-mono);
+            font-size: var(--text-md);
+            color: var(--text-primary);
+        }
+        .passkey-id {
+            font-family: var(--font-mono);
+            font-size: var(--text-xs);
+            color: var(--text-muted);
+        }
+        .passkey-empty {
+            text-align: center;
+            padding: 2rem;
+            color: var(--text-muted);
+            font-size: var(--text-sm);
+        }
+        .settings-section {
+            margin-bottom: 2rem;
+        }
+        .settings-section h2 {
+            font-size: var(--text-lg);
+            color: var(--text-primary);
+            margin-bottom: 1rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+    </style>
+</head>
+<body>
+    <div class="layout" x-data="navApp()">
+        <nav class="sidebar">
+            <div class="nav-brand">&gt; irone_</div>
+
+            <div class="nav-section">Overview</div>
+            <a href="/" class="nav-link" :class="isActive('/') && 'active'"><i class="fa-solid fa-gauge-high"></i> Dashboard</a>
+
+            <div class="nav-section">Operations</div>
+            <a href="/monitoring.html" class="nav-link" :class="isActive('/monitoring') && 'active'"><i class="fa-solid fa-heart-pulse"></i> Health Monitor</a>
+            <a href="/sources.html" class="nav-link" :class="isActive('/sources') && 'active'"><i class="fa-solid fa-database"></i> Sources</a>
+
+            <div class="nav-section">Detection</div>
+            <a href="/detections.html" class="nav-link" :class="isActive('/detections') && 'active'"><i class="fa-solid fa-shield-halved"></i> Rules &amp; Queries</a>
+
+            <div class="nav-section">Investigation</div>
+            <a href="/investigations.html" class="nav-link" :class="isActive('/investigations') && 'active'"><i class="fa-solid fa-magnifying-glass"></i> Investigations</a>
+
+            <template x-if="authEnabled && userEmail">
+                <div class="sidebar-footer">
+                    <div class="sidebar-footer-email" x-text="userEmail"></div>
+                    <a href="/settings.html" class="nav-link" :class="isActive('/settings') && 'active'"><i class="fa-solid fa-gear"></i> Settings</a>
+                    <a href="#" class="nav-link" @click.prevent="doLogout()"><i class="fa-solid fa-right-from-bracket"></i> Sign Out</a>
+                </div>
+            </template>
+        </nav>
+
+        <main class="main-content" x-data="settingsApp()" x-init="init()">
+            <header class="page-header">
+                <h1><i class="fa-solid fa-gear"></i> Settings</h1>
+            </header>
+
+            <!-- User Info -->
+            <section class="settings-section">
+                <h2><i class="fa-solid fa-user"></i> Account</h2>
+                <div class="card">
+                    <div class="card-body">
+                        <p><strong>Email:</strong> <span id="user-email" class="text-accent" x-text="userEmail"></span></p>
+                        <p x-show="userGroups.length > 0">
+                            <strong>Groups:</strong>
+                            <span class="text-secondary" x-text="userGroups.join(', ')"></span>
+                        </p>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Passkey Management -->
+            <section class="settings-section">
+                <h2><i class="fa-solid fa-fingerprint"></i> Passkeys</h2>
+
+                <template x-if="!passkeySupported">
+                    <div class="alert alert-warning">
+                        Your browser does not support passkeys (WebAuthn).
+                    </div>
+                </template>
+
+                <template x-if="passkeySupported">
+                    <div>
+                        <div class="mb-4">
+                            <button class="btn btn-primary" @click="registerNewPasskey()" :disabled="registering">
+                                <i class="fa-solid fa-plus"></i>
+                                <span x-text="registering ? 'Registering...' : 'Register New Passkey'"></span>
+                            </button>
+                        </div>
+
+                        <div id="passkey-error" x-show="passkeyError" class="alert alert-error mb-4"
+                             x-text="passkeyError"></div>
+                        <div id="passkey-success" x-show="passkeySuccess" class="alert alert-success mb-4"
+                             x-text="passkeySuccess"></div>
+
+                        <template x-if="loading">
+                            <div class="passkey-empty">
+                                <span class="spinner"></span> Loading passkeys...
+                            </div>
+                        </template>
+
+                        <template x-if="!loading && passkeys.length === 0">
+                            <div class="passkey-empty">
+                                <i class="fa-solid fa-key" style="font-size: 2rem; margin-bottom: 0.5rem; display: block;"></i>
+                                No passkeys registered yet.
+                                <br>Register a passkey for faster, phishing-resistant sign-in.
+                            </div>
+                        </template>
+
+                        <template x-for="pk in passkeys" :key="pk.CredentialId">
+                            <div class="passkey-item">
+                                <div class="passkey-item-info">
+                                    <span class="passkey-name"
+                                          x-text="pk.FriendlyName || 'Passkey'"></span>
+                                    <span class="passkey-id"
+                                          x-text="pk.CredentialId.substring(0, 24) + '...'"></span>
+                                </div>
+                                <button class="btn btn-danger btn-sm"
+                                        @click="deleteKey(pk.CredentialId)"
+                                        :disabled="deleting === pk.CredentialId">
+                                    <span x-text="deleting === pk.CredentialId ? 'Deleting...' : 'Delete'"></span>
+                                </button>
+                            </div>
+                        </template>
+                    </div>
+                </template>
+            </section>
+        </main>
+    </div>
+
+    <script type="module">
+        import {
+            listPasskeys,
+            registerPasskey,
+            deletePasskey,
+            isPasskeySupported,
+            getUserEmail,
+            getUserGroups,
+            hasAdminScope,
+        } from '/assets/l42-auth.js';
+
+        window.settingsApp = function() {
+            return {
+                userEmail: '',
+                userGroups: [],
+                passkeys: [],
+                loading: true,
+                registering: false,
+                deleting: null,
+                passkeyError: '',
+                passkeySuccess: '',
+                passkeySupported: true,
+
+                async init() {
+                    // Wait for auth wrapper to initialize
+                    await auth.init();
+                    if (!auth.isAuthenticated()) return;
+
+                    const user = auth.getUser();
+                    this.userEmail = user?.email || getUserEmail() || '';
+                    this.userGroups = user?.groups || getUserGroups() || [];
+
+                    this.passkeySupported = await isPasskeySupported();
+                    if (this.passkeySupported && hasAdminScope()) {
+                        await this.loadPasskeys();
+                    } else {
+                        this.loading = false;
+                    }
+                },
+
+                async loadPasskeys() {
+                    this.loading = true;
+                    try {
+                        this.passkeys = await listPasskeys();
+                    } catch (err) {
+                        this.passkeyError = 'Failed to load passkeys: ' + err.message;
+                    } finally {
+                        this.loading = false;
+                    }
+                },
+
+                async registerNewPasskey() {
+                    this.registering = true;
+                    this.passkeyError = '';
+                    this.passkeySuccess = '';
+                    try {
+                        await registerPasskey();
+                        this.passkeySuccess = 'Passkey registered successfully!';
+                        await this.loadPasskeys();
+                    } catch (err) {
+                        if (err.name !== 'NotAllowedError') {
+                            this.passkeyError = 'Failed to register passkey: ' + err.message;
+                        }
+                    } finally {
+                        this.registering = false;
+                    }
+                },
+
+                async deleteKey(credentialId) {
+                    if (!confirm('Delete this passkey? You will no longer be able to sign in with it.')) {
+                        return;
+                    }
+                    this.deleting = credentialId;
+                    this.passkeyError = '';
+                    this.passkeySuccess = '';
+                    try {
+                        await deletePasskey(credentialId);
+                        this.passkeySuccess = 'Passkey deleted.';
+                        await this.loadPasskeys();
+                    } catch (err) {
+                        this.passkeyError = 'Failed to delete passkey: ' + err.message;
+                    } finally {
+                        this.deleting = null;
+                    }
+                },
+            };
+        };
+    </script>
+</body>
+</html>

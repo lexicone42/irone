@@ -7,6 +7,43 @@
     <link rel="stylesheet" href="/assets/terminal.css">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    <style>
+        .login-form { display: flex; flex-direction: column; gap: 1rem; }
+        .login-form input {
+            width: 100%;
+            padding: 0.6rem 0.75rem;
+            font-size: var(--text-md);
+        }
+        .login-form label { margin-bottom: 0; }
+        .login-divider {
+            display: flex; align-items: center; gap: 1rem;
+            color: var(--text-muted); font-size: var(--text-sm);
+            margin: 0.5rem 0;
+        }
+        .login-divider::before, .login-divider::after {
+            content: ''; flex: 1; height: 1px;
+            background: var(--border-default);
+        }
+        .btn-passkey {
+            background: rgba(0, 212, 170, 0.15);
+            border-color: var(--color-success);
+            color: var(--color-success);
+        }
+        .btn-passkey:hover {
+            background: var(--color-success);
+            color: var(--bg-base);
+        }
+        .btn-sso {
+            background: transparent;
+            border-color: var(--border-default);
+            color: var(--text-secondary);
+        }
+        .btn-sso:hover {
+            border-color: var(--text-secondary);
+            color: var(--text-primary);
+        }
+        .field-group { display: flex; flex-direction: column; gap: 0.25rem; }
+    </style>
     <script src="/assets/auth.js"></script>
 </head>
 <body>
@@ -16,58 +53,183 @@
             <p class="text-secondary mb-4">
                 Security Lake Monitoring &amp; Investigation
             </p>
-            <button id="login-btn" class="btn btn-primary w-full">
-                Sign In with SSO
+
+            <div id="error" style="display: none;" class="alert alert-error mb-4"></div>
+
+            <!-- Login form -->
+            <form id="login-form" class="login-form" aria-labelledby="login-heading">
+                <div class="field-group">
+                    <label for="email">Email</label>
+                    <input type="email" id="email" required autocomplete="username"
+                           placeholder="analyst@lexicone.com">
+                </div>
+                <div class="field-group">
+                    <label for="password">Password</label>
+                    <input type="password" id="password" autocomplete="current-password">
+                </div>
+                <button type="submit" id="password-btn" class="btn btn-primary w-full">
+                    <i class="fa-solid fa-right-to-bracket"></i>
+                    <span id="password-btn-text">Sign In</span>
+                </button>
+            </form>
+
+            <div class="login-divider">or</div>
+
+            <!-- Passkey login -->
+            <button id="passkey-btn" class="btn btn-passkey w-full" aria-describedby="passkey-hint">
+                <i id="passkey-icon" class="fa-solid fa-fingerprint"></i>
+                <span id="passkey-btn-text">Sign in with Passkey</span>
             </button>
-            <div id="error" style="display: none; margin-top: 1rem;" class="alert alert-error"></div>
+            <span id="passkey-hint" class="visually-hidden">
+                Uses biometric or security key authentication
+            </span>
+
+            <div class="login-divider">or</div>
+
+            <!-- SSO fallback (Cognito Hosted UI) -->
+            <button id="sso-btn" class="btn btn-sso w-full">
+                <i class="fa-solid fa-arrow-up-right-from-square"></i>
+                <span>Sign in with SSO</span>
+            </button>
+
             <p id="no-auth" style="display: none; margin-top: 1rem;">
                 <a href="/" class="back-link">Continue without auth &rarr;</a>
             </p>
         </div>
     </div>
 
-    <script>
-        const loginBtn = document.getElementById("login-btn");
-        const errorEl = document.getElementById("error");
-        const noAuthEl = document.getElementById("no-auth");
+    <script type="module">
+        import {
+            loginWithPassword,
+            loginWithPasskey,
+            loginWithHostedUI,
+            isAuthenticated,
+            onAuthStateChange,
+            isPasskeySupported,
+        } from '/assets/l42-auth.js';
+
+        const emailInput = document.getElementById('email');
+        const passwordInput = document.getElementById('password');
+        const passwordBtn = document.getElementById('password-btn');
+        const passwordBtnText = document.getElementById('password-btn-text');
+        const passkeyBtn = document.getElementById('passkey-btn');
+        const passkeyIcon = document.getElementById('passkey-icon');
+        const passkeyBtnText = document.getElementById('passkey-btn-text');
+        const ssoBtn = document.getElementById('sso-btn');
+        const errorEl = document.getElementById('error');
+        const noAuthEl = document.getElementById('no-auth');
+
+        function showError(msg) {
+            errorEl.textContent = msg;
+            errorEl.style.display = 'block';
+        }
+        function hideError() {
+            errorEl.style.display = 'none';
+        }
 
         // Check URL for error params
         const params = new URLSearchParams(window.location.search);
-        const urlError = params.get("error");
-        if (urlError) {
-            errorEl.style.display = "block";
-            errorEl.textContent = decodeURIComponent(urlError);
+        const urlError = params.get('error');
+        if (urlError) showError(decodeURIComponent(urlError));
+
+        // Configure l42 from the server auth config
+        async function initConfig() {
+            try {
+                const resp = await fetch('/api/auth/config');
+                const config = await resp.json();
+
+                if (!config.auth_enabled) {
+                    noAuthEl.style.display = 'block';
+                    document.getElementById('login-form').style.display = 'none';
+                    passkeyBtn.style.display = 'none';
+                    ssoBtn.style.display = 'none';
+                    return;
+                }
+
+                // Set L42 config
+                window.L42_AUTH_CONFIG = {
+                    clientId: config.passkey_client_id || config.cognito_client_id,
+                    domain: config.cognito_domain,
+                    region: config.cognito_region,
+                    redirectUri: window.location.origin + '/callback.html',
+                    tokenEndpoint: '/auth/token',
+                    refreshEndpoint: '/auth/refresh',
+                    logoutEndpoint: '/auth/logout',
+                    sessionEndpoint: '/auth/session',
+                    validateCredentialEndpoint: '/auth/validate-credential',
+                    scopes: ['openid', 'email', 'aws.cognito.signin.user.admin'],
+                };
+
+                // Hide passkey button if not supported by browser
+                const supported = await isPasskeySupported();
+                if (!supported) {
+                    passkeyBtn.style.display = 'none';
+                }
+            } catch {
+                // Can't reach API — show login form anyway
+            }
         }
 
-        loginBtn.addEventListener("click", async () => {
-            loginBtn.disabled = true;
-            loginBtn.textContent = "Redirecting...";
+        initConfig();
+
+        // On auth state change, redirect to dashboard
+        onAuthStateChange((isAuth) => {
+            if (isAuth) window.location.href = '/';
+        });
+
+        // If already authenticated, go to dashboard
+        if (isAuthenticated()) {
+            window.location.href = '/';
+        }
+
+        // Password login
+        document.getElementById('login-form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            hideError();
+            passwordBtn.disabled = true;
+            passwordBtnText.textContent = 'Signing in...';
+
             try {
-                // auth.init() will redirect to Cognito if auth is enabled
-                await auth.init();
-                // If we're still here, auth is disabled
-                window.location.href = "/";
-            } catch (e) {
-                loginBtn.disabled = false;
-                loginBtn.textContent = "Sign In with SSO";
-                errorEl.style.display = "block";
-                errorEl.textContent = e.message;
+                await loginWithPassword(emailInput.value, passwordInput.value);
+                // onAuthStateChange will redirect
+            } catch (err) {
+                showError(err.message);
+                passwordBtn.disabled = false;
+                passwordBtnText.textContent = 'Sign In';
             }
         });
 
-        // Check if auth is even enabled
-        (async () => {
-            try {
-                const resp = await fetch("/api/auth/config");
-                const config = await resp.json();
-                if (!config.auth_enabled) {
-                    noAuthEl.style.display = "block";
-                    loginBtn.style.display = "none";
-                }
-            } catch {
-                // Can't reach API — show login button anyway
+        // Passkey login
+        passkeyBtn.addEventListener('click', async () => {
+            hideError();
+            const email = emailInput.value;
+            if (!email) {
+                showError('Enter your email first');
+                emailInput.focus();
+                return;
             }
-        })();
+
+            passkeyBtn.disabled = true;
+            passkeyBtnText.textContent = 'Authenticating...';
+            passkeyIcon.className = 'spinner';
+
+            try {
+                await loginWithPasskey(email);
+                // onAuthStateChange will redirect
+            } catch (err) {
+                if (err.name !== 'NotAllowedError') {
+                    showError(err.message);
+                }
+                passkeyBtn.disabled = false;
+                passkeyBtnText.textContent = 'Sign in with Passkey';
+                passkeyIcon.className = 'fa-solid fa-fingerprint';
+            }
+        });
+
+        // SSO (Cognito Hosted UI)
+        ssoBtn.addEventListener('click', () => {
+            loginWithHostedUI(emailInput.value || undefined);
+        });
     </script>
 </body>
 </html>

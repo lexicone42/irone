@@ -52,6 +52,8 @@ pub struct AuthConfig {
     pub auth_enabled: bool,
     pub cognito_domain: String,
     pub cognito_client_id: String,
+    /// Public client ID for browser passkey/password auth (no secret).
+    pub passkey_client_id: String,
     pub cognito_region: String,
     pub redirect_uri: String,
 }
@@ -132,6 +134,7 @@ async fn auth_config(State(state): State<AppState>) -> Json<AuthConfig> {
         auth_enabled: state.config.auth_enabled,
         cognito_domain: state.config.cognito_domain.clone(),
         cognito_client_id: state.config.cognito_client_id.clone(),
+        passkey_client_id: state.config.cognito_passkey_client_id.clone(),
         cognito_region: state.config.cognito_region.clone(),
         redirect_uri: state.config.cognito_redirect_uri.clone(),
     })

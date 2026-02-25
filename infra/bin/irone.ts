@@ -38,6 +38,7 @@ const web = new WebStack(app, "secdash-web", {
   userPoolId: auth.userPool.userPoolId,
   userPoolClientId: auth.userPoolClient.userPoolClientId,
   userPoolClientSecret: auth.userPoolClient.userPoolClientSecret,
+  passkeyClientId: auth.passkeyClient.userPoolClientId,
   cognitoDomain: `secdash-auth-${env.account}.auth.${env.region}.amazoncognito.com`,
   webLambdaCodePath: lambdaCodePath("irone-web"),
 });

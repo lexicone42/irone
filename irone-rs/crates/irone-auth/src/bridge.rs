@@ -49,7 +49,7 @@ fn to_l42_config(app: &AppConfig) -> L42Config {
         session_https_only: app.is_lambda,
         cookie_domain: None,
         auth_path_prefix: "/auth".into(),
-        // Passkey fields — irone doesn't use passkeys; safe defaults.
+        // Passkey fields
         callback_use_origin: false,
         callback_allowed_origins: Vec::new(),
         aaguid_allowlist: Vec::new(),
@@ -129,6 +129,10 @@ pub async fn build_auth(config: &AppConfig) -> Option<AuthComponents> {
         .route(
             "/authorize",
             axum::routing::post(routes::authorize::authorize),
+        )
+        .route(
+            "/validate-credential",
+            axum::routing::post(routes::validate_credential::validate_credential),
         )
         .layer(from_fn(l42_token_handler::middleware::csrf::require_csrf));
 

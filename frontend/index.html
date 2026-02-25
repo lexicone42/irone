@@ -33,6 +33,7 @@
             <template x-if="authEnabled && userEmail">
                 <div class="sidebar-footer">
                     <div class="sidebar-footer-email" x-text="userEmail"></div>
+                    <a href="/settings.html" class="nav-link" :class="isActive('/settings') && 'active'"><i class="fa-solid fa-gear"></i> Settings</a>
                     <a href="#" class="nav-link" @click.prevent="doLogout()"><i class="fa-solid fa-right-from-bracket"></i> Sign Out</a>
                 </div>
             </template>
