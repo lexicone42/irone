@@ -59,9 +59,16 @@ export class AuthStack extends cdk.Stack {
           cognito.OAuthScope.OPENID,
           cognito.OAuthScope.EMAIL,
           cognito.OAuthScope.PROFILE,
+          cognito.OAuthScope.COGNITO_ADMIN,
         ],
-        callbackUrls: ["https://localhost:8000/auth/callback"],
-        logoutUrls: ["https://localhost:8000/auth/login"],
+        callbackUrls: [
+          "https://irone.lexicone.com/auth/callback",
+          "https://localhost:8000/auth/callback",
+        ],
+        logoutUrls: [
+          "https://irone.lexicone.com/login.html",
+          "https://localhost:8000/login.html",
+        ],
       },
       authFlows: {
         userPassword: true,

@@ -27,7 +27,7 @@ async function apiFetch(path, opts = {}) {
         };
         const retry = await fetch(`${API}${path}`, { ...opts, headers: retryHeaders });
         if (retry.status === 401) {
-            window.location.href = "/auth/login";
+            window.location.href = "/login.html";
             throw new Error("Session expired");
         }
         if (!retry.ok) throw new Error(`API ${retry.status}: ${retry.statusText}`);
@@ -907,6 +907,99 @@ function navApp() {
     };
 }
 
+// ─── Settings (passkey management) ──────────────────────────────
+
+function settingsApp() {
+    return {
+        userEmail: "",
+        userGroups: [],
+        passkeys: [],
+        loading: true,
+        registering: false,
+        deleting: null,
+        passkeyError: "",
+        passkeySuccess: "",
+        passkeySupported: true,
+        enrollmentRequired: new URLSearchParams(window.location.search).has(
+            "enroll"
+        ),
+        _l42: null,
+
+        async init() {
+            await auth.init();
+            if (!auth.isAuthenticated()) return;
+
+            const user = auth.getUser();
+            this.userEmail = user?.email || "";
+            this.userGroups = user?.groups || [];
+
+            // Dynamic import — l42-auth.js is an ES module
+            this._l42 = await import("/assets/l42-auth.js");
+
+            this.passkeySupported = await this._l42.isPasskeySupported();
+            if (this.passkeySupported) {
+                // Fetch tokens from server session to populate l42 cache
+                await this._l42.getTokens();
+                await this.loadPasskeys();
+            } else {
+                this.loading = false;
+            }
+        },
+
+        async loadPasskeys() {
+            this.loading = true;
+            try {
+                this.passkeys = await this._l42.listPasskeys();
+            } catch (err) {
+                this.passkeyError = "Failed to load passkeys: " + err.message;
+            } finally {
+                this.loading = false;
+            }
+        },
+
+        async registerNewPasskey() {
+            this.registering = true;
+            this.passkeyError = "";
+            this.passkeySuccess = "";
+            try {
+                await this._l42.registerPasskey();
+                this.passkeySuccess = "Passkey registered successfully!";
+                await this.loadPasskeys();
+            } catch (err) {
+                if (err.name !== "NotAllowedError") {
+                    this.passkeyError =
+                        "Failed to register passkey: " + err.message;
+                }
+            } finally {
+                this.registering = false;
+            }
+        },
+
+        async deleteKey(credentialId) {
+            if (
+                !confirm(
+                    "Delete this passkey? You will no longer be able to sign in with it."
+                )
+            ) {
+                return;
+            }
+            this.deleting = credentialId;
+            this.passkeyError = "";
+            this.passkeySuccess = "";
+            try {
+                await this._l42.deletePasskey(credentialId);
+                this.passkeySuccess = "Passkey deleted.";
+                await this.loadPasskeys();
+            } catch (err) {
+                this.passkeyError =
+                    "Failed to delete passkey: " + err.message;
+            } finally {
+                this.deleting = null;
+            }
+        },
+    };
+}
+
 // ─── Register globals ────────────────────────────────────────────
 
 document.addEventListener("alpine:init", () => {
@@ -915,5 +1008,6 @@ document.addEventListener("alpine:init", () => {
     Alpine.data("detectionsApp", detectionsApp);
     Alpine.data("sourcesApp", sourcesApp);
     Alpine.data("investigationsApp", investigationsApp);
+    Alpine.data("settingsApp", settingsApp);
     Alpine.data("navApp", navApp);
 });

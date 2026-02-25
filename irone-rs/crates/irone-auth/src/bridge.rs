@@ -178,7 +178,7 @@ async fn cognito_login(State(state): State<Arc<AuthState>>) -> Redirect {
     let callback = format!("{}/auth/callback", cfg.frontend_url);
     let callback_encoded = urlencoding::encode(&callback);
     let url = format!(
-        "https://{}/oauth2/authorize?client_id={}&response_type=code&scope=openid+email+profile&redirect_uri={}",
+        "https://{}/oauth2/authorize?client_id={}&response_type=code&scope=openid+email+aws.cognito.signin.user.admin&redirect_uri={}",
         cfg.cognito_domain, cfg.cognito_client_id, callback_encoded
     );
     Redirect::temporary(&url)
@@ -198,7 +198,7 @@ async fn cognito_logout(
     }
 
     let cfg = &state.config;
-    let logout_uri = format!("{}/auth/login", cfg.frontend_url);
+    let logout_uri = format!("{}/login.html", cfg.frontend_url);
     let logout_uri_encoded = urlencoding::encode(&logout_uri);
     let url = format!(
         "https://{}/logout?client_id={}&logout_uri={}",
