@@ -1,0 +1,60 @@
+id: detect-ec2-userdata-enumeration
+name: EC2 User Data Enumeration
+description: >
+  Detects calls to DescribeInstanceAttribute, which can retrieve EC2 instance
+  user data containing bootstrap scripts, embedded credentials, database
+  connection strings, and API keys. Attackers with ec2:DescribeInstanceAttribute
+  permission enumerate user data across instances to harvest secrets for lateral
+  movement. Also detects GetPasswordData (Windows admin password retrieval).
+  Threshold of 3 distinguishes targeted inspection from bulk enumeration.
+author: irone contributors
+severity: high
+event_class: api_activity
+limit: 5000
+threshold: 3
+tags:
+  - credential-access
+  - discovery
+  - ec2
+  - user-data
+mitre_attack:
+  - T1552.005
+  - T1552
+references:
+  - https://attack.mitre.org/techniques/T1552/005/
+  - https://attack.mitre.org/techniques/T1552/
+  - https://hackingthe.cloud/aws/exploitation/ec2-metadata-ssrf/
+data_sources:
+  - cloudtrail
+filters:
+  - field: api.operation
+    in:
+      - DescribeInstanceAttribute
+      - GetPasswordData
+  - field: api.service.name
+    equals: ec2.amazonaws.com
+
+test_cases:
+  - name: triggers on DescribeInstanceAttribute
+    events:
+      - api.operation: DescribeInstanceAttribute
+        api.service.name: ec2.amazonaws.com
+    expected:
+      triggered: true
+      threshold_override: 1
+
+  - name: triggers on GetPasswordData
+    events:
+      - api.operation: GetPasswordData
+        api.service.name: ec2.amazonaws.com
+    expected:
+      triggered: true
+      threshold_override: 1
+
+  - name: does not trigger on DescribeInstances
+    events:
+      - api.operation: DescribeInstances
+        api.service.name: ec2.amazonaws.com
+    expected:
+      triggered: false
+      threshold_override: 1

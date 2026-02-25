@@ -1,0 +1,76 @@
+id: detect-vpc-traffic-mirroring
+name: VPC Traffic Mirroring Session Created
+description: >
+  Detects creation of VPC traffic mirroring sessions or targets. An attacker
+  with EC2 permissions can set up traffic mirroring to capture and exfiltrate
+  network traffic within a VPC — including unencrypted internal service
+  communications, database queries, and API calls. Traffic mirroring is rarely
+  used in most environments, making any creation event highly suspicious.
+  Threshold of 1 ensures immediate alerting.
+author: irone contributors
+severity: critical
+event_class: api_activity
+limit: 5000
+threshold: 1
+tags:
+  - network-sniffing
+  - collection
+  - exfiltration
+  - vpc
+mitre_attack:
+  - T1040
+  - T1557
+references:
+  - https://attack.mitre.org/techniques/T1040/
+  - https://attack.mitre.org/techniques/T1557/
+  - https://docs.aws.amazon.com/vpc/latest/mirroring/what-is-traffic-mirroring.html
+  - https://rhinosecuritylabs.com/aws/abusing-vpc-traffic-mirroring-in-aws/
+data_sources:
+  - cloudtrail
+filters:
+  - field: api.operation
+    in:
+      - CreateTrafficMirrorSession
+      - CreateTrafficMirrorTarget
+      - CreateTrafficMirrorFilter
+  - field: api.service.name
+    equals: ec2.amazonaws.com
+  - field: status
+    equals: Success
+
+test_cases:
+  - name: triggers on CreateTrafficMirrorSession
+    events:
+      - api.operation: CreateTrafficMirrorSession
+        api.service.name: ec2.amazonaws.com
+        status: Success
+    expected:
+      triggered: true
+      match_count: 1
+
+  - name: triggers on CreateTrafficMirrorTarget
+    events:
+      - api.operation: CreateTrafficMirrorTarget
+        api.service.name: ec2.amazonaws.com
+        status: Success
+    expected:
+      triggered: true
+      match_count: 1
+
+  - name: does not trigger on failed mirror creation
+    events:
+      - api.operation: CreateTrafficMirrorSession
+        api.service.name: ec2.amazonaws.com
+        status: Failure
+    expected:
+      triggered: false
+      match_count: 0
+
+  - name: does not trigger on mirror deletion
+    events:
+      - api.operation: DeleteTrafficMirrorSession
+        api.service.name: ec2.amazonaws.com
+        status: Success
+    expected:
+      triggered: false
+      match_count: 0

@@ -1,0 +1,89 @@
+id: detect-kms-key-policy-tampering
+name: KMS Key Policy or Grant Modification
+description: >
+  Detects modifications to KMS key policies, grants, or aliases. An attacker
+  with kms:PutKeyPolicy can modify a key's resource policy to grant themselves
+  decrypt access, enabling them to read encrypted data (S3 objects, EBS
+  volumes, RDS snapshots, Secrets Manager secrets). KMS grants can also
+  delegate decryption rights without modifying the key policy. Key disabling
+  or scheduled deletion can cause denial of service by rendering encrypted
+  data permanently inaccessible. Threshold of 1 for immediate alerting.
+author: irone contributors
+severity: critical
+event_class: api_activity
+limit: 5000
+threshold: 1
+tags:
+  - defense-evasion
+  - impact
+  - kms
+  - encryption
+mitre_attack:
+  - T1486
+  - T1490
+references:
+  - https://attack.mitre.org/techniques/T1486/
+  - https://attack.mitre.org/techniques/T1490/
+  - https://docs.aws.amazon.com/kms/latest/developerguide/key-policies.html
+  - https://rhinosecuritylabs.com/aws/s3-ransomware-part-2-prevention-and-defense/
+data_sources:
+  - cloudtrail
+filters:
+  - field: api.operation
+    in:
+      - PutKeyPolicy
+      - CreateGrant
+      - DisableKey
+      - ScheduleKeyDeletion
+      - CreateAlias
+      - UpdateAlias
+  - field: api.service.name
+    equals: kms.amazonaws.com
+  - field: status
+    equals: Success
+
+test_cases:
+  - name: triggers on PutKeyPolicy
+    events:
+      - api.operation: PutKeyPolicy
+        api.service.name: kms.amazonaws.com
+        status: Success
+    expected:
+      triggered: true
+      match_count: 1
+
+  - name: triggers on ScheduleKeyDeletion
+    events:
+      - api.operation: ScheduleKeyDeletion
+        api.service.name: kms.amazonaws.com
+        status: Success
+    expected:
+      triggered: true
+      match_count: 1
+
+  - name: triggers on CreateGrant
+    events:
+      - api.operation: CreateGrant
+        api.service.name: kms.amazonaws.com
+        status: Success
+    expected:
+      triggered: true
+      match_count: 1
+
+  - name: does not trigger on Decrypt
+    events:
+      - api.operation: Decrypt
+        api.service.name: kms.amazonaws.com
+        status: Success
+    expected:
+      triggered: false
+      match_count: 0
+
+  - name: does not trigger on failed PutKeyPolicy
+    events:
+      - api.operation: PutKeyPolicy
+        api.service.name: kms.amazonaws.com
+        status: Failure
+    expected:
+      triggered: false
+      match_count: 0

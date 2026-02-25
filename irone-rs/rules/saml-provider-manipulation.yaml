@@ -1,0 +1,74 @@
+id: detect-saml-provider-manipulation
+name: SAML/SSO Provider Created or Modified
+description: >
+  Detects creation or modification of SAML identity providers in IAM.
+  In a Golden SAML attack, an adversary with admin access creates or modifies
+  a SAML provider to forge authentication tokens, granting persistent access
+  to any role that trusts the provider — even after credential rotation. Also
+  detects OIDC provider manipulation (used for CI/CD trust like GitHub Actions).
+  Any change to identity federation configuration is a high-confidence indicator
+  of persistence establishment. Threshold of 1 for immediate alerting.
+author: irone contributors
+severity: critical
+event_class: api_activity
+limit: 5000
+threshold: 1
+tags:
+  - persistence
+  - privilege-escalation
+  - federation
+  - saml
+  - golden-saml
+mitre_attack:
+  - T1078.004
+  - T1606.002
+references:
+  - https://attack.mitre.org/techniques/T1078/004/
+  - https://attack.mitre.org/techniques/T1606/002/
+  - https://www.cyberark.com/resources/threat-research-blog/golden-saml-newly-discovered-attack-technique-forges-authentication-to-cloud-apps
+  - https://docs.aws.amazon.com/IAM/latest/UserGuide/id_roles_providers_create_saml.html
+data_sources:
+  - cloudtrail
+filters:
+  - field: api.operation
+    in:
+      - CreateSAMLProvider
+      - UpdateSAMLProvider
+      - CreateOpenIDConnectProvider
+      - AddClientIDToOpenIDConnectProvider
+      - UpdateOpenIDConnectProviderThumbprint
+  - field: api.service.name
+    equals: iam.amazonaws.com
+
+test_cases:
+  - name: triggers on CreateSAMLProvider
+    events:
+      - api.operation: CreateSAMLProvider
+        api.service.name: iam.amazonaws.com
+    expected:
+      triggered: true
+      match_count: 1
+
+  - name: triggers on UpdateSAMLProvider
+    events:
+      - api.operation: UpdateSAMLProvider
+        api.service.name: iam.amazonaws.com
+    expected:
+      triggered: true
+      match_count: 1
+
+  - name: triggers on CreateOpenIDConnectProvider
+    events:
+      - api.operation: CreateOpenIDConnectProvider
+        api.service.name: iam.amazonaws.com
+    expected:
+      triggered: true
+      match_count: 1
+
+  - name: does not trigger on DeleteSAMLProvider
+    events:
+      - api.operation: DeleteSAMLProvider
+        api.service.name: iam.amazonaws.com
+    expected:
+      triggered: false
+      match_count: 0

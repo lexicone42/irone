@@ -1,0 +1,89 @@
+id: detect-org-policy-tampering
+name: Organization SCP or Policy Modification
+description: >
+  Detects modifications to AWS Organizations service control policies (SCPs),
+  account management, or organizational structure. An attacker with
+  Organizations admin access can detach SCPs (removing guardrails), create
+  rogue member accounts, or invite external accounts into the org. SCP
+  detachment is particularly dangerous as it can remove security boundaries
+  across all accounts simultaneously. Threshold of 1 for immediate alerting.
+author: irone contributors
+severity: critical
+event_class: api_activity
+limit: 5000
+threshold: 1
+tags:
+  - defense-evasion
+  - persistence
+  - organizations
+  - scp
+mitre_attack:
+  - T1562
+  - T1562.001
+references:
+  - https://attack.mitre.org/techniques/T1562/
+  - https://attack.mitre.org/techniques/T1562/001/
+  - https://docs.aws.amazon.com/organizations/latest/userguide/orgs_manage_policies_scps.html
+data_sources:
+  - cloudtrail
+filters:
+  - field: api.operation
+    in:
+      - DetachPolicy
+      - DeletePolicy
+      - UpdatePolicy
+      - CreatePolicy
+      - CreateAccount
+      - InviteAccountToOrganization
+      - RemoveAccountFromOrganization
+      - LeaveOrganization
+  - field: api.service.name
+    equals: organizations.amazonaws.com
+  - field: status
+    equals: Success
+
+test_cases:
+  - name: triggers on SCP detachment
+    events:
+      - api.operation: DetachPolicy
+        api.service.name: organizations.amazonaws.com
+        status: Success
+    expected:
+      triggered: true
+      match_count: 1
+
+  - name: triggers on account creation
+    events:
+      - api.operation: CreateAccount
+        api.service.name: organizations.amazonaws.com
+        status: Success
+    expected:
+      triggered: true
+      match_count: 1
+
+  - name: triggers on LeaveOrganization
+    events:
+      - api.operation: LeaveOrganization
+        api.service.name: organizations.amazonaws.com
+        status: Success
+    expected:
+      triggered: true
+      match_count: 1
+
+  - name: does not trigger on DescribeOrganization
+    events:
+      - api.operation: DescribeOrganization
+        api.service.name: organizations.amazonaws.com
+        status: Success
+    expected:
+      triggered: false
+      match_count: 0
+
+  - name: does not trigger on failed DetachPolicy
+    events:
+      - api.operation: DetachPolicy
+        api.service.name: organizations.amazonaws.com
+        status: Failure
+    expected:
+      triggered: false
+      match_count: 0

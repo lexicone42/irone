@@ -1,0 +1,96 @@
+id: detect-anomalous-region-activity
+name: Compute Activity in Unusual Region
+description: >
+  Detects resource creation or modification APIs in AWS regions outside the
+  organization's normal footprint. Attackers frequently launch EC2 instances,
+  Lambda functions, or other compute resources in unused regions to evade
+  monitoring and abuse service quotas. This rule fires on any compute-related
+  API call that doesn't occur in the primary operational regions. The
+  not_equals filter on cloud.region should be set to the org's primary
+  region(s); adjust per deployment. Threshold of 1 flags the first unusual
+  activity.
+author: irone contributors
+severity: high
+event_class: api_activity
+limit: 5000
+threshold: 1
+tags:
+  - defense-evasion
+  - resource-development
+  - unused-regions
+  - cryptomining
+mitre_attack:
+  - T1535
+  - T1578.002
+references:
+  - https://attack.mitre.org/techniques/T1535/
+  - https://attack.mitre.org/techniques/T1578/002/
+  - https://www.cadosecurity.com/blog/analysis-of-initial-in-the-wild-attacks-exploiting-confluence-cve-2023-22527
+data_sources:
+  - cloudtrail
+filters:
+  - field: api.operation
+    in:
+      - RunInstances
+      - StartInstances
+      - RequestSpotInstances
+      - CreateFunction20150331
+      - CreateFunction
+      - CreateStack
+      - CreateDBInstance
+      - CreateCluster
+      - CreateBucket
+  - field: api.service.name
+    in:
+      - ec2.amazonaws.com
+      - lambda.amazonaws.com
+      - cloudformation.amazonaws.com
+      - rds.amazonaws.com
+      - ecs.amazonaws.com
+      - s3.amazonaws.com
+  - field: status
+    equals: Success
+  # Flag activity outside primary region. Adjust to org's operational region(s).
+  - field: cloud.region
+    not_equals: us-west-2
+
+test_cases:
+  - name: triggers on RunInstances in non-primary region
+    events:
+      - api.operation: RunInstances
+        api.service.name: ec2.amazonaws.com
+        status: Success
+        cloud.region: ap-southeast-1
+    expected:
+      triggered: true
+      match_count: 1
+
+  - name: does not trigger on RunInstances in primary region
+    events:
+      - api.operation: RunInstances
+        api.service.name: ec2.amazonaws.com
+        status: Success
+        cloud.region: us-west-2
+    expected:
+      triggered: false
+      match_count: 0
+
+  - name: triggers on CreateFunction in eu-west-1
+    events:
+      - api.operation: CreateFunction
+        api.service.name: lambda.amazonaws.com
+        status: Success
+        cloud.region: eu-west-1
+    expected:
+      triggered: true
+      match_count: 1
+
+  - name: does not trigger on failed RunInstances in unusual region
+    events:
+      - api.operation: RunInstances
+        api.service.name: ec2.amazonaws.com
+        status: Failure
+        cloud.region: ap-southeast-1
+    expected:
+      triggered: false
+      match_count: 0

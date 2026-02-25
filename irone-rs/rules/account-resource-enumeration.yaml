@@ -1,0 +1,103 @@
+id: detect-account-resource-enumeration
+name: Account and Resource Enumeration
+description: >
+  Detects bulk enumeration of IAM users, roles, EC2 instances, and other
+  resources. After initial access, attackers systematically call List*/Describe*
+  APIs to map the environment — discovering principals, compute resources,
+  storage, and network topology. A threshold of 10 enumeration API calls in the
+  lookback window distinguishes automated reconnaissance from normal admin
+  activity. Focuses on IAMUser callers to avoid flagging service-to-service
+  inventory operations (Config, SSM, etc.).
+author: irone contributors
+severity: medium
+event_class: api_activity
+limit: 5000
+threshold: 10
+tags:
+  - reconnaissance
+  - discovery
+  - enumeration
+mitre_attack:
+  - T1087
+  - T1087.004
+  - T1580
+references:
+  - https://attack.mitre.org/techniques/T1087/
+  - https://attack.mitre.org/techniques/T1087/004/
+  - https://attack.mitre.org/techniques/T1580/
+  - https://rhinosecuritylabs.com/aws/aws-iam-enumeration/
+data_sources:
+  - cloudtrail
+filters:
+  - field: api.operation
+    in:
+      # IAM enumeration
+      - ListUsers
+      - ListRoles
+      - ListGroups
+      - ListPolicies
+      - ListAttachedUserPolicies
+      - ListAttachedRolePolicies
+      - ListAttachedGroupPolicies
+      - ListUserPolicies
+      - ListRolePolicies
+      - GetAccountAuthorizationDetails
+      # EC2 / infrastructure enumeration
+      - DescribeInstances
+      - DescribeSecurityGroups
+      - DescribeSubnets
+      - DescribeVpcs
+      - DescribeNetworkInterfaces
+      # S3 enumeration
+      - ListBuckets
+      # Lambda enumeration
+      - ListFunctions
+      # RDS / databases
+      - DescribeDBInstances
+      - DescribeDBClusters
+  - field: api.service.name
+    in:
+      - iam.amazonaws.com
+      - ec2.amazonaws.com
+      - s3.amazonaws.com
+      - lambda.amazonaws.com
+      - rds.amazonaws.com
+  - field: actor.user.type
+    equals: IAMUser
+
+test_cases:
+  - name: triggers on IAMUser calling ListUsers
+    events:
+      - api.operation: ListUsers
+        api.service.name: iam.amazonaws.com
+        actor.user.type: IAMUser
+    expected:
+      triggered: true
+      threshold_override: 1
+
+  - name: triggers on IAMUser calling DescribeInstances
+    events:
+      - api.operation: DescribeInstances
+        api.service.name: ec2.amazonaws.com
+        actor.user.type: IAMUser
+    expected:
+      triggered: true
+      threshold_override: 1
+
+  - name: does not trigger on AssumedRole calling ListUsers
+    events:
+      - api.operation: ListUsers
+        api.service.name: iam.amazonaws.com
+        actor.user.type: AssumedRole
+    expected:
+      triggered: false
+      threshold_override: 1
+
+  - name: does not trigger on non-enumeration API
+    events:
+      - api.operation: CreateUser
+        api.service.name: iam.amazonaws.com
+        actor.user.type: IAMUser
+    expected:
+      triggered: false
+      threshold_override: 1

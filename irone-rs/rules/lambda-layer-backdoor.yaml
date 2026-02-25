@@ -1,0 +1,88 @@
+id: detect-lambda-layer-backdoor
+name: Lambda Layer Published or Attached
+description: >
+  Detects Lambda layer operations that may indicate code injection. An attacker
+  can publish a malicious Lambda layer and attach it to existing functions via
+  UpdateFunctionConfiguration. Lambda layers execute before the function code,
+  enabling credential theft, data exfiltration, or backdoor installation without
+  modifying the function's deployment package. Also detects direct function code
+  updates (UpdateFunctionCode) which can replace function logic entirely.
+  Threshold of 1 for immediate alerting on any layer or code modification.
+author: irone contributors
+severity: high
+event_class: api_activity
+limit: 5000
+threshold: 1
+tags:
+  - persistence
+  - execution
+  - lambda
+  - code-injection
+mitre_attack:
+  - T1546
+  - T1059
+references:
+  - https://attack.mitre.org/techniques/T1546/
+  - https://attack.mitre.org/techniques/T1059/
+  - https://www.cadosecurity.com/blog/cado-discovers-denonia-the-first-malware-specifically-targeting-lambda
+  - https://docs.aws.amazon.com/lambda/latest/dg/chapter-layers.html
+data_sources:
+  - cloudtrail
+filters:
+  - field: api.operation
+    in:
+      - PublishLayerVersion
+      - UpdateFunctionConfiguration20150331v2
+      - UpdateFunctionConfiguration
+      - UpdateFunctionCode20150331v2
+      - UpdateFunctionCode
+  - field: api.service.name
+    equals: lambda.amazonaws.com
+  - field: status
+    equals: Success
+
+test_cases:
+  - name: triggers on PublishLayerVersion
+    events:
+      - api.operation: PublishLayerVersion
+        api.service.name: lambda.amazonaws.com
+        status: Success
+    expected:
+      triggered: true
+      match_count: 1
+
+  - name: triggers on UpdateFunctionConfiguration
+    events:
+      - api.operation: UpdateFunctionConfiguration
+        api.service.name: lambda.amazonaws.com
+        status: Success
+    expected:
+      triggered: true
+      match_count: 1
+
+  - name: triggers on UpdateFunctionCode
+    events:
+      - api.operation: UpdateFunctionCode
+        api.service.name: lambda.amazonaws.com
+        status: Success
+    expected:
+      triggered: true
+      match_count: 1
+
+  - name: does not trigger on GetFunction
+    events:
+      - api.operation: GetFunction
+        api.service.name: lambda.amazonaws.com
+        status: Success
+    expected:
+      triggered: false
+      match_count: 0
+
+  - name: does not trigger on failed update
+    events:
+      - api.operation: UpdateFunctionCode
+        api.service.name: lambda.amazonaws.com
+        status: Failure
+    expected:
+      triggered: false
+      match_count: 0

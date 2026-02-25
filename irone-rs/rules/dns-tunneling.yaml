@@ -1,27 +1,64 @@
 id: detect-dns-tunneling
 name: Potential DNS Tunneling Activity
 description: >
-  Detects a high volume of DNS queries, which may indicate DNS tunneling for
-  data exfiltration or C2 communication. DNS tunneling tools encode data in
-  subdomain labels, generating many queries to attacker-controlled domains.
-  OCSF DnsActivity events from Route 53 Resolver logs capture each query.
-  Threshold of 500 queries in the lookback window significantly exceeds
-  normal resolver activity for most VPCs.
+  Detects a high volume of successful DNS queries that may indicate DNS
+  tunneling for data exfiltration or C2 communication. DNS tunneling tools
+  encode data in subdomain labels, generating many queries to
+  attacker-controlled domains. Filters for successful responses (rcode_id=0)
+  and TXT record queries, which are the most common tunneling vector due to
+  their larger payload capacity. OCSF DnsActivity events from Route 53
+  Resolver logs capture each query. Threshold of 200 TXT queries in the
+  lookback window significantly exceeds normal TXT resolver activity.
 author: irone contributors
 severity: high
 event_class: dns_activity
 limit: 5000
-threshold: 500
+threshold: 200
 tags:
   - dns
   - exfiltration
   - tunneling
+  - c2
 mitre_attack:
   - T1071.004
   - T1048.003
 references:
   - https://attack.mitre.org/techniques/T1071/004/
   - https://attack.mitre.org/techniques/T1048/003/
+  - https://unit42.paloaltonetworks.com/dns-tunneling-how-dns-can-be-abused-by-malicious-actors/
 data_sources:
   - route53-resolver
-filters: []
+filters:
+  # Successful responses only — failed queries are covered by nxdomain-spike
+  - field: rcode_id
+    equals: "0"
+  # TXT queries are the most common tunneling vector (larger payload)
+  - field: query.type
+    in:
+      - "TXT"
+      - "16"
+
+test_cases:
+  - name: triggers on successful TXT query
+    events:
+      - rcode_id: 0
+        query.type: TXT
+    expected:
+      triggered: true
+      threshold_override: 1
+
+  - name: does not trigger on NXDOMAIN TXT query
+    events:
+      - rcode_id: 3
+        query.type: TXT
+    expected:
+      triggered: false
+      threshold_override: 1
+
+  - name: does not trigger on successful A record query
+    events:
+      - rcode_id: 0
+        query.type: A
+    expected:
+      triggered: false
+      threshold_override: 1
