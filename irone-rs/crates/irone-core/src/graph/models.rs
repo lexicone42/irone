@@ -115,9 +115,18 @@ impl PrincipalNode {
     }
 
     /// Create a `GraphNode` + `PrincipalNode` from OCSF event data.
+    ///
+    /// Falls back through multiple identity fields when `actor.user.name` is
+    /// absent (e.g., anonymous Cognito `InitiateAuth` calls):
+    /// 1. `actor.user.name` / `user_name`
+    /// 2. `actor.user.uid_alt` (e.g., "Anonymous" in Cognito events)
+    /// 3. `actor.session.uid` (session-based identity)
     #[must_use]
     pub fn from_ocsf(event: &serde_json::Map<String, Value>) -> Option<(GraphNode, Self)> {
-        let user_name = get_nested_str(event, &["actor.user.name", "user_name"])?;
+        let user_name = get_nested_str(event, &["actor.user.name", "user_name"])
+            .or_else(|| get_nested_str(event, &["actor.user.uid_alt"]))
+            .or_else(|| get_nested_str(event, &["actor.session.uid"]))
+            .filter(|s| !s.is_empty())?;
 
         let user_type = get_nested_str(event, &["actor.user.type", "user_type"]);
 

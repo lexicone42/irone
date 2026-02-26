@@ -510,7 +510,16 @@ fn build_node_description(node: &super::models::GraphNode) -> String {
 }
 
 fn extract_edge_events(graph: &SecurityGraph, timeline: &mut InvestigationTimeline) {
+    use super::models::EdgeType;
+
     for edge in &graph.edges {
+        // Skip structural edges that link findings to raw events — these add
+        // noise to the timeline without analyst value. The Event nodes
+        // themselves already appear in the timeline with full OCSF context.
+        if edge.edge_type == EdgeType::TriggeredBy {
+            continue;
+        }
+
         let Some(timestamp) = edge.first_seen.or(edge.last_seen) else {
             continue;
         };

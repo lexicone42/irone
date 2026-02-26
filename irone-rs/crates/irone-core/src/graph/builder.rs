@@ -269,10 +269,12 @@ impl GraphBuilder {
         let mut ids = ExtractedIdentifiers::default();
 
         for m in matches {
-            // Users
-            if let Some(val) =
-                get_nested_value(m, "actor.user.name").or_else(|| m.get("user_name").cloned())
+            // Users — fall back to uid_alt for anonymous principals (e.g. Cognito)
+            if let Some(val) = get_nested_value(m, "actor.user.name")
+                .or_else(|| m.get("user_name").cloned())
+                .or_else(|| get_nested_value(m, "actor.user.uid_alt"))
                 && let Some(s) = val.as_str()
+                && !s.is_empty()
             {
                 ids.users.insert(s.to_string());
             }
@@ -372,10 +374,13 @@ impl GraphBuilder {
                 }
             }
 
-            // Event node
+            // Event node — link to finding and source IP for context
             if include_events {
                 let event_id = self.add_event_from_ocsf(m, event_time);
                 self.add_edge(EdgeType::TriggeredBy, finding_id, &event_id, event_time);
+                if let Some(iid) = &ip_id {
+                    self.add_edge(EdgeType::OriginatedFrom, &event_id, iid, event_time);
+                }
             }
         }
     }

@@ -663,88 +663,7 @@ async fn get_graph(
         .get(&inv_id)
         .ok_or_else(|| WebError::NotFound(format!("investigation '{inv_id}' not found")))?;
 
-    let graph = &inv.graph;
-    let mut elements = Vec::new();
-
-    // Nodes → Cytoscape elements
-    for node in graph.nodes.values() {
-        let mut data = serde_json::Map::new();
-        data.insert("id".into(), serde_json::Value::String(node.id.clone()));
-        data.insert(
-            "label".into(),
-            serde_json::Value::String(node.label.clone()),
-        );
-        data.insert(
-            "node_type".into(),
-            serde_json::Value::String(node.node_type.to_string()),
-        );
-        if let Some(t) = node.first_seen {
-            data.insert(
-                "first_seen".into(),
-                serde_json::Value::String(t.to_rfc3339()),
-            );
-        }
-        if let Some(t) = node.last_seen {
-            data.insert(
-                "last_seen".into(),
-                serde_json::Value::String(t.to_rfc3339()),
-            );
-        }
-        data.insert(
-            "event_count".into(),
-            serde_json::Value::Number(node.event_count.into()),
-        );
-        elements.push(CytoscapeElement {
-            group: "nodes",
-            data,
-        });
-    }
-
-    // Edges → Cytoscape elements
-    for edge in &graph.edges {
-        let mut data = serde_json::Map::new();
-        data.insert("id".into(), serde_json::Value::String(edge.id.clone()));
-        data.insert(
-            "source".into(),
-            serde_json::Value::String(edge.source_id.clone()),
-        );
-        data.insert(
-            "target".into(),
-            serde_json::Value::String(edge.target_id.clone()),
-        );
-        data.insert(
-            "edge_type".into(),
-            serde_json::Value::String(edge.edge_type.to_string()),
-        );
-        data.insert("weight".into(), serde_json::json!(edge.weight));
-        data.insert(
-            "event_count".into(),
-            serde_json::Value::Number(edge.event_count.into()),
-        );
-        if !edge.properties.is_empty() {
-            data.insert("properties".into(), serde_json::json!(edge.properties));
-        }
-        if let Some(t) = edge.first_seen {
-            data.insert(
-                "first_seen".into(),
-                serde_json::Value::String(t.to_rfc3339()),
-            );
-        }
-        if let Some(t) = edge.last_seen {
-            data.insert(
-                "last_seen".into(),
-                serde_json::Value::String(t.to_rfc3339()),
-            );
-        }
-        elements.push(CytoscapeElement {
-            group: "edges",
-            data,
-        });
-    }
-
-    let summary = serde_json::to_value(graph.summary()).unwrap_or_default();
-
-    Ok(Json(CytoscapeElements { elements, summary }))
+    Ok(Json(graph_to_cytoscape(&inv.graph)))
 }
 
 /// `GET /api/investigations/{inv_id}/report` — generate report data.
@@ -1772,6 +1691,9 @@ fn graph_to_cytoscape(graph: &SecurityGraph) -> CytoscapeElements {
             "event_count".into(),
             serde_json::Value::Number(node.event_count.into()),
         );
+        if !node.properties.is_empty() {
+            data.insert("properties".into(), serde_json::json!(node.properties));
+        }
         elements.push(CytoscapeElement {
             group: "nodes",
             data,
