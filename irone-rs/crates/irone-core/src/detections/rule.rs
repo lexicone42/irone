@@ -45,6 +45,12 @@ pub struct DetectionResult {
     pub executed_at: DateTime<Utc>,
     pub execution_time_ms: f64,
     pub error: Option<String>,
+    /// MITRE ATT&CK technique IDs from the detection rule (e.g. `["T1110"]`).
+    #[serde(default)]
+    pub mitre_attack: Vec<String>,
+    /// Tags from the detection rule.
+    #[serde(default)]
+    pub tags: Vec<String>,
 }
 
 impl DetectionResult {
@@ -62,6 +68,8 @@ impl DetectionResult {
             executed_at: Utc::now(),
             execution_time_ms: 0.0,
             error: Some(format!("Rule not found: {rule_id}")),
+            mitre_attack: Vec::new(),
+            tags: Vec::new(),
         }
     }
 
@@ -79,6 +87,8 @@ impl DetectionResult {
             executed_at: Utc::now(),
             execution_time_ms: 0.0,
             error: Some(err.into()),
+            mitre_attack: Vec::new(),
+            tags: Vec::new(),
         }
     }
 
@@ -252,6 +262,8 @@ pub fn threshold_evaluate(
     severity: &Severity,
     qr: &QueryResult,
     threshold: usize,
+    mitre_attack: &[String],
+    tags: &[String],
 ) -> DetectionResult {
     let match_count = qr.len();
     let triggered = match_count >= threshold;
@@ -283,6 +295,8 @@ pub fn threshold_evaluate(
         executed_at: Utc::now(),
         execution_time_ms: 0.0, // Set by caller (run_rule) to include query time
         error: None,
+        mitre_attack: mitre_attack.to_vec(),
+        tags: tags.to_vec(),
     }
 }
 
@@ -372,6 +386,8 @@ impl DetectionRule for SQLDetectionRule {
             &self.meta.severity,
             qr,
             self.threshold,
+            &self.meta.mitre_attack,
+            &self.meta.tags,
         )
     }
 }
@@ -496,6 +512,8 @@ impl DetectionRule for DualTargetDetectionRule {
             &self.meta.severity,
             qr,
             self.threshold,
+            &self.meta.mitre_attack,
+            &self.meta.tags,
         )
     }
 }
@@ -542,6 +560,8 @@ impl DetectionRule for OCSFDetectionRule {
             &self.meta.severity,
             qr,
             self.threshold,
+            &self.meta.mitre_attack,
+            &self.meta.tags,
         )
     }
 }
@@ -604,6 +624,8 @@ mod tests {
             match_count: 10,
             matches,
             message: "triggered".into(),
+            mitre_attack: Vec::new(),
+            tags: Vec::new(),
             executed_at: Utc::now(),
             execution_time_ms: 1.0,
             error: None,
@@ -851,7 +873,7 @@ threshold: 1
                 (0..n_rows).map(|i| json_row!("i" => i)).collect();
             let qr = QueryResult::from_maps(rows);
 
-            let result = threshold_evaluate("r", "rule", &Severity::High, &qr, threshold);
+            let result = threshold_evaluate("r", "rule", &Severity::High, &qr, threshold, &[], &[]);
 
             prop_assert_eq!(
                 result.triggered,
@@ -871,7 +893,7 @@ threshold: 1
     #[test]
     fn threshold_zero_triggers_on_empty() {
         let qr = QueryResult::empty();
-        let result = threshold_evaluate("r", "rule", &Severity::High, &qr, 0);
+        let result = threshold_evaluate("r", "rule", &Severity::High, &qr, 0, &[], &[]);
         assert!(result.triggered);
         assert_eq!(result.match_count, 0);
     }
@@ -970,7 +992,7 @@ threshold: 1
                 .map(|i| json_row!("i" => i))
                 .collect();
             let qr = QueryResult::from_maps(rows);
-            let result = threshold_evaluate("r", "rule", &Severity::High, &qr, threshold);
+            let result = threshold_evaluate("r", "rule", &Severity::High, &qr, threshold, &[], &[]);
 
             if result.triggered {
                 prop_assert!(result.matches.len() <= 100);

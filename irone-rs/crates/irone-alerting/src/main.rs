@@ -443,6 +443,8 @@ mod tests {
             executed_at: Utc::now(),
             execution_time_ms: 42.0,
             error: None,
+            mitre_attack: Vec::new(),
+            tags: Vec::new(),
         }
     }
 

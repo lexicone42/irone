@@ -255,6 +255,8 @@ mod tests {
             executed_at: chrono::Utc::now(),
             execution_time_ms: 100.0,
             error: None,
+            mitre_attack: vec!["T1078".into()],
+            tags: vec!["auth".into(), "root".into()],
         }
     }
 

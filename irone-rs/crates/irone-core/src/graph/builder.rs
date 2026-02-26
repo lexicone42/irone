@@ -60,11 +60,24 @@ impl GraphBuilder {
 
         // Create the security finding node
         let finding_id = SecurityFindingNode::create_id(&result.rule_id, result.executed_at);
+        let mut finding_props = HashMap::new();
+        if !result.mitre_attack.is_empty() {
+            finding_props.insert(
+                "mitre_attack".into(),
+                serde_json::to_value(&result.mitre_attack).unwrap_or_default(),
+            );
+        }
+        if !result.tags.is_empty() {
+            finding_props.insert(
+                "tags".into(),
+                serde_json::to_value(&result.tags).unwrap_or_default(),
+            );
+        }
         let finding_node = GraphNode {
             id: finding_id.clone(),
             node_type: NodeType::SecurityFinding,
             label: result.rule_name.clone(),
-            properties: HashMap::new(),
+            properties: finding_props,
             first_seen: Some(result.executed_at),
             last_seen: Some(result.executed_at),
             event_count: result.match_count as u64,
@@ -587,20 +600,40 @@ impl GraphBuilder {
         event: &serde_json::Map<String, Value>,
         event_time: DateTime<Utc>,
     ) -> String {
-        let event_uid = get_nested_value(event, "metadata.uid")
-            .or_else(|| event.get("event_uid").cloned())
-            .and_then(|v| v.as_str().map(std::string::ToString::to_string))
-            .unwrap_or_else(|| format!("evt-{}", event_time.timestamp_nanos_opt().unwrap_or(0)));
-
-        let id = format!("Event:{event_uid}");
         let class_name = get_nested_value(event, "class_name")
             .and_then(|v| v.as_str().map(std::string::ToString::to_string))
             .unwrap_or_default();
 
+        // Collapse identical events by signature: (class_uid, operation, status, src_ip).
+        // Events with the same signature merge into a single node with accumulated
+        // event_count, producing e.g. "InitiateAuth (x24)" instead of 24 star nodes.
+        let class_uid = event.get("class_uid").and_then(Value::as_u64).unwrap_or(0);
+        let operation = get_nested_value(event, "api.operation")
+            .and_then(|v| v.as_str().map(str::to_string))
+            .unwrap_or_default();
+        let status = event
+            .get("status")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown");
+        let src_ip = get_nested_value(event, "src_endpoint.ip")
+            .and_then(|v| v.as_str().map(str::to_string))
+            .unwrap_or_default();
+
+        let id = format!("Event:{class_uid}:{operation}:{status}:{src_ip}");
+
+        // Descriptive label: prefer "Operation (Status)" over generic class name
+        let label = if operation.is_empty() {
+            class_name
+        } else if status == "unknown" {
+            operation.clone()
+        } else {
+            format!("{operation} ({status})")
+        };
+
         let mut node = GraphNode {
             id: id.clone(),
             node_type: NodeType::Event,
-            label: class_name,
+            label,
             properties: HashMap::new(),
             first_seen: Some(event_time),
             last_seen: Some(event_time),
@@ -1089,6 +1122,8 @@ mod tests {
                 .with_timezone(&Utc),
             execution_time_ms: 150.0,
             error: None,
+            mitre_attack: vec!["T1530".into()],
+            tags: vec!["collection".into()],
         }
     }
 
@@ -1175,6 +1210,74 @@ mod tests {
 
         let events = graph.get_nodes_by_type(&NodeType::Event);
         assert_eq!(events.len(), 2, "expected 2 event nodes");
+    }
+
+    #[tokio::test]
+    async fn identical_events_collapse_into_one_node() {
+        let det = DetectionResult {
+            rule_id: "RULE-COLLAPSE".into(),
+            rule_name: "Collapse Test".into(),
+            triggered: true,
+            severity: Severity::High,
+            match_count: 5,
+            matches: (0..5)
+                .map(|_| {
+                    json_row!(
+                        "actor.user.name" => "anon",
+                        "src_endpoint.ip" => "10.0.0.1",
+                        "api.operation" => "InitiateAuth",
+                        "api.service.name" => "cognito-idp.amazonaws.com",
+                        "status" => "Failure",
+                        "class_uid" => 6003,
+                        "time_dt" => "2024-01-15T10:30:00Z"
+                    )
+                })
+                .collect(),
+            message: "Auth failures".into(),
+            executed_at: Utc::now(),
+            execution_time_ms: 0.0,
+            error: None,
+            mitre_attack: vec!["T1110".into()],
+            tags: Vec::new(),
+        };
+
+        let mut builder = GraphBuilder::new();
+        let graph = builder
+            .build_from_detection::<MockSL>(&det, None, 0, 0, true)
+            .await;
+
+        let events = graph.get_nodes_by_type(&NodeType::Event);
+        assert_eq!(
+            events.len(),
+            1,
+            "5 identical events should collapse to 1 node, got {}",
+            events.len()
+        );
+        assert_eq!(
+            events[0].event_count, 5,
+            "collapsed node should have event_count=5"
+        );
+        assert!(
+            events[0].label.contains("InitiateAuth"),
+            "label should contain operation name: {}",
+            events[0].label
+        );
+    }
+
+    #[tokio::test]
+    async fn finding_node_carries_mitre_tags() {
+        let mut builder = GraphBuilder::new();
+        let det = sample_detection();
+        let graph = builder
+            .build_from_detection::<MockSL>(&det, None, 0, 0, false)
+            .await;
+
+        let findings = graph.get_nodes_by_type(&NodeType::SecurityFinding);
+        assert_eq!(findings.len(), 1);
+        let mitre = findings[0].properties.get("mitre_attack");
+        assert!(mitre.is_some(), "finding should have mitre_attack property");
+        let arr = mitre.unwrap().as_array().unwrap();
+        assert_eq!(arr[0].as_str().unwrap(), "T1530");
     }
 
     #[test]

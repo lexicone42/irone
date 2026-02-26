@@ -560,15 +560,25 @@ impl SecurityGraph {
         }
     }
 
-    /// Add a node, merging timestamps if it already exists.
+    /// Add a node, merging timestamps and event counts if it already exists.
     pub fn add_node(&mut self, node: GraphNode) {
         if let Some(existing) = self.nodes.get_mut(&node.id) {
+            // Update timestamps without the event_count side-effect of update_timestamps
             if let Some(t) = node.first_seen {
-                existing.update_timestamps(t);
+                match existing.first_seen {
+                    None => existing.first_seen = Some(t),
+                    Some(e) if t < e => existing.first_seen = Some(t),
+                    _ => {}
+                }
             }
             if let Some(t) = node.last_seen {
-                existing.update_timestamps(t);
+                match existing.last_seen {
+                    None => existing.last_seen = Some(t),
+                    Some(e) if t > e => existing.last_seen = Some(t),
+                    _ => {}
+                }
             }
+            existing.event_count += node.event_count;
         } else {
             self.nodes.insert(node.id.clone(), node);
         }
@@ -804,7 +814,10 @@ mod tests {
         let node = g.get_node("n1").unwrap();
         assert_eq!(node.first_seen, Some(t1));
         assert_eq!(node.last_seen, Some(t2));
-        assert_eq!(node.event_count, 2);
+        assert_eq!(
+            node.event_count, 0,
+            "Principal nodes have event_count=0; merge sums them"
+        );
     }
 
     #[test]

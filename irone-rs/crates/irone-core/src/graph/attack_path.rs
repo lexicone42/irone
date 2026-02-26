@@ -115,6 +115,67 @@ pub struct AttackNarrative {
     pub edge_count: usize,
 }
 
+/// Map a MITRE ATT&CK technique ID (e.g. "T1078.004") to a kill chain phase.
+///
+/// Handles both top-level techniques and sub-techniques by matching on the
+/// parent ID (prefix before the dot). This covers the 27 detection rules in
+/// `irone-rs/rules/` plus the broader ATT&CK Enterprise Cloud matrix.
+#[must_use]
+pub fn technique_to_phase(technique_id: &str) -> AttackPhase {
+    // Normalize: match the parent technique for sub-techniques
+    let parent = technique_id.split('.').next().unwrap_or(technique_id);
+
+    match parent {
+        // ── Reconnaissance ──────────────────────────
+        "T1580" | "T1526" | "T1538" | "T1595" | "T1592" | "T1589" | "T1590" | "T1591" | "T1598"
+        | "T1597" | "T1596" | "T1593" => AttackPhase::Reconnaissance,
+
+        // ── Initial Access ──────────────────────────
+        "T1078" | "T1190" | "T1195" | "T1199" | "T1566" | "T1133" => AttackPhase::InitialAccess,
+
+        // ── Execution ───────────────────────────────
+        "T1059" | "T1203" | "T1204" | "T1609" | "T1648" => AttackPhase::Execution,
+
+        // ── Persistence ─────────────────────────────
+        "T1098" | "T1136" | "T1197" | "T1543" | "T1547" | "T1546" | "T1037" | "T1556" => {
+            AttackPhase::Persistence
+        }
+
+        // ── Privilege Escalation ────────────────────
+        "T1134" | "T1548" | "T1611" | "T1068" => AttackPhase::PrivilegeEscalation,
+
+        // ── Defense Evasion ─────────────────────────
+        "T1562" | "T1578" | "T1550" | "T1070" | "T1036" | "T1535" | "T1606" => {
+            AttackPhase::DefenseEvasion
+        }
+
+        // ── Credential Access ───────────────────────
+        "T1110" | "T1187" | "T1528" | "T1552" | "T1555" | "T1621" | "T1040" => {
+            AttackPhase::CredentialAccess
+        }
+
+        // ── Discovery ───────────────────────────────
+        "T1087" | "T1069" | "T1082" | "T1518" | "T1049" | "T1016" | "T1007" | "T1033" | "T1046"
+        | "T1135" | "T1201" | "T1010" | "T1217" => AttackPhase::Discovery,
+
+        // ── Lateral Movement ────────────────────────
+        "T1021" | "T1570" => AttackPhase::LateralMovement,
+
+        // ── Collection ──────────────────────────────
+        "T1530" | "T1119" | "T1213" | "T1005" => AttackPhase::Collection,
+
+        // ── Exfiltration ────────────────────────────
+        "T1020" | "T1030" | "T1048" | "T1567" | "T1537" => AttackPhase::Exfiltration,
+
+        // ── Impact ──────────────────────────────────
+        "T1486" | "T1531" | "T1485" | "T1561" | "T1489" | "T1529" | "T1498" | "T1499" => {
+            AttackPhase::Impact
+        }
+
+        _ => AttackPhase::Unknown,
+    }
+}
+
 // ─── Public API ─────────────────────────────────────────────────────
 
 /// Extract attack path narratives from a security investigation graph.
@@ -273,14 +334,26 @@ fn build_narrative_for_finding(
     // 1. Find all nodes reachable from the finding (max 5 hops)
     let reachable = bfs_reachable(graph, finding_id, 5);
 
-    // 2. Collect all edges within the reachable subgraph
+    // 2. Extract MITRE phase from the finding node's metadata
+    let mitre_phase = graph
+        .get_node(finding_id)
+        .and_then(|n| n.properties.get("mitre_attack"))
+        .and_then(serde_json::Value::as_array)
+        .and_then(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str())
+                .map(technique_to_phase)
+                .find(|p| *p != AttackPhase::Unknown)
+        });
+
+    // 3. Collect all edges within the reachable subgraph
     let subgraph_edges: Vec<&GraphEdge> = graph
         .edges
         .iter()
         .filter(|e| reachable.contains(&e.source_id) && reachable.contains(&e.target_id))
         .collect();
 
-    // 3. Classify each edge into an attack step
+    // 4. Classify each edge into an attack step
     let mut steps: Vec<AttackStep> = Vec::new();
     let mut seen_edges = HashSet::new();
 
@@ -288,21 +361,34 @@ fn build_narrative_for_finding(
         if !seen_edges.insert(&edge.id) {
             continue;
         }
-        if let Some(step) = classify_edge(edge, graph) {
+        if let Some(mut step) = classify_edge(edge, graph) {
+            // If the step couldn't be classified by API operation alone,
+            // inherit the phase from the detection rule's MITRE mapping.
+            if step.phase == AttackPhase::Unknown
+                && let Some(phase) = mitre_phase
+            {
+                step.phase = phase;
+            }
             steps.push(step);
         }
     }
 
-    // 4. Sort by timestamp, then by kill chain phase ordinal
+    // 5. Sort by timestamp, then by kill chain phase ordinal
     steps.sort_by(|a, b| {
         a.timestamp
             .cmp(&b.timestamp)
             .then_with(|| a.phase.ordinal().cmp(&b.phase.ordinal()))
     });
 
-    // 5. Deduce observed phases (preserving first-seen order)
+    // 6. Deduce observed phases (preserving first-seen order)
     let mut phases_observed = Vec::new();
     let mut seen_phases = HashSet::new();
+    // Include the MITRE-derived phase first if present
+    if let Some(phase) = mitre_phase
+        && seen_phases.insert(phase)
+    {
+        phases_observed.push(phase);
+    }
     for step in &steps {
         if step.phase != AttackPhase::Unknown && seen_phases.insert(step.phase) {
             phases_observed.push(step.phase);
@@ -932,6 +1018,95 @@ mod tests {
         assert_eq!(
             classify_operation("GetCallerSomethingWeird"),
             AttackPhase::Unknown
+        );
+    }
+
+    // ── technique_to_phase tests ──────────────────────────────
+
+    #[test]
+    fn technique_to_phase_maps_credential_access() {
+        assert_eq!(technique_to_phase("T1110"), AttackPhase::CredentialAccess);
+        assert_eq!(
+            technique_to_phase("T1110.001"),
+            AttackPhase::CredentialAccess
+        );
+    }
+
+    #[test]
+    fn technique_to_phase_maps_defense_evasion() {
+        assert_eq!(technique_to_phase("T1562"), AttackPhase::DefenseEvasion);
+        assert_eq!(technique_to_phase("T1562.001"), AttackPhase::DefenseEvasion);
+    }
+
+    #[test]
+    fn technique_to_phase_maps_initial_access() {
+        assert_eq!(technique_to_phase("T1078"), AttackPhase::InitialAccess);
+        assert_eq!(technique_to_phase("T1078.004"), AttackPhase::InitialAccess);
+    }
+
+    #[test]
+    fn technique_to_phase_maps_persistence() {
+        assert_eq!(technique_to_phase("T1546"), AttackPhase::Persistence);
+        assert_eq!(technique_to_phase("T1098"), AttackPhase::Persistence);
+    }
+
+    #[test]
+    fn technique_to_phase_maps_impact() {
+        assert_eq!(technique_to_phase("T1486"), AttackPhase::Impact);
+    }
+
+    #[test]
+    fn technique_to_phase_maps_discovery() {
+        assert_eq!(technique_to_phase("T1087"), AttackPhase::Discovery);
+    }
+
+    #[test]
+    fn technique_to_phase_unknown_for_unrecognized() {
+        assert_eq!(technique_to_phase("T9999"), AttackPhase::Unknown);
+    }
+
+    #[test]
+    fn mitre_phase_propagates_to_narrative() {
+        let t1 = Utc.with_ymd_and_hms(2024, 1, 15, 10, 0, 0).unwrap();
+
+        let mut graph = SecurityGraph::new();
+
+        // Finding with MITRE metadata
+        let mut finding = make_node(
+            "Finding:R001:20240115103000",
+            NodeType::SecurityFinding,
+            "Cognito Auth Failure Spike",
+        );
+        finding.first_seen = Some(t1);
+        finding
+            .properties
+            .insert("mitre_attack".into(), serde_json::json!(["T1110"]));
+        graph.add_node(finding);
+
+        // Anonymous principal with OriginatedFrom edge (normally Unknown phase)
+        graph.add_node(make_node(
+            "IPAddress:66.235.45.23",
+            NodeType::IPAddress,
+            "66.235.45.23",
+        ));
+        graph.add_edge(make_edge(
+            EdgeType::OriginatedFrom,
+            "Finding:R001:20240115103000",
+            "IPAddress:66.235.45.23",
+            Some(t1),
+        ));
+
+        let narratives = extract_attack_paths(&graph);
+        assert_eq!(narratives.len(), 1);
+
+        let narrative = &narratives[0];
+        // The OriginatedFrom step should inherit CredentialAccess from T1110
+        assert!(
+            narrative
+                .phases_observed
+                .contains(&AttackPhase::CredentialAccess),
+            "MITRE T1110 should map to CredentialAccess, got: {:?}",
+            narrative.phases_observed
         );
     }
 

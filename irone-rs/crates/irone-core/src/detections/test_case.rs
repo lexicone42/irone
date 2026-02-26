@@ -152,7 +152,15 @@ pub fn evaluate_test_case(
     let eval_qr = filtered.as_ref().unwrap_or(&qr);
 
     let effective_threshold = test_case.expected.threshold_override.unwrap_or(threshold);
-    let result = threshold_evaluate(rule_id, rule_name, severity, eval_qr, effective_threshold);
+    let result = threshold_evaluate(
+        rule_id,
+        rule_name,
+        severity,
+        eval_qr,
+        effective_threshold,
+        &[],
+        &[],
+    );
 
     let mut errors = Vec::new();
 
