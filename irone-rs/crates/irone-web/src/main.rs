@@ -56,6 +56,9 @@ async fn main() -> Result<(), lambda_http::Error> {
     }
 
     // Init service token for headless API access
+    if config.is_lambda && config.service_token.is_empty() {
+        tracing::warn!("service token is empty — headless API access will be unavailable");
+    }
     irone_auth::middleware::set_service_token(config.service_token.clone());
 
     // Init auth (l42 token handler) if enabled

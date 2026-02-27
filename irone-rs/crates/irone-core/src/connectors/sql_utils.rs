@@ -173,6 +173,7 @@ pub fn build_in_clause(values: &[&str]) -> Result<String, SqlSanitizationError> 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
 
     // --- sanitize_string ---
 
@@ -354,5 +355,73 @@ mod tests {
         let sanitized = sanitize_string(input);
         assert!(!sanitized.contains("--"));
         assert!(sanitized.starts_with("'';"));
+    }
+
+    // --- Property tests ---
+
+    // sanitize_string never produces an odd number of consecutive single quotes.
+    // An odd run means there's an unescaped quote that could terminate a SQL string literal.
+    proptest! {
+        #[test]
+        fn sanitize_string_no_unescaped_quotes(input in "\\PC{0,200}") {
+            let output = sanitize_string(&input);
+            // Split on non-quote chars and check each run of quotes has even length
+            let mut in_run = false;
+            let mut run_len = 0_usize;
+            for ch in output.chars() {
+                if ch == '\'' {
+                    in_run = true;
+                    run_len += 1;
+                } else if in_run {
+                    prop_assert_eq!(
+                        run_len % 2, 0,
+                        "found odd-length quote run ({}) in sanitized output: {:?}",
+                        run_len, output,
+                    );
+                    in_run = false;
+                    run_len = 0;
+                }
+            }
+            if in_run {
+                prop_assert_eq!(
+                    run_len % 2, 0,
+                    "trailing odd-length quote run ({}) in sanitized output: {:?}",
+                    run_len, output,
+                );
+            }
+        }
+    }
+
+    // sanitize_string strips all null bytes.
+    proptest! {
+        #[test]
+        fn sanitize_string_no_null_bytes(input in "\\PC{0,200}") {
+            let output = sanitize_string(&input);
+            prop_assert!(!output.contains('\0'), "null byte in sanitized output");
+        }
+    }
+
+    // sanitize_string strips SQL comment markers.
+    proptest! {
+        #[test]
+        fn sanitize_string_no_comments(input in "\\PC{0,200}") {
+            let output = sanitize_string(&input);
+            prop_assert!(!output.contains("--"), "line comment in sanitized output: {:?}", output);
+            prop_assert!(!output.contains("/*"), "block comment open in sanitized output: {:?}", output);
+            prop_assert!(!output.contains("*/"), "block comment close in sanitized output: {:?}", output);
+        }
+    }
+
+    // validate_identifier rejects all strings containing non-alphanumeric/non-underscore chars.
+    proptest! {
+        #[test]
+        fn validate_identifier_rejects_special_chars(
+            prefix in "[a-zA-Z_]",
+            inject in "[^a-zA-Z0-9_]",
+            suffix in "[a-zA-Z0-9_]{0,10}",
+        ) {
+            let input = format!("{prefix}{inject}{suffix}");
+            prop_assert!(validate_identifier(&input).is_err());
+        }
     }
 }

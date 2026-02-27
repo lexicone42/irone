@@ -853,6 +853,7 @@ Format as a professional incident summary for an analyst's report.",
 mod tests {
     use super::*;
     use crate::graph::models::{EdgeType, GraphEdge, GraphNode};
+    use proptest::prelude::*;
 
     fn make_event(id: &str, minutes_ago: i64, tag: EventTag) -> TimelineEvent {
         TimelineEvent {
@@ -1363,5 +1364,58 @@ mod tests {
         assert_eq!(clusters.len(), 1);
         assert_eq!(clusters[0].source_distribution.get("cloudtrail"), Some(&2));
         assert_eq!(clusters[0].source_distribution.get("vpc-flow"), Some(&1));
+    }
+
+    // --- Property tests ---
+
+    // Every event appears in exactly one cluster (full coverage, no duplicates).
+    proptest! {
+        #[test]
+        fn cluster_covers_all_events_exactly_once(
+            n_events in 1_usize..50,
+            gap_threshold in 60_i64..600,
+        ) {
+            let base = Utc::now() - chrono::Duration::hours(2);
+            let events: Vec<TimelineEvent> = (0..n_events)
+                .map(|i| {
+                    let offset = i64::try_from(i).unwrap() * 30;
+                    make_timed_event(
+                        &format!("evt-{i}"),
+                        base + chrono::Duration::seconds(offset),
+                        "user:test",
+                        None,
+                    )
+                })
+                .collect();
+
+            let clusters = super::cluster_timeline_events(&events, gap_threshold);
+
+            // Collect all event IDs from clusters
+            let mut clustered_ids: Vec<String> = clusters
+                .iter()
+                .flat_map(|c| c.event_ids.clone())
+                .collect();
+            clustered_ids.sort();
+
+            // Collect original IDs
+            let mut original_ids: Vec<String> = events.iter().map(|e| e.id.clone()).collect();
+            original_ids.sort();
+
+            prop_assert_eq!(
+                &clustered_ids, &original_ids,
+                "clustered IDs must exactly match input IDs"
+            );
+
+            // Total event_count across clusters must equal input count
+            let total: usize = clusters.iter().map(|c| c.event_count).sum();
+            prop_assert_eq!(total, n_events);
+        }
+    }
+
+    // Empty input always produces empty output.
+    #[test]
+    fn cluster_empty_is_empty() {
+        let clusters = super::cluster_timeline_events(&[], 300);
+        assert!(clusters.is_empty());
     }
 }

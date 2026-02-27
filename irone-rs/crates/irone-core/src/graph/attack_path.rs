@@ -639,15 +639,11 @@ fn classify_network_flow(
 }
 
 /// Check if an IP label looks like an RFC1918 private address.
+///
+/// Delegates to [`super::models::IPAddressNode::is_rfc1918`] which correctly
+/// parses 172.16-31.x.x (the prefix-matching approach got 172.32+ wrong).
 fn is_internal_ip(label: &str) -> bool {
-    label.starts_with("10.")
-        || label.starts_with("192.168.")
-        || label.starts_with("172.16.")
-        || label.starts_with("172.17.")
-        || label.starts_with("172.18.")
-        || label.starts_with("172.19.")
-        || label.starts_with("172.2")
-        || label.starts_with("172.3")
+    super::models::IPAddressNode::is_rfc1918(label)
 }
 
 /// Format byte count for narrative use.

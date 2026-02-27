@@ -12,6 +12,7 @@ use axum::middleware::Next;
 use axum::response::Response;
 use http::StatusCode;
 use l42_token_handler::session::middleware::SessionHandle;
+use subtle::ConstantTimeEq;
 
 /// The expected service token, set once at startup.
 static SERVICE_TOKEN: std::sync::OnceLock<String> = std::sync::OnceLock::new();
@@ -34,7 +35,7 @@ pub async fn require_auth(request: Request, next: Next) -> Result<Response, Stat
     // Check service token header first
     if let Some(configured) = SERVICE_TOKEN.get()
         && let Some(provided) = request.headers().get("x-service-token")
-        && provided.as_bytes() == configured.as_bytes()
+        && provided.as_bytes().ct_eq(configured.as_bytes()).into()
     {
         return Ok(next.run(request).await);
     }

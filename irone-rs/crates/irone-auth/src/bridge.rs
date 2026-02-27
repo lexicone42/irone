@@ -86,6 +86,9 @@ pub async fn build_auth(config: &AppConfig) -> Option<AuthComponents> {
     let jwks_cache = Arc::new(JwksCache::new(http_client.clone()));
 
     let cedar = init_cedar();
+    if cedar.is_none() {
+        tracing::error!("Cedar policies not found but auth is enabled — RBAC will not be enforced");
+    }
 
     // Session backend
     let session_backend = if l42_config.session_backend == "dynamodb" {

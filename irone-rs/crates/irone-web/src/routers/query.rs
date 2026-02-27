@@ -8,6 +8,11 @@ use irone_core::connectors::base::DataConnector;
 use crate::error::WebError;
 use crate::state::AppState;
 
+/// Destructive SQL keywords that ad-hoc queries must never contain.
+const DESTRUCTIVE_KEYWORDS: &[&str] = &[
+    "DROP", "DELETE", "INSERT", "UPDATE", "TRUNCATE", "ALTER", "CREATE", "REPLACE", "MERGE",
+];
+
 /// Build the query sub-router.
 pub fn router() -> Router<AppState> {
     Router::new().route("/query", post(run_query))
@@ -35,6 +40,20 @@ async fn run_query(
     let sql = body.sql.trim();
     if sql.is_empty() {
         return Err(WebError::BadRequest("sql must not be empty".into()));
+    }
+
+    // Reject destructive SQL keywords (case-insensitive word-boundary check)
+    let sql_upper = sql.to_uppercase();
+    for keyword in DESTRUCTIVE_KEYWORDS {
+        // Check for keyword as a standalone word (preceded by start/whitespace/semicolon)
+        if sql_upper
+            .split_ascii_whitespace()
+            .any(|word| word.trim_start_matches('(') == *keyword)
+        {
+            return Err(WebError::BadRequest(format!(
+                "destructive SQL keyword '{keyword}' is not allowed in ad-hoc queries"
+            )));
+        }
     }
 
     // Resolve source

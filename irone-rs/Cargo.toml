@@ -59,13 +59,13 @@ aws-sdk-sfn = "1"
 aws-sdk-sns = "1"
 aws-sdk-securityhub = "1"
 aws-sdk-iam = "1"
-aws-sdk-secretsmanager = "1"
 aws-sdk-ssm = "1"
 
 # Auth (l42-cognito-passkey token handler)
 l42-token-handler = { path = "../../l42cognitopasskey/rust" }
 reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
 rand = "0.8"
+subtle = "2"
 dashmap = "6"
 base64 = "0.22"
 

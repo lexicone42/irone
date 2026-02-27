@@ -34,6 +34,8 @@ cdk.context.json
 # Tool-specific directories
 .playwright-mcp/
 .serena/
+.hypothesis/
+.pytest_cache/
 
 # Generated output
 output/

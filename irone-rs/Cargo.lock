@@ -589,30 +589,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "aws-sdk-secretsmanager"
-version = "1.101.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "59a525ad948df2cc742875ec9b5768c70ba8089564efcef6844ef7c37abdea10"
-dependencies = [
- "aws-credential-types",
- "aws-runtime",
- "aws-smithy-async",
- "aws-smithy-http",
- "aws-smithy-json",
- "aws-smithy-observability",
- "aws-smithy-runtime",
- "aws-smithy-runtime-api",
- "aws-smithy-types",
- "aws-types",
- "bytes",
- "fastrand",
- "http 0.2.12",
- "http 1.4.0",
- "regex-lite",
- "tracing",
-]
-
-[[package]]
 name = "aws-sdk-securityhub"
 version = "1.105.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2870,6 +2846,7 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
+ "subtle",
  "tokio",
  "tower 0.5.3",
  "tracing",
@@ -2891,7 +2868,6 @@ dependencies = [
  "aws-sdk-dynamodb",
  "aws-sdk-iam",
  "aws-sdk-s3",
- "aws-sdk-secretsmanager",
  "aws-sdk-securityhub",
  "aws-sdk-sns",
  "aws-sdk-ssm",

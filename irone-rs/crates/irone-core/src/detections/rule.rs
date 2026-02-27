@@ -968,6 +968,35 @@ threshold: 1
         }
     }
 
+    // Contains on missing field returns false (field absent = no match).
+    proptest! {
+        #[test]
+        fn contains_missing_field_always_fails(needle in "\\PC{1,50}") {
+            let filter = FieldFilter {
+                field: "nonexistent_field".into(),
+                op: FilterOp::Contains(needle),
+            };
+            let row = json_row!("other_field" => "value");
+            prop_assert!(!filter.matches(&row), "Contains should fail when field is missing");
+        }
+    }
+
+    // In on missing field returns false.
+    proptest! {
+        #[test]
+        fn in_missing_field_always_fails(
+            v1 in "\\PC{1,30}",
+            v2 in "\\PC{1,30}",
+        ) {
+            let filter = FieldFilter {
+                field: "nonexistent_field".into(),
+                op: FilterOp::In(vec![v1, v2]),
+            };
+            let row = json_row!("other_field" => "value");
+            prop_assert!(!filter.matches(&row), "In should fail when field is missing");
+        }
+    }
+
     // apply_filters with empty filters returns None (identity — no clone).
     proptest! {
         #[test]

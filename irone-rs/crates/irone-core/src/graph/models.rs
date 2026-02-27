@@ -741,6 +741,7 @@ pub struct GraphSummary {
 mod tests {
     use super::*;
     use chrono::TimeZone;
+    use proptest::prelude::*;
     use serde_json::json;
 
     fn make_node(id: &str, node_type: NodeType) -> GraphNode {
@@ -1263,5 +1264,47 @@ mod tests {
 
         // Weight should be log2(3000 + 8000) = log2(11000) ≈ 13.43
         assert!(edge.weight > 13.0 && edge.weight < 14.0);
+    }
+
+    // --- Property tests ---
+
+    // from_arn never panics on arbitrary input.
+    proptest! {
+        #[test]
+        fn from_arn_never_panics(input in "\\PC{0,200}") {
+            // Must not panic — `None` is fine for invalid input.
+            let _ = ResourceNode::from_arn(&input);
+        }
+    }
+
+    // is_rfc1918 is consistent with is_internal_ip (attack_path.rs delegates to it).
+    proptest! {
+        #[test]
+        fn is_rfc1918_never_panics(ip in "[0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3}") {
+            let _ = IPAddressNode::is_rfc1918(&ip);
+        }
+    }
+
+    // 172.x.y.z is RFC1918 iff x in 16..=31.
+    proptest! {
+        #[test]
+        fn is_rfc1918_172_range(second in 0_u8..=255, third in 0_u8..=255, fourth in 0_u8..=255) {
+            let ip = format!("172.{second}.{third}.{fourth}");
+            let expected = (16..=31).contains(&second);
+            prop_assert_eq!(
+                IPAddressNode::is_rfc1918(&ip),
+                expected,
+                "172.{}.{}.{} should be rfc1918={}",
+                second, third, fourth, expected,
+            );
+        }
+    }
+
+    // from_arn returns Some only for strings starting with "arn:" and having >= 6 colon-separated parts.
+    proptest! {
+        #[test]
+        fn from_arn_returns_none_for_non_arn(input in "[^a][\\PC]{0,100}") {
+            prop_assert!(ResourceNode::from_arn(&input).is_none());
+        }
     }
 }
