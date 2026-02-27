@@ -686,6 +686,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "aws-sdk-ssm"
+version = "1.106.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "02c8deffb8e0e7b8729b8b6ed9010c99cb10c61f01aaca86a8f3771cbf94cfcf"
+dependencies = [
+ "aws-credential-types",
+ "aws-runtime",
+ "aws-smithy-async",
+ "aws-smithy-http",
+ "aws-smithy-json",
+ "aws-smithy-observability",
+ "aws-smithy-runtime",
+ "aws-smithy-runtime-api",
+ "aws-smithy-types",
+ "aws-types",
+ "bytes",
+ "fastrand",
+ "http 0.2.12",
+ "http 1.4.0",
+ "regex-lite",
+ "tracing",
+]
+
+[[package]]
 name = "aws-sdk-sso"
 version = "1.95.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2870,6 +2894,7 @@ dependencies = [
  "aws-sdk-secretsmanager",
  "aws-sdk-securityhub",
  "aws-sdk-sns",
+ "aws-sdk-ssm",
  "bytes",
  "chrono",
  "csv",
@@ -2944,6 +2969,7 @@ dependencies = [
  "aws-sdk-dynamodb",
  "aws-sdk-s3",
  "aws-sdk-sfn",
+ "aws-sdk-ssm",
  "axum",
  "chrono",
  "envy",

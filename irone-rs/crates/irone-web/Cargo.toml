@@ -19,6 +19,7 @@ http = { workspace = true }
 aws-config = { workspace = true }
 aws-sdk-s3 = { workspace = true }
 aws-sdk-sfn = { workspace = true }
+aws-sdk-ssm = { workspace = true }
 aws-sdk-dynamodb = { workspace = true }
 envy = { workspace = true }
 serde = { workspace = true }

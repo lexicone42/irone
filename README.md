@@ -10,33 +10,38 @@ The name "irone" comes from the aromatic compound found in iris flowers — and 
 
 ```
 irone/
-├── irone-rs/                  # Rust workspace (6 crates, 276 tests)
+├── irone-rs/                  # Rust workspace (8 crates, 447 tests)
 │   ├── irone-core/            # Config, connectors, catalog, detections, graph, reports
-│   ├── irone-aws/             # SecurityLakeConnector (Athena + Iceberg), DynamoDB, SNS
-│   ├── irone-persistence/     # redb-backed investigation store
+│   ├── irone-aws/             # Iceberg + Athena connectors, DynamoDB, SNS, SSM secrets
+│   ├── irone-persistence/     # redb-backed investigation + detection store
 │   ├── irone-auth/            # Cognito OAuth + Cedar authorization (via l42-token-handler)
-│   ├── irone-web/             # Axum web layer — 21 JSON API endpoints, Lambda handler
+│   ├── irone-web/             # Axum web layer — 26 API endpoints, Lambda handler
+│   ├── irone-worker/          # Investigation enrichment worker (Step Functions)
+│   ├── irone-alerting/        # Scheduled detection + freshness alerting Lambda
 │   ├── irone-health-checker/  # Scheduled EventBridge Lambda for parallel health checks
-│   └── rules/                 # 9 OCSF detection rules (YAML)
+│   └── rules/                 # 45 OCSF detection rules (YAML)
 ├── frontend/                 # Static Alpine.js frontend → S3 + CloudFront
-├── infra/                    # TypeScript CDK (4 stacks)
-└── scripts/                  # Deploy scripts (Rust Lambda, frontend, CDK)
+├── infra/                    # TypeScript CDK (5 stacks)
+├── scripts/                  # Deploy + migration scripts
+└── docs/                     # Cost estimates, Rust patterns guide
 ```
 
 ## Features
 
-- **AWS Security Lake**: Query OCSF-formatted data via Athena or direct Iceberg reads (sub-second)
-- **OCSF Detection Rules**: Structured event class queries with declarative field filters, plus raw SQL support
-- **Investigation Graphs**: Build security graphs from detection results with OCSF entity extraction
-- **Health Monitoring**: DynamoDB-cached source health checks, EventBridge scheduled (every 15 min)
+- **AWS Security Lake**: Query OCSF-formatted data via direct Iceberg reads (sub-second) or Athena fallback
+- **OCSF Detection Rules**: 45 bundled rules with declarative field filters, MITRE ATT&CK mapping, and kill-chain phase classification
+- **Investigation Graphs**: Build security graphs from detection results with OCSF entity extraction, attack path analysis, and anomaly detection
+- **Automated Alerting**: Hourly detection scans + 15-minute freshness checks via scheduled Lambda
+- **Health Monitoring**: DynamoDB-cached source health checks with history tracking
 - **Cedar Authorization**: RBAC with 5 groups (admin, detection-engineer, soc-analyst, incident-responder, read-only) and 20 fine-grained actions
-- **Lambda Deployment**: ~15MB web zip, ~12MB health zip, 220ms cold start, 1-2ms warm
+- **Passkey Authentication**: WebAuthn/FIDO2 passkey login via Cognito + l42-cognito-passkey
+- **Lambda Deployment**: ~10MB web zip, ~7MB health zip, 220ms cold start, 1-2ms warm
 
 ## Quick Start
 
 ### Prerequisites
 
-- **Rust** (stable toolchain)
+- **Rust** (stable toolchain, edition 2024)
 - **AWS credentials** configured
 - **cargo-lambda** (for Lambda builds): `cargo install cargo-lambda`
 
@@ -44,7 +49,7 @@ irone/
 
 ```bash
 cd irone-rs
-cargo test --workspace    # 276 tests
+cargo test --workspace    # 447 tests
 cargo build --release     # Build all crates
 ```
 
@@ -96,7 +101,7 @@ filters:
     equals: IAMUser
 ```
 
-**9 bundled rules** covering: IAM privilege escalation, root console login, Security Hub critical findings, Cognito auth failure spikes, Lambda invocation spikes, console login detection, GitHub OIDC role assumption, API permission enumeration, and Lambda execution failures.
+**45 bundled rules** covering: IAM privilege escalation, root console login, Security Hub critical findings, Cognito auth failure spikes, Lambda invocation spikes, console login detection, GitHub OIDC role assumption, API permission enumeration, S3 public access, IMDS credential theft, VPC flow anomalies, and more.
 
 Filter operators: `equals`, `not_equals`, `contains`, `in`, `regex`.
 
@@ -107,13 +112,13 @@ All config via environment variables with `SECDASH_` prefix:
 | Variable | Description |
 |----------|-------------|
 | `SECDASH_SECURITY_LAKE_DB` | Glue database for Security Lake |
-| `SECDASH_ATHENA_WORKGROUP` | Athena workgroup name |
-| `SECDASH_ATHENA_OUTPUT` | S3 path for Athena results |
 | `SECDASH_USE_DIRECT_QUERY` | Enable direct Iceberg reads (bypasses Athena) |
 | `SECDASH_RULES_DIR` | Directory for YAML detection rules |
 | `SECDASH_HEALTH_CACHE_TABLE` | DynamoDB table for health cache |
 | `SECDASH_REPORT_BUCKET` | S3 bucket for report storage |
+| `SECDASH_SESSION_BACKEND` | Session backend (`dynamodb` or `memory`) |
 | `SECDASH_COGNITO_*` | Cognito OAuth configuration |
+| `SECDASH_*_SSM` | SSM Parameter Store names for secrets (see [SECURITY.md](SECURITY.md)) |
 
 ## Development
 
@@ -126,9 +131,13 @@ Uses [prek](https://github.com/catppuccin/prek):
 - `cargo deny check` — license/advisory check on every commit
 - `cargo test --workspace` — full test suite on pre-push
 
+### Rust Patterns
+
+See [docs/rust-patterns.md](docs/rust-patterns.md) for a guide to the Rust patterns and architecture used in this codebase — useful for contributors coming from other languages.
+
 ### API Endpoints
 
-21 JSON API endpoints under `/api/`:
+26 JSON API endpoints under `/api/`:
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
@@ -142,19 +151,24 @@ Uses [prek](https://github.com/catppuccin/prek):
 | `/api/sources/refresh` | POST | Trigger live health check |
 | `/api/rules` | GET | List all detection rules |
 | `/api/rules/{rule_id}` | GET | Get a single rule |
+| `/api/detections/history` | GET | Detection run history |
 | `/api/detections/{rule_id}/run` | POST | Execute a detection rule |
 | `/api/query` | POST | Run an ad-hoc OCSF query |
 | `/api/investigations` | GET | List investigations |
 | `/api/investigations` | POST | Create investigation |
 | `/api/investigations/from-detection` | POST | Detect → graph → timeline pipeline |
+| `/api/investigations/seed` | POST | Seed investigation from raw data |
 | `/api/investigations/{id}` | GET | Get investigation |
 | `/api/investigations/{id}` | DELETE | Delete investigation |
 | `/api/investigations/{id}/graph` | GET | Get investigation graph |
 | `/api/investigations/{id}/report` | GET | Get investigation report |
+| `/api/investigations/{id}/timeline` | GET | Get investigation timeline |
+| `/api/investigations/{id}/attack-paths` | GET | Get attack path analysis |
+| `/api/investigations/{id}/anomalies` | GET | Get anomaly scores |
 | `/api/investigations/{id}/enrich` | POST | Enrich investigation with context |
 | `/api/investigations/{id}/timeline/tag` | POST | Tag a timeline event |
 
-Auth routes (`/auth/*`) are provided by `l42-token-handler` (Cognito OAuth login/logout/callback).
+Auth routes (`/auth/*`) are provided by `l42-token-handler` (Cognito OAuth login/logout/callback, passkey management).
 
 ## Security
 

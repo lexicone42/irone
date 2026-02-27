@@ -21,6 +21,7 @@ aws-sdk-sns = { workspace = true }
 aws-sdk-securityhub = { workspace = true }
 aws-sdk-iam = { workspace = true }
 aws-sdk-secretsmanager = { workspace = true }
+aws-sdk-ssm = { workspace = true }
 csv = { workspace = true }
 iceberg = { workspace = true }
 iceberg-catalog-glue = { workspace = true }

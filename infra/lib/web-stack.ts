@@ -11,8 +11,6 @@ import { RustLambda } from "./constructs/rust-lambda.js";
 export interface WebStackProps extends cdk.StackProps {
   readonly userPoolId: string;
   readonly userPoolClientId: string;
-  /** Cognito client secret (SecretValue from auth stack). */
-  readonly userPoolClientSecret: cdk.SecretValue;
   /** Public passkey client ID (no secret, ALLOW_USER_AUTH). */
   readonly passkeyClientId: string;
   readonly cognitoDomain: string;
@@ -44,13 +42,9 @@ export class WebStack extends cdk.Stack {
       sessionsTable.node.defaultChild as dynamodb.CfnTable
     ).overrideLogicalId("SessionTableA016F679");
 
-    // --- Secrets Manager: import service token (created out-of-band) ---
-    const serviceTokenSecret = secretsmanager.Secret.fromSecretNameV2(
-      this, "ServiceTokenSecret", "secdash/service-token"
-    );
-
-    // --- Secrets Manager: session secret key ---
-    const sessionSecret = new secretsmanager.Secret(this, "SessionSecretKey", {
+    // --- Secrets Manager: session secret key (kept to avoid CDK deletion) ---
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars -- resource must stay to prevent CDK deletion
+    const _sessionSecret = new secretsmanager.Secret(this, "SessionSecretKey", {
       secretName: "secdash/session-secret-key",
       description: "irone session encryption key",
       generateSecretString: {
@@ -82,6 +76,7 @@ export class WebStack extends cdk.Stack {
         SECDASH_SECURITY_LAKE_DB: "amazon_security_lake_glue_db_us_west_2",
         SECDASH_REPORT_BUCKET: reportBucket.bucketName,
         SECDASH_HEALTH_CACHE_TABLE: "secdash_health_cache",
+        SECDASH_SESSION_BACKEND: "dynamodb",
         SECDASH_SESSION_TABLE: sessionsTable.tableName,
         SECDASH_COGNITO_USER_POOL_ID: props.userPoolId,
         SECDASH_COGNITO_CLIENT_ID: props.userPoolClientId,
@@ -95,9 +90,9 @@ export class WebStack extends cdk.Stack {
         SECDASH_CEDAR_POLICY_DIR: "cedar",
         SECDASH_RULES_DIR: "rules",
         RUST_LOG: "info",
-        SECDASH_COGNITO_CLIENT_SECRET: props.userPoolClientSecret.unsafeUnwrap(),
-        SECDASH_SESSION_SECRET_KEY: sessionSecret.secretValue.unsafeUnwrap(),
-        SECDASH_SERVICE_TOKEN: serviceTokenSecret.secretValue.unsafeUnwrap(),
+        SECDASH_COGNITO_CLIENT_SECRET_SSM: "/secdash/cognito-client-secret",
+        SECDASH_SESSION_SECRET_SSM: "/secdash/session-secret-key",
+        SECDASH_SERVICE_TOKEN_SSM: "/secdash/service-token",
         // Investigation pipeline — names match pipeline-stack.ts hardcoded values
         SECDASH_INVESTIGATION_STATE_MACHINE_ARN:
           `arn:aws:states:${this.region}:${this.account}:stateMachine:secdash-investigation-pipeline`,
@@ -179,9 +174,26 @@ export class WebStack extends cdk.Stack {
       })
     );
 
-    // Secrets Manager: session secret + service token
-    sessionSecret.grantRead(webLambda.function);
-    serviceTokenSecret.grantRead(webLambda.function);
+    // SSM Parameter Store: read SecureString secrets
+    webLambda.function.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: ["ssm:GetParameter"],
+        resources: [
+          `arn:aws:ssm:${this.region}:${this.account}:parameter/secdash/*`,
+        ],
+      })
+    );
+    webLambda.function.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: ["kms:Decrypt"],
+        resources: ["*"],
+        conditions: {
+          StringEquals: {
+            "kms:ViaService": `ssm.${this.region}.amazonaws.com`,
+          },
+        },
+      })
+    );
 
     // STS
     webLambda.function.addToRolePolicy(

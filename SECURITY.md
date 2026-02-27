@@ -2,14 +2,14 @@
 
 ## Security Design
 
-iris is designed for use as an internal security analytics tool. The primary threat model assumes trusted operators deploying in controlled AWS environments with proper IAM boundaries.
+irone is designed for use as an internal security analytics tool. The primary threat model assumes trusted operators deploying in controlled AWS environments with proper IAM boundaries.
 
 ### Query Construction
 
 All Security Lake queries are constructed safely in Rust:
 
-- **Athena queries** (`iris-aws`): Parameterized SQL templates with identifier validation — database/table names enforced via `^[a-zA-Z_][a-zA-Z0-9_]*$` regex, timestamps formatted via `chrono` (no string interpolation)
-- **Iceberg queries** (`iris-aws`): Direct Parquet reads via `iceberg-rust` + `arrow-rs` — no SQL construction at all; predicates are Arrow filter expressions
+- **Athena queries** (`irone-aws`): Parameterized SQL templates with identifier validation — database/table names enforced via `^[a-zA-Z_][a-zA-Z0-9_]*$` regex, timestamps formatted via `chrono` (no string interpolation)
+- **Iceberg queries** (`irone-aws`): Direct Parquet reads via `iceberg-rust` + `arrow-rs` — no SQL construction at all; predicates are Arrow filter expressions
 - **Destructive keyword blocklist**: Ad-hoc queries reject DROP, DELETE, INSERT, UPDATE, TRUNCATE, ALTER, CREATE
 
 ### Detection Rule Isolation
@@ -18,16 +18,31 @@ Detection rules are loaded exclusively from YAML files at startup:
 
 - **YAML-only parsing** via `serde_yaml` — no arbitrary code execution
 - **Schema validation** via Rust type system — `DetectionRule` struct enforces required fields, valid `FilterOp` variants, and `OCSFEventClass` enum values
-- **No dynamic rule loading** — rules are bundled into the Lambda zip at deploy time from `iris-rs/rules/`
+- **No dynamic rule loading** — rules are bundled into the Lambda zip at deploy time from `irone-rs/rules/`
 - **Filter operators** are a closed enum: `Equals`, `NotEquals`, `Contains`, `In`, `Regex` — no arbitrary expressions
 - **30-second query timeout** — `tokio::time::timeout` prevents hung connectors from blocking indefinitely
 
 ### Authentication & Authorization
 
-- **Cognito OAuth**: Server-side authorization code flow with `client_secret` (confidential client). No direct password auth (`USER_PASSWORD_AUTH` disabled). Session cookies managed by `l42-token-handler`
+- **Cognito OAuth**: Dual-client pattern — confidential server-side client (with `client_secret`) for OAuth code exchange, plus a public client for browser-side password and WebAuthn/passkey authentication
+- **Passkey support**: WebAuthn/FIDO2 passkeys via `l42-cognito-passkey` integration. Passkey registration and management on the settings page
 - **Cedar RBAC**: 5 groups (admin, detection-engineer, soc-analyst, incident-responder, read-only) with 20 fine-grained actions in the `Secdash::` namespace. Policy evaluation runs on every API request via axum middleware
-- **Session storage**: DynamoDB `secdash_sessions` table with server-side session state
+- **Session storage**: DynamoDB `secdash_sessions` table with server-side session state, HttpOnly cookies
 - **AWS APIs**: Standard AWS SDK for Rust credential chain (no hardcoded credentials)
+
+### Secrets Management
+
+Secrets are stored in AWS SSM Parameter Store as `SecureString` parameters (encrypted with the default `aws/ssm` KMS key):
+
+| Secret | SSM Parameter | Lambda Env Var |
+|--------|---------------|----------------|
+| Cognito client secret | `/secdash/cognito-client-secret` | `SECDASH_COGNITO_CLIENT_SECRET_SSM` |
+| Session encryption key | `/secdash/session-secret-key` | `SECDASH_SESSION_SECRET_SSM` |
+| Service API token | `/secdash/service-token` | `SECDASH_SERVICE_TOKEN_SSM` |
+
+Lambda env vars contain only the SSM parameter *name* (a pointer), not the secret value. At startup, the Lambda calls `ssm:GetParameter` with `WithDecryption=true` to fetch and decrypt. If the SSM parameter is unavailable, it falls back to reading the direct env var (e.g., `SECDASH_SERVICE_TOKEN`) for local development.
+
+IAM is scoped: `ssm:GetParameter` on `arn:aws:ssm:REGION:ACCOUNT:parameter/secdash/*`, plus `kms:Decrypt` conditioned on `kms:ViaService: ssm.REGION.amazonaws.com` (prevents using the KMS key outside SSM).
 
 ### Network Architecture
 
@@ -55,14 +70,10 @@ All filter comparisons coerce OCSF values to strings via `serde_json::Value::to_
 
 `POST /api/investigations/{id}/enrich` runs N users x M event classes + N IPs x M event classes unfiltered Iceberg scans. For investigations with many entities, this can generate ~60 queries scanning hundreds of Parquet files. API Gateway's 29-second timeout will cut off large enrichments. Enrichment is currently disabled on the `from-detection` pipeline for this reason.
 
-### Session Secrets in Environment Variables
-
-`SECDASH_COGNITO_CLIENT_SECRET` and `SECDASH_SESSION_SECRET_KEY` are currently passed as plaintext Lambda environment variables. Migration to AWS Secrets Manager is planned.
-
 ## Reporting Security Issues
 
 If you discover a security vulnerability, please report it via GitHub private vulnerability reporting at:
 
-https://github.com/lexicone42/secdashboards/security/advisories/new
+https://github.com/lexicone42/irone/security/advisories/new
 
 Do not open a public issue for security vulnerabilities.

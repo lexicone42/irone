@@ -19,12 +19,14 @@ async fn main() -> Result<(), lambda_http::Error> {
         }
     }
 
-    // Resolve secrets from Secrets Manager (falls back to env vars)
+    // Resolve secrets from SSM Parameter Store (falls back to env vars)
     if config.is_lambda {
         let sdk_config = aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await;
-        let service_token = irone_aws::secrets::resolve_secret(
-            &sdk_config,
-            "SECDASH_SERVICE_TOKEN_SECRET_ARN",
+        let ssm_client = aws_sdk_ssm::Client::new(&sdk_config);
+
+        let service_token = irone_aws::secrets::resolve_ssm_param(
+            &ssm_client,
+            "SECDASH_SERVICE_TOKEN_SSM",
             "SECDASH_SERVICE_TOKEN",
         )
         .await;
@@ -32,14 +34,24 @@ async fn main() -> Result<(), lambda_http::Error> {
             config.service_token = service_token;
         }
 
-        let session_secret = irone_aws::secrets::resolve_secret(
-            &sdk_config,
-            "SECDASH_SESSION_SECRET_ARN",
+        let session_secret = irone_aws::secrets::resolve_ssm_param(
+            &ssm_client,
+            "SECDASH_SESSION_SECRET_SSM",
             "SECDASH_SESSION_SECRET_KEY",
         )
         .await;
         if !session_secret.is_empty() {
             config.session_secret_key = session_secret;
+        }
+
+        let client_secret = irone_aws::secrets::resolve_ssm_param(
+            &ssm_client,
+            "SECDASH_COGNITO_CLIENT_SECRET_SSM",
+            "SECDASH_COGNITO_CLIENT_SECRET",
+        )
+        .await;
+        if !client_secret.is_empty() {
+            config.cognito_client_secret = client_secret;
         }
     }
 
