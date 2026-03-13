@@ -1,6 +1,12 @@
-# irone — Security Data Lake Analytics
+<p align="center">
+  <img src="assets/logo.png" alt="irone logo" width="400">
+</p>
 
-[![Built with Claude Code](https://img.shields.io/badge/Built%20with-Claude%20Code-6B48FF?style=flat&logo=claude)](https://claude.com/claude-code)
+<h1 align="center">irone — Security Data Lake Analytics</h1>
+
+<p align="center">
+  <a href="https://claude.com/claude-code"><img src="https://img.shields.io/badge/Built%20with-Claude%20Code-6B48FF?style=flat&logo=claude" alt="Built with Claude Code"></a>
+</p>
 
 A Rust-based security analytics platform for AWS Security Lake. Run OCSF-native detection rules against live data, build investigation graphs, and deploy as lightweight AWS Lambda functions.
 
