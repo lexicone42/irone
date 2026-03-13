@@ -33,10 +33,18 @@ export class PipelineStack extends cdk.Stack {
       removalPolicy: cdk.RemovalPolicy.RETAIN,
     });
 
-    // GSI: list by status, sorted by created_at
+    // GSI: list by status, sorted by created_at (alerting dedup)
     investigationsTable.addGlobalSecondaryIndex({
       indexName: "status-created_at-index",
       partitionKey: { name: "status", type: dynamodb.AttributeType.STRING },
+      sortKey: { name: "created_at", type: dynamodb.AttributeType.STRING },
+      projectionType: dynamodb.ProjectionType.ALL,
+    });
+
+    // GSI: list by record type, sorted by created_at (replaces SCAN for list operations)
+    investigationsTable.addGlobalSecondaryIndex({
+      indexName: "type-created_at-index",
+      partitionKey: { name: "record_type", type: dynamodb.AttributeType.STRING },
       sortKey: { name: "created_at", type: dynamodb.AttributeType.STRING },
       projectionType: dynamodb.ProjectionType.ALL,
     });
