@@ -89,12 +89,18 @@ export class AlertingStack extends cdk.Stack {
       })
     );
 
-    // DynamoDB write for investigation records
+    // DynamoDB read/write for investigation + detection run records
     alertingLambda.function.addToRolePolicy(
       new iam.PolicyStatement({
-        actions: ["dynamodb:PutItem", "dynamodb:GetItem"],
+        actions: [
+          "dynamodb:PutItem",
+          "dynamodb:GetItem",
+          "dynamodb:Query",
+          "dynamodb:BatchWriteItem",
+        ],
         resources: [
           `arn:aws:dynamodb:${this.region}:${this.account}:table/${props.investigationsTableName ?? "secdash_investigations"}`,
+          `arn:aws:dynamodb:${this.region}:${this.account}:table/${props.investigationsTableName ?? "secdash_investigations"}/index/*`,
         ],
       })
     );

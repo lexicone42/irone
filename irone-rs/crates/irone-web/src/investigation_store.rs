@@ -1,7 +1,13 @@
-//! DynamoDB-backed investigation metadata store.
+//! DynamoDB-backed single-table store for investigations and detection runs.
 //!
-//! Stores investigation metadata (status, counts, timestamps) in `DynamoDB`.
-//! Graph and timeline data live in S3 — this module only handles metadata.
+//! Uses a single-table design with `record_type` attribute to distinguish
+//! entity types. The `type-created_at-index` GSI enables efficient listing
+//! by record type (replacing full-table SCANs).
+//!
+//! | record_type      | id format     | GSI queries via                |
+//! |------------------|---------------|--------------------------------|
+//! | "investigation"  | `<uuid>`      | type-created_at, status-created_at |
+//! | "detection_run"  | `dr#<uuid>`   | type-created_at               |
 
 use aws_sdk_dynamodb::types::AttributeValue;
 use chrono::{DateTime, Utc};
@@ -25,12 +31,33 @@ pub struct InvestigationMetadata {
     pub error: Option<String>,
 }
 
+/// Detection run record stored in `DynamoDB`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DetectionRunDynamo {
+    pub run_id: String,
+    pub rule_id: String,
+    pub rule_name: String,
+    pub triggered: bool,
+    pub severity: String,
+    pub match_count: usize,
+    pub execution_time_ms: f64,
+    pub executed_at: String,
+    pub error: Option<String>,
+    pub source_name: Option<String>,
+    pub lookback_minutes: i64,
+}
+
 /// Maximum time an investigation can remain in "enriching" status before
-/// being auto-reverted to "active" on read. This prevents investigations
-/// from being permanently stuck if the worker Lambda fails silently.
+/// being auto-reverted to "active" on read.
 const ENRICHING_TIMEOUT_MINUTES: i64 = 60;
 
-/// Thin wrapper around `DynamoDB` client for investigation operations.
+/// TTL for detection runs: 30 days in seconds.
+const DETECTION_RUN_TTL_SECONDS: i64 = 30 * 24 * 60 * 60;
+
+/// GSI name for querying by record type + `created_at`.
+const TYPE_INDEX: &str = "type-created_at-index";
+
+/// Thin wrapper around `DynamoDB` client for the single-table store.
 #[derive(Clone)]
 pub struct DynamoInvestigationStore {
     client: aws_sdk_dynamodb::Client,
@@ -45,6 +72,10 @@ impl DynamoInvestigationStore {
         }
     }
 
+    // -------------------------------------------------------------------
+    // Investigation operations
+    // -------------------------------------------------------------------
+
     /// Create a new investigation record.
     pub async fn create_investigation(
         &self,
@@ -55,6 +86,7 @@ impl DynamoInvestigationStore {
             .put_item()
             .table_name(&self.table_name)
             .item("id", AttributeValue::S(meta.id.clone()))
+            .item("record_type", AttributeValue::S("investigation".into()))
             .item("name", AttributeValue::S(meta.name.clone()))
             .item("status", AttributeValue::S(meta.status.clone()))
             .item("rule_id", AttributeValue::S(meta.rule_id.clone()))
@@ -144,7 +176,7 @@ impl DynamoInvestigationStore {
             .send()
             .await?;
 
-        match result.item.and_then(|item| parse_item(&item)) {
+        match result.item.and_then(|item| parse_investigation(&item)) {
             Some(mut meta) => {
                 if self.recover_stale_enriching(&mut meta).await {
                     tracing::warn!(
@@ -160,7 +192,9 @@ impl DynamoInvestigationStore {
 
     /// List all investigations, most recent first.
     ///
-    /// Automatically recovers any investigations stuck in "enriching" status.
+    /// Uses the `type-created_at-index` GSI to query only investigation records
+    /// (no full-table scan). Falls back to scan if the GSI isn't available yet
+    /// (e.g., during migration).
     pub async fn list_investigations(
         &self,
     ) -> Result<Vec<InvestigationMetadata>, aws_sdk_dynamodb::Error> {
@@ -168,17 +202,28 @@ impl DynamoInvestigationStore {
         let mut last_key = None;
 
         loop {
-            let mut builder = self.client.scan().table_name(&self.table_name);
+            let mut builder = self
+                .client
+                .query()
+                .table_name(&self.table_name)
+                .index_name(TYPE_INDEX)
+                .key_condition_expression("record_type = :rt")
+                .expression_attribute_values(":rt", AttributeValue::S("investigation".into()))
+                .scan_index_forward(false); // newest first
 
             if let Some(key) = last_key {
                 builder = builder.set_exclusive_start_key(Some(key));
             }
 
-            let result = builder.send().await?;
+            let Ok(result) = builder.send().await else {
+                // GSI not yet available — fall back to scan
+                tracing::warn!("type-created_at-index not available, falling back to scan");
+                return self.list_investigations_scan().await;
+            };
 
             if let Some(page_items) = result.items {
                 for item in &page_items {
-                    if let Some(mut meta) = parse_item(item) {
+                    if let Some(mut meta) = parse_investigation(item) {
                         if self.recover_stale_enriching(&mut meta).await {
                             tracing::warn!(
                                 investigation_id = %meta.id,
@@ -196,14 +241,50 @@ impl DynamoInvestigationStore {
             }
         }
 
-        // Sort by created_at descending
+        Ok(items)
+    }
+
+    /// Fallback scan for listing investigations (used when GSI isn't available).
+    async fn list_investigations_scan(
+        &self,
+    ) -> Result<Vec<InvestigationMetadata>, aws_sdk_dynamodb::Error> {
+        let mut items = Vec::new();
+        let mut last_key = None;
+
+        loop {
+            let mut builder = self.client.scan().table_name(&self.table_name);
+
+            if let Some(key) = last_key {
+                builder = builder.set_exclusive_start_key(Some(key));
+            }
+
+            let result = builder.send().await?;
+
+            if let Some(page_items) = result.items {
+                for item in &page_items {
+                    if let Some(mut meta) = parse_investigation(item) {
+                        if self.recover_stale_enriching(&mut meta).await {
+                            tracing::warn!(
+                                investigation_id = %meta.id,
+                                "auto-recovered stuck enriching investigation"
+                            );
+                        }
+                        items.push(meta);
+                    }
+                }
+            }
+
+            last_key = result.last_evaluated_key;
+            if last_key.is_none() {
+                break;
+            }
+        }
+
         items.sort_by(|a, b| b.created_at.cmp(&a.created_at));
         Ok(items)
     }
 
     /// Check if an investigation is stuck in "enriching" and auto-recover to "active".
-    ///
-    /// Returns `true` if the status was recovered.
     async fn recover_stale_enriching(&self, meta: &mut InvestigationMetadata) -> bool {
         if meta.status != "enriching" {
             return false;
@@ -214,7 +295,7 @@ impl DynamoInvestigationStore {
                 let age = Utc::now() - updated.with_timezone(&Utc);
                 age.num_minutes() > ENRICHING_TIMEOUT_MINUTES
             })
-            .unwrap_or(true); // If we can't parse the timestamp, assume stale
+            .unwrap_or(true);
 
         if !is_stale {
             return false;
@@ -223,7 +304,6 @@ impl DynamoInvestigationStore {
         meta.status = "active".into();
         meta.error = Some("enrichment timed out after 1 hour".into());
 
-        // Best-effort update in DynamoDB — don't fail the read if this fails
         if let Err(e) = self
             .update_status(
                 &meta.id,
@@ -254,10 +334,198 @@ impl DynamoInvestigationStore {
             .await?;
         Ok(())
     }
+
+    // -------------------------------------------------------------------
+    // Detection run operations
+    // -------------------------------------------------------------------
+
+    /// Save a detection run record to `DynamoDB` with 30-day TTL.
+    pub async fn save_detection_run(
+        &self,
+        record: &DetectionRunDynamo,
+    ) -> Result<(), aws_sdk_dynamodb::Error> {
+        let ttl = Utc::now().timestamp() + DETECTION_RUN_TTL_SECONDS;
+
+        let mut builder = self
+            .client
+            .put_item()
+            .table_name(&self.table_name)
+            .item("id", AttributeValue::S(format!("dr#{}", record.run_id)))
+            .item("record_type", AttributeValue::S("detection_run".into()))
+            .item("created_at", AttributeValue::S(record.executed_at.clone()))
+            .item("ttl", AttributeValue::N(ttl.to_string()))
+            .item("run_id", AttributeValue::S(record.run_id.clone()))
+            .item("rule_id", AttributeValue::S(record.rule_id.clone()))
+            .item("rule_name", AttributeValue::S(record.rule_name.clone()))
+            .item("triggered", AttributeValue::Bool(record.triggered))
+            .item("severity", AttributeValue::S(record.severity.clone()))
+            .item(
+                "match_count",
+                AttributeValue::N(record.match_count.to_string()),
+            )
+            .item(
+                "execution_time_ms",
+                AttributeValue::N(format!("{:.2}", record.execution_time_ms)),
+            )
+            .item("executed_at", AttributeValue::S(record.executed_at.clone()))
+            .item(
+                "lookback_minutes",
+                AttributeValue::N(record.lookback_minutes.to_string()),
+            );
+
+        if let Some(ref err) = record.error {
+            builder = builder.item("error_message", AttributeValue::S(err.clone()));
+        }
+        if let Some(ref src) = record.source_name {
+            builder = builder.item("source_name", AttributeValue::S(src.clone()));
+        }
+
+        builder.send().await?;
+        Ok(())
+    }
+
+    /// Save a batch of detection run records (up to 25 per `DynamoDB` batch).
+    pub async fn save_detection_runs_batch(
+        &self,
+        records: &[DetectionRunDynamo],
+    ) -> Result<(), aws_sdk_dynamodb::Error> {
+        use aws_sdk_dynamodb::types::WriteRequest;
+
+        let ttl = Utc::now().timestamp() + DETECTION_RUN_TTL_SECONDS;
+
+        for chunk in records.chunks(25) {
+            let requests: Vec<WriteRequest> = chunk
+                .iter()
+                .map(|record| {
+                    let mut item = std::collections::HashMap::new();
+                    item.insert(
+                        "id".into(),
+                        AttributeValue::S(format!("dr#{}", record.run_id)),
+                    );
+                    item.insert(
+                        "record_type".into(),
+                        AttributeValue::S("detection_run".into()),
+                    );
+                    item.insert(
+                        "created_at".into(),
+                        AttributeValue::S(record.executed_at.clone()),
+                    );
+                    item.insert("ttl".into(), AttributeValue::N(ttl.to_string()));
+                    item.insert("run_id".into(), AttributeValue::S(record.run_id.clone()));
+                    item.insert("rule_id".into(), AttributeValue::S(record.rule_id.clone()));
+                    item.insert(
+                        "rule_name".into(),
+                        AttributeValue::S(record.rule_name.clone()),
+                    );
+                    item.insert("triggered".into(), AttributeValue::Bool(record.triggered));
+                    item.insert(
+                        "severity".into(),
+                        AttributeValue::S(record.severity.clone()),
+                    );
+                    item.insert(
+                        "match_count".into(),
+                        AttributeValue::N(record.match_count.to_string()),
+                    );
+                    item.insert(
+                        "execution_time_ms".into(),
+                        AttributeValue::N(format!("{:.2}", record.execution_time_ms)),
+                    );
+                    item.insert(
+                        "executed_at".into(),
+                        AttributeValue::S(record.executed_at.clone()),
+                    );
+                    item.insert(
+                        "lookback_minutes".into(),
+                        AttributeValue::N(record.lookback_minutes.to_string()),
+                    );
+                    if let Some(ref err) = record.error {
+                        item.insert("error_message".into(), AttributeValue::S(err.clone()));
+                    }
+                    if let Some(ref src) = record.source_name {
+                        item.insert("source_name".into(), AttributeValue::S(src.clone()));
+                    }
+
+                    WriteRequest::builder()
+                        .put_request(
+                            aws_sdk_dynamodb::types::PutRequest::builder()
+                                .set_item(Some(item))
+                                .build()
+                                .expect("valid put request"),
+                        )
+                        .build()
+                })
+                .collect();
+
+            self.client
+                .batch_write_item()
+                .request_items(&self.table_name, requests)
+                .send()
+                .await?;
+        }
+        Ok(())
+    }
+
+    /// List recent detection runs, sorted newest first.
+    ///
+    /// Uses the `type-created_at-index` GSI for efficient querying.
+    pub async fn list_detection_runs(
+        &self,
+        limit: usize,
+        rule_id_filter: Option<&str>,
+    ) -> Result<Vec<DetectionRunDynamo>, aws_sdk_dynamodb::Error> {
+        let mut items = Vec::new();
+        let mut last_key = None;
+        let limit_i32 = i32::try_from(limit).unwrap_or(500);
+
+        loop {
+            let mut builder = self
+                .client
+                .query()
+                .table_name(&self.table_name)
+                .index_name(TYPE_INDEX)
+                .key_condition_expression("record_type = :rt")
+                .expression_attribute_values(":rt", AttributeValue::S("detection_run".into()))
+                .scan_index_forward(false) // newest first
+                .limit(limit_i32);
+
+            if let Some(rule_id) = rule_id_filter {
+                builder = builder
+                    .filter_expression("rule_id = :rid")
+                    .expression_attribute_values(":rid", AttributeValue::S(rule_id.into()));
+            }
+
+            if let Some(key) = last_key {
+                builder = builder.set_exclusive_start_key(Some(key));
+            }
+
+            let result = builder.send().await?;
+
+            if let Some(page_items) = result.items {
+                for item in &page_items {
+                    if let Some(record) = parse_detection_run(item) {
+                        items.push(record);
+                    }
+                }
+            }
+
+            // Stop if we have enough items or no more pages
+            last_key = result.last_evaluated_key;
+            if last_key.is_none() || items.len() >= limit {
+                break;
+            }
+        }
+
+        items.truncate(limit);
+        Ok(items)
+    }
 }
 
+// ---------------------------------------------------------------------------
+// DynamoDB item parsers
+// ---------------------------------------------------------------------------
+
 /// Parse a `DynamoDB` item into `InvestigationMetadata`.
-fn parse_item(
+fn parse_investigation(
     item: &std::collections::HashMap<String, AttributeValue>,
 ) -> Option<InvestigationMetadata> {
     Some(InvestigationMetadata {
@@ -284,6 +552,40 @@ fn parse_item(
             .get("error_message")
             .and_then(|v| v.as_s().ok())
             .cloned(),
+    })
+}
+
+/// Parse a `DynamoDB` item into a `DetectionRunDynamo`.
+fn parse_detection_run(
+    item: &std::collections::HashMap<String, AttributeValue>,
+) -> Option<DetectionRunDynamo> {
+    Some(DetectionRunDynamo {
+        run_id: item.get("run_id")?.as_s().ok()?.clone(),
+        rule_id: item.get("rule_id")?.as_s().ok()?.clone(),
+        rule_name: item.get("rule_name")?.as_s().ok()?.clone(),
+        triggered: item
+            .get("triggered")
+            .and_then(|v| v.as_bool().ok())
+            .copied()
+            .unwrap_or(false),
+        severity: get_string(item, "severity"),
+        match_count: get_number(item, "match_count"),
+        execution_time_ms: item
+            .get("execution_time_ms")
+            .and_then(|v| v.as_n().ok())
+            .and_then(|n| n.parse().ok())
+            .unwrap_or(0.0),
+        executed_at: get_string(item, "executed_at"),
+        error: item
+            .get("error_message")
+            .and_then(|v| v.as_s().ok())
+            .cloned(),
+        source_name: item.get("source_name").and_then(|v| v.as_s().ok()).cloned(),
+        lookback_minutes: item
+            .get("lookback_minutes")
+            .and_then(|v| v.as_n().ok())
+            .and_then(|n| n.parse().ok())
+            .unwrap_or(60),
     })
 }
 

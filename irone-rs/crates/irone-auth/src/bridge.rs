@@ -60,6 +60,7 @@ fn to_l42_config(app: &AppConfig) -> L42Config {
         } else {
             vec![app.cognito_passkey_client_id.clone()]
         },
+        entity_table: None,
     }
 }
 
@@ -121,6 +122,7 @@ pub async fn build_auth(config: &AppConfig) -> Option<AuthComponents> {
         jwks_cache,
         cedar,
         session_layer,
+        entity_provider: None,
     });
 
     // Build auth routes using l42 handlers directly.

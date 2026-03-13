@@ -99,15 +99,26 @@ async fn dashboard_summary(State(state): State<AppState>) -> Json<DashboardSumma
         }
     };
 
-    // Recent detection runs (last 10 from in-memory cache)
-    let recent_detections: Vec<DetectionRunSummary> = state
-        .detection_runs
-        .read()
-        .await
-        .iter()
-        .take(10)
-        .map(DetectionRunSummary::from)
-        .collect();
+    // Recent detection runs (DynamoDB if available, else in-memory)
+    let recent_detections: Vec<DetectionRunSummary> =
+        if let Some(ref ddb_store) = state.dynamo_investigation_store {
+            ddb_store
+                .list_detection_runs(10, None)
+                .await
+                .unwrap_or_default()
+                .into_iter()
+                .map(DetectionRunSummary::from)
+                .collect()
+        } else {
+            state
+                .detection_runs
+                .read()
+                .await
+                .iter()
+                .take(10)
+                .map(DetectionRunSummary::from)
+                .collect()
+        };
 
     Json(DashboardSummary {
         source_count,

@@ -9,6 +9,7 @@ use irone_core::detections::DetectionResult;
 use irone_persistence::store::DetectionRunRecord;
 
 use crate::error::WebError;
+use crate::investigation_store::DetectionRunDynamo;
 use crate::state::AppState;
 
 /// Build the detections sub-router.
@@ -109,6 +110,24 @@ impl From<&DetectionRunRecord> for DetectionRunSummary {
     }
 }
 
+impl From<DetectionRunDynamo> for DetectionRunSummary {
+    fn from(r: DetectionRunDynamo) -> Self {
+        Self {
+            run_id: r.run_id,
+            rule_id: r.rule_id,
+            rule_name: r.rule_name,
+            triggered: r.triggered,
+            severity: r.severity,
+            match_count: r.match_count,
+            execution_time_ms: r.execution_time_ms,
+            executed_at: r.executed_at,
+            error: r.error,
+            source_name: r.source_name,
+            lookback_minutes: r.lookback_minutes,
+        }
+    }
+}
+
 /// Capped detection result for API responses (max 20 matches).
 #[derive(Debug, Serialize)]
 pub struct DetectionResponse {
@@ -190,16 +209,30 @@ async fn get_rule(
 async fn detection_history(
     State(state): State<AppState>,
     Query(filter): Query<HistoryFilter>,
-) -> Json<Vec<DetectionRunSummary>> {
-    let runs = state.detection_runs.read().await;
+) -> Result<Json<Vec<DetectionRunSummary>>, WebError> {
     let limit = filter.limit.min(500);
+
+    // DynamoDB path (scheduled + manual runs)
+    if let Some(ref ddb_store) = state.dynamo_investigation_store {
+        let runs = ddb_store
+            .list_detection_runs(limit, filter.rule_id.as_deref())
+            .await
+            .map_err(|e| {
+                WebError::Internal(format!("failed to list detection runs from DynamoDB: {e}"))
+            })?;
+        let summaries = runs.into_iter().map(DetectionRunSummary::from).collect();
+        return Ok(Json(summaries));
+    }
+
+    // In-memory fallback (local dev / redb)
+    let runs = state.detection_runs.read().await;
     let summaries: Vec<DetectionRunSummary> = runs
         .iter()
         .filter(|r| filter.rule_id.as_ref().is_none_or(|id| r.rule_id == *id))
         .take(limit)
         .map(DetectionRunSummary::from)
         .collect();
-    Json(summaries)
+    Ok(Json(summaries))
 }
 
 /// `POST /api/detections/{rule_id}/run` — execute a detection rule.
@@ -277,10 +310,32 @@ async fn run_detection(
 
     // Persist to redb (fire-and-forget, same pattern as investigations)
     if let Some(store) = state.investigation_store.clone() {
-        let record_clone = record;
+        let record_clone = record.clone();
         tokio::task::spawn_blocking(move || {
             if let Err(e) = store.save_detection_run(&record_clone) {
-                tracing::warn!(err = %e, "failed to persist detection run");
+                tracing::warn!(err = %e, "failed to persist detection run to redb");
+            }
+        });
+    }
+
+    // Persist to DynamoDB (fire-and-forget)
+    if let Some(ddb_store) = state.dynamo_investigation_store.clone() {
+        let dynamo_record = DetectionRunDynamo {
+            run_id: record.run_id.clone(),
+            rule_id: record.rule_id.clone(),
+            rule_name: record.rule_name.clone(),
+            triggered: record.triggered,
+            severity: record.severity.clone(),
+            match_count: record.match_count,
+            execution_time_ms: record.execution_time_ms,
+            executed_at: record.executed_at.to_rfc3339(),
+            error: record.error.clone(),
+            source_name: record.source_name.clone(),
+            lookback_minutes: record.lookback_minutes,
+        };
+        tokio::spawn(async move {
+            if let Err(e) = ddb_store.save_detection_run(&dynamo_record).await {
+                tracing::warn!(err = %e, "failed to persist detection run to DynamoDB");
             }
         });
     }

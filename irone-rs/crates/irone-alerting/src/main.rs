@@ -89,6 +89,9 @@ async fn run_detections(sdk_config: &aws_config::SdkConfig) -> Result<AlertResul
         "detection run complete"
     );
 
+    // Persist detection run records to DynamoDB (so web Lambda's /detections/history works)
+    persist_detection_runs(sdk_config, &results).await;
+
     // Build notifiers
     let sns_alerts = SnsNotifier::new(sdk_config, alerts_topic);
     let sns_critical = SnsNotifier::new(sdk_config, critical_topic);
@@ -247,6 +250,89 @@ async fn run_freshness_check(
     })
 }
 
+/// Persist detection run records to `DynamoDB` (fire-and-forget).
+///
+/// Writes all detection run results (triggered and non-triggered) so the
+/// web Lambda's `/api/detections/history` endpoint can show scheduled runs.
+async fn persist_detection_runs(sdk_config: &aws_config::SdkConfig, results: &[DetectionResult]) {
+    let table = match std::env::var("SECDASH_INVESTIGATIONS_TABLE") {
+        Ok(t) if !t.is_empty() => t,
+        _ => return,
+    };
+
+    let ddb_client = aws_sdk_dynamodb::Client::new(sdk_config);
+    let ttl = (Utc::now().timestamp() + 30 * 24 * 60 * 60).to_string(); // 30-day TTL
+
+    // Build batch write requests (up to 25 per batch)
+    let items: Vec<_> = results
+        .iter()
+        .map(|r| {
+            let run_id = uuid::Uuid::new_v4().to_string();
+            let mut item = std::collections::HashMap::new();
+            item.insert("id".into(), AttributeValue::S(format!("dr#{run_id}")));
+            item.insert(
+                "record_type".into(),
+                AttributeValue::S("detection_run".into()),
+            );
+            item.insert(
+                "created_at".into(),
+                AttributeValue::S(r.executed_at.to_rfc3339()),
+            );
+            item.insert("ttl".into(), AttributeValue::N(ttl.clone()));
+            item.insert("run_id".into(), AttributeValue::S(run_id));
+            item.insert("rule_id".into(), AttributeValue::S(r.rule_id.clone()));
+            item.insert("rule_name".into(), AttributeValue::S(r.rule_name.clone()));
+            item.insert("triggered".into(), AttributeValue::Bool(r.triggered));
+            item.insert("severity".into(), AttributeValue::S(r.severity.to_string()));
+            item.insert(
+                "match_count".into(),
+                AttributeValue::N(r.match_count.to_string()),
+            );
+            item.insert(
+                "execution_time_ms".into(),
+                AttributeValue::N(format!("{:.2}", r.execution_time_ms)),
+            );
+            item.insert(
+                "executed_at".into(),
+                AttributeValue::S(r.executed_at.to_rfc3339()),
+            );
+            item.insert("lookback_minutes".into(), AttributeValue::N("60".into()));
+            item.insert("source_name".into(), AttributeValue::S("cloudtrail".into()));
+            if let Some(ref err) = r.error {
+                item.insert("error_message".into(), AttributeValue::S(err.clone()));
+            }
+            item
+        })
+        .collect();
+
+    for chunk in items.chunks(25) {
+        let requests: Vec<_> = chunk
+            .iter()
+            .map(|item| {
+                aws_sdk_dynamodb::types::WriteRequest::builder()
+                    .put_request(
+                        aws_sdk_dynamodb::types::PutRequest::builder()
+                            .set_item(Some(item.clone()))
+                            .build()
+                            .expect("valid put request"),
+                    )
+                    .build()
+            })
+            .collect();
+
+        if let Err(e) = ddb_client
+            .batch_write_item()
+            .request_items(&table, requests)
+            .send()
+            .await
+        {
+            tracing::warn!(error = %e, "failed to persist detection runs to DynamoDB");
+        }
+    }
+
+    tracing::info!(count = items.len(), "persisted detection runs to DynamoDB");
+}
+
 /// Build a `SecurityAlert` from a triggered `DetectionResult`.
 fn build_alert(result: &DetectionResult) -> SecurityAlert {
     let alert_dict = result.to_alert_dict();
@@ -372,11 +458,12 @@ async fn auto_investigate(
         .send()
         .await?;
 
-    // Create DynamoDB investigation record
+    // Create DynamoDB investigation record (single-table: record_type = "investigation")
     ddb_client
         .put_item()
         .table_name(&table)
         .item("id", AttributeValue::S(inv_id.clone()))
+        .item("record_type", AttributeValue::S("investigation".into()))
         .item("name", AttributeValue::S(name))
         .item("status", AttributeValue::S("enriching".into()))
         .item("rule_id", AttributeValue::S(result.rule_id.clone()))
