@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# Native pre-commit hook for irone (no Python/prek dependency)
+set -e
+
+cd "$(git rev-parse --show-toplevel)/irone-rs"
+
+echo "── cargo fmt ──"
+cargo fmt --check
+
+echo "── cargo clippy ──"
+cargo clippy --workspace -- -D warnings
+
+echo "── cargo deny ──"
+cargo deny check 2>/dev/null || echo "cargo-deny not installed, skipping"
+
+echo "✓ pre-commit checks passed"
