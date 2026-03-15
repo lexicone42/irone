@@ -12,9 +12,22 @@ use crate::connectors::sql_utils::validate_ipv4;
 
 /// Anomaly score for an entity (user, IP, service) in the investigation window.
 ///
-/// Measures how far an entity's event count deviates from the mean across all
-/// entities of the same kind. A score > 1.0 means the entity has more than
-/// 1 standard deviation above average activity.
+/// Uses Median Absolute Deviation (MAD) instead of standard deviation to resist
+/// the outlier contamination typical of security event data (power-law distributions).
+/// A modified z-score > 3.5 is the conventional "anomalous" threshold, though the
+/// caller controls the cutoff via `z_threshold`.
+///
+/// # Why MAD over standard z-scores?
+///
+/// Security event counts follow power-law distributions — a few entities (service
+/// accounts, automated scanners) generate most events. Standard z-scores use mean
+/// and `std_dev`, both of which are heavily influenced by these outliers. This inflates
+/// σ so much that genuinely anomalous human activity (e.g., 200 events when the
+/// typical human has 2) gets a z-score near zero.
+///
+/// MAD uses the median and the median of absolute deviations, making it resistant
+/// to extreme outliers. The 0.6745 scaling constant makes MAD-based z-scores
+/// comparable to standard z-scores for normally distributed data.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EntityAnomalyScore {
     /// Entity identifier (user name, IP address, service name, etc.).
@@ -23,20 +36,25 @@ pub struct EntityAnomalyScore {
     pub kind: String,
     /// Number of events involving this entity in the investigation window.
     pub event_count: usize,
-    /// Mean event count across all entities of this kind.
-    pub mean: f64,
-    /// Standard deviation of event counts.
-    pub std_dev: f64,
-    /// Z-score: (`event_count` - mean) / `std_dev`. Higher = more anomalous.
+    /// Center of the distribution (median for MAD scoring).
+    pub median: f64,
+    /// Spread measure: MAD (Median Absolute Deviation), or `MeanAD` as fallback.
+    pub mad: f64,
+    /// Modified z-score: 0.6745 × (`event_count` − median) / MAD. Higher = more anomalous.
     pub z_score: f64,
 }
 
-/// Score entity activity volumes from enrichment results.
+/// Score entity activity volumes from enrichment results using robust statistics.
 ///
 /// Counts events per user, IP, and service from the provided `QueryResult`s,
-/// then computes z-scores within each entity kind. Returns only entities
-/// with z-score above the given threshold (default: scores above 1.0 standard
-/// deviation are considered anomalous).
+/// then computes MAD-based modified z-scores within each entity kind. Returns
+/// only entities with modified z-score above the given threshold.
+///
+/// Uses Median Absolute Deviation (MAD) instead of standard deviation, which
+/// resists the outlier contamination typical of security event distributions.
+/// A threshold of 3.5 is the conventional cutoff for MAD-based outlier detection
+/// (equivalent to ~3.5σ for normal data). Lower thresholds (e.g., 2.0) increase
+/// sensitivity.
 ///
 /// This is a pure computation over already-fetched data — no additional queries.
 #[must_use]
@@ -76,7 +94,20 @@ pub fn score_entity_anomalies(
     scores
 }
 
-/// Compute z-scores for a set of entity counts and collect those above threshold.
+/// Consistency constant for MAD → standard deviation equivalence.
+///
+/// For normally distributed data, `MAD × 1/0.6745 ≈ σ`. We multiply by 0.6745
+/// so that a modified z-score of 3.5 corresponds to ~3.5σ under normality.
+const MAD_CONSISTENCY: f64 = 0.6745;
+
+/// Compute MAD-based modified z-scores and collect entities above threshold.
+///
+/// Algorithm:
+/// 1. Compute median of entity counts
+/// 2. Compute MAD = median(|xi − median|)
+/// 3. If MAD = 0 (majority of entities share the same count), fall back to
+///    `MeanAD` = mean(|xi − median|), which is nonzero unless all values are identical
+/// 4. Modified z-score = 0.6745 × (xi − median) / spread
 #[allow(clippy::cast_precision_loss)] // Event counts won't exceed f64 mantissa range
 fn collect_anomalies(
     counts: &HashMap<String, usize>,
@@ -88,32 +119,54 @@ fn collect_anomalies(
         return; // Need at least 2 entities to compute meaningful deviation
     }
 
-    let n = counts.len() as f64;
-    let sum: f64 = counts.values().map(|&c| c as f64).sum();
-    let mean = sum / n;
-    let variance = counts
-        .values()
-        .map(|&c| (c as f64 - mean).powi(2))
-        .sum::<f64>()
-        / n;
-    let std_dev = variance.sqrt();
+    let mut sorted: Vec<f64> = counts.values().map(|&c| c as f64).collect();
+    sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
 
-    if std_dev < f64::EPSILON {
-        return; // All counts identical, no anomalies
-    }
+    let median = compute_median(&sorted);
+
+    // MAD = median of absolute deviations from the median
+    let mut abs_devs: Vec<f64> = sorted.iter().map(|&x| (x - median).abs()).collect();
+    abs_devs.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    let mad = compute_median(&abs_devs);
+
+    // When MAD = 0 (more than half the values equal the median), fall back to MeanAD.
+    // MeanAD is still robust (uses median as center) but nonzero when any value differs.
+    let spread = if mad < f64::EPSILON {
+        let n = sorted.len() as f64;
+        let mean_ad: f64 = sorted.iter().map(|&x| (x - median).abs()).sum::<f64>() / n;
+        if mean_ad < f64::EPSILON {
+            return; // All counts identical, no anomalies
+        }
+        mean_ad
+    } else {
+        mad
+    };
 
     for (entity, &count) in counts {
-        let z_score = (count as f64 - mean) / std_dev;
-        if z_score >= threshold {
+        let modified_z = MAD_CONSISTENCY * (count as f64 - median) / spread;
+        if modified_z >= threshold {
             out.push(EntityAnomalyScore {
                 entity: entity.clone(),
                 kind: kind.to_string(),
                 event_count: count,
-                mean,
-                std_dev,
-                z_score,
+                median,
+                mad: spread,
+                z_score: modified_z,
             });
         }
+    }
+}
+
+/// Compute the median of a pre-sorted slice.
+fn compute_median(sorted: &[f64]) -> f64 {
+    let len = sorted.len();
+    if len == 0 {
+        return 0.0;
+    }
+    if len.is_multiple_of(2) {
+        f64::midpoint(sorted[len / 2 - 1], sorted[len / 2])
+    } else {
+        sorted[len / 2]
     }
 }
 
@@ -1443,7 +1496,8 @@ mod tests {
     #[test]
     fn anomaly_scores_detect_outlier_user() {
         // alice appears 10 times, bob 1 time, carol 1 time
-        // alice should be flagged as anomalous
+        // With MAD: median=1, MAD=0, MeanAD fallback=4.0
+        // alice's modified z-score = 0.6745 × (10-1)/4.0 = 1.52 → above 1.0
         let mut rows = Vec::new();
         for _ in 0..10 {
             rows.push(json_row!(
@@ -1504,7 +1558,7 @@ mod tests {
 
     #[test]
     fn anomaly_scores_uniform_distribution_no_anomalies() {
-        // All users have equal counts → std_dev = 0 → no anomalies
+        // All users have equal counts → MAD = 0, MeanAD = 0 → no anomalies
         let rows = vec![
             json_row!("actor.user.name" => "alice", "src_endpoint.ip" => "10.0.0.1"),
             json_row!("actor.user.name" => "bob", "src_endpoint.ip" => "10.0.0.2"),
@@ -1531,12 +1585,109 @@ mod tests {
         rows.push(json_row!("actor.user.name" => "dave"));
 
         let qr = QueryResult::from_maps(rows);
-        let scores = score_entity_anomalies(&[qr], 0.0); // threshold 0 to get all above-mean
+        let scores = score_entity_anomalies(&[qr], 0.0); // threshold 0 to get all above-median
 
         let user_scores: Vec<_> = scores.iter().filter(|s| s.kind == "user").collect();
         if user_scores.len() >= 2 {
             assert!(user_scores[0].z_score >= user_scores[1].z_score);
         }
+    }
+
+    #[test]
+    fn mad_resists_extreme_outlier_contamination() {
+        // Classic power-law scenario: service-bot has 5000 events, alice has 200,
+        // bob/carol/dave each have 1-3. With standard z-scores, service-bot's
+        // extreme volume inflates σ so much that alice (genuinely anomalous for a
+        // human) gets a z-score near zero. MAD correctly flags alice.
+        let mut rows = Vec::new();
+        for _ in 0..5000 {
+            rows.push(json_row!("actor.user.name" => "service-bot"));
+        }
+        for _ in 0..200 {
+            rows.push(json_row!("actor.user.name" => "alice"));
+        }
+        for _ in 0..3 {
+            rows.push(json_row!("actor.user.name" => "bob"));
+        }
+        for _ in 0..2 {
+            rows.push(json_row!("actor.user.name" => "carol"));
+        }
+        rows.push(json_row!("actor.user.name" => "dave"));
+
+        let qr = QueryResult::from_maps(rows);
+        // Use threshold 2.0 (investigation-sensitive)
+        let scores = score_entity_anomalies(&[qr], 2.0);
+        let user_scores: Vec<_> = scores.iter().filter(|s| s.kind == "user").collect();
+
+        // Both service-bot AND alice should be flagged — this is the key difference
+        // from standard z-scores where alice gets suppressed.
+        let alice = user_scores.iter().find(|s| s.entity == "alice");
+        let bot = user_scores.iter().find(|s| s.entity == "service-bot");
+        assert!(
+            alice.is_some(),
+            "MAD should detect alice as anomalous despite extreme outlier"
+        );
+        assert!(bot.is_some(), "MAD should also detect service-bot");
+
+        // alice's score should be substantial (not suppressed by service-bot's volume)
+        assert!(
+            alice.unwrap().z_score > 10.0,
+            "alice's modified z-score should be high, got: {}",
+            alice.unwrap().z_score
+        );
+    }
+
+    #[test]
+    fn mad_uses_median_not_mean() {
+        // Verify the center statistic is the median, not the mean.
+        // 5 entities with counts: 1, 1, 2, 3, 100. Mean=21.4, Median=2.
+        let mut rows = Vec::new();
+        rows.push(json_row!("actor.user.name" => "a"));
+        rows.push(json_row!("actor.user.name" => "b"));
+        for _ in 0..2 {
+            rows.push(json_row!("actor.user.name" => "c"));
+        }
+        for _ in 0..3 {
+            rows.push(json_row!("actor.user.name" => "d"));
+        }
+        for _ in 0..100 {
+            rows.push(json_row!("actor.user.name" => "e"));
+        }
+
+        let qr = QueryResult::from_maps(rows);
+        let scores = score_entity_anomalies(&[qr], 0.0);
+        let e_score = scores
+            .iter()
+            .find(|s| s.entity == "e" && s.kind == "user")
+            .expect("e should be flagged");
+
+        // The center should be 2.0 (median), not 21.4 (mean)
+        assert!(
+            (e_score.median - 2.0).abs() < f64::EPSILON,
+            "center should be median (2.0), got {}",
+            e_score.median
+        );
+    }
+
+    #[test]
+    fn mad_fallback_to_mean_ad_when_majority_tied() {
+        // When more than half the entities have the same count, MAD = 0.
+        // Should fall back to MeanAD. Entities: a=1, b=1, c=1, d=1, e=50.
+        let mut rows = Vec::new();
+        for name in &["a", "b", "c", "d"] {
+            rows.push(json_row!("actor.user.name" => *name));
+        }
+        for _ in 0..50 {
+            rows.push(json_row!("actor.user.name" => "e"));
+        }
+
+        let qr = QueryResult::from_maps(rows);
+        let scores = score_entity_anomalies(&[qr], 1.0);
+        let e_score = scores.iter().find(|s| s.entity == "e" && s.kind == "user");
+        assert!(
+            e_score.is_some(),
+            "MeanAD fallback should still detect the outlier"
+        );
     }
 
     // --- Lateral movement tracing tests ---
@@ -1661,5 +1812,88 @@ mod tests {
         assert!(trace.resources.is_empty());
         // Hop 3 skipped since no resources
         assert!(trace.related_users.is_empty());
+    }
+
+    // --- Property tests for MAD-based anomaly scoring ---
+
+    use proptest::prelude::*;
+
+    /// Generate a power-law-ish distribution: many small counts + one outlier.
+    fn power_law_with_outlier() -> impl Strategy<Value = (Vec<usize>, usize)> {
+        // 3-20 background entities with low counts, 1 outlier with high count
+        (
+            proptest::collection::vec(1_usize..=5, 3..20),
+            50_usize..=10_000,
+        )
+    }
+
+    proptest! {
+        /// A clear outlier should always be detected regardless of background distribution.
+        ///
+        /// This property was not guaranteed by the old z-score approach — extreme
+        /// outliers in the background (e.g., service-bot with 100K events) would
+        /// inflate σ and suppress detection of moderate outliers.
+        #[test]
+        fn mad_always_detects_clear_outlier(
+            (background, outlier_count) in power_law_with_outlier()
+        ) {
+            let mut counts: HashMap<String, usize> = HashMap::new();
+            for (i, &c) in background.iter().enumerate() {
+                counts.insert(format!("entity_{i}"), c);
+            }
+            counts.insert("outlier".into(), outlier_count);
+
+            let mut out = Vec::new();
+            super::collect_anomalies(&counts, "test", 2.0, &mut out);
+
+            // The outlier (50-10000 events) should always be detected when
+            // background entities have 1-5 events each
+            let found = out.iter().any(|s| s.entity == "outlier");
+            prop_assert!(
+                found,
+                "outlier with {} events not detected among {} background entities with counts {:?}",
+                outlier_count, background.len(), background
+            );
+        }
+
+        /// Scores should always be sorted descending after collection.
+        #[test]
+        fn scores_are_sorted_descending(
+            counts in proptest::collection::hash_map("[a-z]{3}", 1_usize..=1000, 3..30)
+        ) {
+            let mut out = Vec::new();
+            super::collect_anomalies(&counts, "test", 0.0, &mut out);
+            // After manual sort (as score_entity_anomalies does)
+            out.sort_by(|a, b| b.z_score.partial_cmp(&a.z_score).unwrap_or(std::cmp::Ordering::Equal));
+
+            for window in out.windows(2) {
+                prop_assert!(
+                    window[0].z_score >= window[1].z_score,
+                    "scores not sorted: {} < {}",
+                    window[0].z_score,
+                    window[1].z_score
+                );
+            }
+        }
+
+        /// The median field should always be a value that actually appears in
+        /// (or is interpolated between) the entity counts.
+        #[test]
+        fn median_is_bounded_by_data(
+            counts in proptest::collection::hash_map("[a-z]{3}", 1_usize..=500, 2..20)
+        ) {
+            let mut out = Vec::new();
+            super::collect_anomalies(&counts, "test", f64::NEG_INFINITY, &mut out);
+
+            if let Some(score) = out.first() {
+                let min = *counts.values().min().unwrap() as f64;
+                let max = *counts.values().max().unwrap() as f64;
+                prop_assert!(
+                    score.median >= min && score.median <= max,
+                    "median {} not in [{}, {}]",
+                    score.median, min, max
+                );
+            }
+        }
     }
 }

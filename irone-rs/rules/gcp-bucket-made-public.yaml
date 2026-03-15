@@ -1,0 +1,33 @@
+id: detect-gcp-bucket-made-public
+name: GCP Storage Bucket Made Public
+description: >
+  Detects when a Cloud Storage bucket's IAM policy is modified to include
+  allUsers or allAuthenticatedUsers. Making a bucket public exposes its
+  contents to the internet — a common data exfiltration or misconfiguration
+  vector. This is the GCP equivalent of S3 public bucket detection.
+author: irone contributors
+severity: critical
+event_class: api_activity
+limit: 1000
+threshold: 1
+tags:
+  - exfiltration
+  - gcp
+  - storage
+  - public-access
+mitre_attack:
+  - T1530
+  - T1537
+references:
+  - https://attack.mitre.org/techniques/T1530/
+  - https://cloud.google.com/storage/docs/access-control/iam
+data_sources:
+  - gcp-audit
+filters:
+  - field: api.operation
+    in:
+      - storage.setIamPermissions
+      - google.iam.v1.IAMPolicy.SetIamPolicy
+      - storage.buckets.update
+  - field: api.service.name
+    equals: storage.googleapis.com

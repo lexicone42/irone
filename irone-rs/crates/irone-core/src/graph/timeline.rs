@@ -647,7 +647,7 @@ fn narrate_api_activity(props: &HashMap<String, Value>) -> String {
     let user = get_prop_str(props, "actor_user_name").unwrap_or("unknown");
     let operation = get_prop_str(props, "api_operation").unwrap_or("unknown");
     let service = get_prop_str(props, "api_service_name").unwrap_or("");
-    let resource = get_prop_str(props, "resource_arn");
+    let resource = get_prop_str(props, "resource_id");
 
     let qualified_op = if service.is_empty() {
         operation.to_string()
@@ -1131,7 +1131,7 @@ mod tests {
         );
         props.insert("api_service_name".into(), Value::String("iam".into()));
         props.insert(
-            "resource_arn".into(),
+            "resource_id".into(),
             Value::String("arn:aws:iam::651804262336:user/bryan".into()),
         );
 

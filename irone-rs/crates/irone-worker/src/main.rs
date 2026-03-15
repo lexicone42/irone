@@ -1,6 +1,8 @@
 use chrono::Duration;
 use irone_core::catalog::DataCatalog;
-use irone_core::graph::{GraphBuilder, extract_attack_paths, extract_timeline_from_graph};
+use irone_core::graph::{
+    GraphBuilder, detect_patterns, extract_attack_paths, extract_timeline_from_graph,
+};
 use lambda_runtime::{Error, LambdaEvent, service_fn};
 use serde::{Deserialize, Serialize};
 
@@ -23,6 +25,7 @@ struct WorkerResult {
     node_count: usize,
     edge_count: usize,
     attack_path_count: usize,
+    pattern_count: usize,
 }
 
 #[allow(clippy::too_many_lines)]
@@ -209,6 +212,26 @@ async fn handler(event: LambdaEvent<WorkerEvent>) -> Result<WorkerResult, Error>
         tracing::info!(attack_path_count, "wrote attack_paths.json to S3");
     }
 
+    // 6. Compute graph-structural patterns and write to S3 if non-empty
+    let patterns = detect_patterns(&graph);
+    let pattern_count = patterns.len();
+
+    if !patterns.is_empty() {
+        let patterns_json = serde_json::to_vec(&patterns)?;
+        let patterns_key = format!("investigations/{}/patterns.json", payload.investigation_id);
+
+        s3_client
+            .put_object()
+            .bucket(&payload.bucket)
+            .key(&patterns_key)
+            .body(patterns_json.into())
+            .content_type("application/json")
+            .send()
+            .await?;
+
+        tracing::info!(pattern_count, "wrote patterns.json to S3");
+    }
+
     tracing::info!(
         investigation_id = %payload.investigation_id,
         "wrote graph.json and timeline.json to S3"
@@ -219,6 +242,7 @@ async fn handler(event: LambdaEvent<WorkerEvent>) -> Result<WorkerResult, Error>
         node_count,
         edge_count,
         attack_path_count,
+        pattern_count,
     })
 }
 
@@ -233,7 +257,9 @@ async fn main() -> Result<(), Error> {
 mod tests {
     use super::*;
     use irone_core::detections::{DetectionResult, Severity};
-    use irone_core::graph::{SecurityGraph, extract_attack_paths, extract_timeline_from_graph};
+    use irone_core::graph::{
+        SecurityGraph, detect_patterns, extract_attack_paths, extract_timeline_from_graph,
+    };
 
     fn sample_detection_result() -> DetectionResult {
         DetectionResult {
@@ -286,12 +312,14 @@ mod tests {
             node_count: 10,
             edge_count: 15,
             attack_path_count: 2,
+            pattern_count: 3,
         };
         let json = serde_json::to_value(&result).unwrap();
         assert_eq!(json["investigation_id"], "inv-123");
         assert_eq!(json["node_count"], 10);
         assert_eq!(json["edge_count"], 15);
         assert_eq!(json["attack_path_count"], 2);
+        assert_eq!(json["pattern_count"], 3);
     }
 
     #[test]
@@ -343,10 +371,12 @@ mod tests {
         let graph = SecurityGraph::new();
         let timeline = extract_timeline_from_graph(&graph, true, true);
         let paths = extract_attack_paths(&graph);
+        let patterns = detect_patterns(&graph);
 
         // All artifacts must be JSON-serializable (worker writes them to S3)
         assert!(serde_json::to_vec(&graph).is_ok());
         assert!(serde_json::to_vec(&timeline).is_ok());
         assert!(serde_json::to_vec(&paths).is_ok());
+        assert!(serde_json::to_vec(&patterns).is_ok());
     }
 }

@@ -201,13 +201,111 @@ pub fn extract_attack_paths(graph: &SecurityGraph) -> Vec<AttackNarrative> {
     narratives
 }
 
+/// Classify a cloud API operation into a MITRE ATT&CK phase.
+///
+/// Dispatches to cloud-specific classifiers based on operation name format:
+/// - GCP operations use dot-separated names (e.g., `google.iam.admin.v1.CreateServiceAccount`)
+/// - AWS operations use CamelCase (e.g., `CreateAccessKey`)
+#[must_use]
+pub fn classify_operation(operation: &str) -> AttackPhase {
+    if operation.contains('.') && operation.starts_with("google.") {
+        classify_gcp_operation(operation)
+    } else {
+        classify_aws_operation(operation)
+    }
+}
+
+/// Classify a GCP API operation into a MITRE ATT&CK phase.
+///
+/// GCP operations use fully-qualified method names like
+/// `google.iam.admin.v1.CreateServiceAccount`. We match on the method
+/// suffix (after the last dot) and service prefix.
+#[must_use]
+pub fn classify_gcp_operation(operation: &str) -> AttackPhase {
+    let method = operation.rsplit('.').next().unwrap_or(operation);
+
+    // Match by specific method name first, then by service patterns
+    match method {
+        // ── Persistence ──────────────────────────────
+        "CreateServiceAccount" | "CreateServiceAccountKey" | "CreateRole" => {
+            AttackPhase::Persistence
+        }
+
+        // ── Privilege Escalation ─────────────────────
+        "SetIamPolicy" | "UpdateRole" | "AddMember" | "SetOrgPolicy" => {
+            AttackPhase::PrivilegeEscalation
+        }
+
+        // ── Defense Evasion ──────────────────────────
+        "DeleteSink" | "DeleteExclusion" | "UpdateSink" | "DisableService" => {
+            AttackPhase::DefenseEvasion
+        }
+
+        // ── Credential Access ────────────────────────
+        "GenerateAccessToken" | "SignBlob" | "SignJwt" | "GenerateIdToken" => {
+            AttackPhase::CredentialAccess
+        }
+
+        // ── Discovery ────────────────────────────────
+        "ListServiceAccounts"
+        | "ListRoles"
+        | "ListInstances"
+        | "ListBuckets"
+        | "GetIamPolicy"
+        | "ListProjects"
+        | "TestIamPermissions"
+        | "ListKeys"
+        | "GetProject"
+        | "ListAssets" => AttackPhase::Discovery,
+
+        // ── Collection ───────────────────────────────
+        "GetObject"
+        | "ReadObject"
+        | "GetSecret"
+        | "AccessSecretVersion"
+        | "GetDataset"
+        | "ListTables"
+        | "GetTable" => AttackPhase::Collection,
+
+        // ── Execution ────────────────────────────────
+        "RunQuery" | "InsertJob" | "CreateFunction" | "CallFunction" | "RunTask" => {
+            AttackPhase::Execution
+        }
+
+        // ── Exfiltration ─────────────────────────────
+        "CopyObject" | "CreateSnapshot" | "ExportAssets" | "ExtractTable" => {
+            AttackPhase::Exfiltration
+        }
+
+        // ── Impact ───────────────────────────────────
+        "DeleteBucket"
+        | "DeleteInstance"
+        | "DeleteServiceAccount"
+        | "DeleteDataset"
+        | "DeleteTable"
+        | "DeleteProject"
+        | "DeleteSecret" => AttackPhase::Impact,
+
+        _ => {
+            // Fall back to service-level heuristics
+            if operation.contains("logging.") && method.starts_with("Delete") {
+                AttackPhase::DefenseEvasion
+            } else if operation.contains("iam.") && method.starts_with("Set") {
+                AttackPhase::PrivilegeEscalation
+            } else {
+                AttackPhase::Unknown
+            }
+        }
+    }
+}
+
 /// Classify an AWS API operation into a MITRE ATT&CK phase.
 ///
 /// Uses the operation name (e.g. "`CreateAccessKey`") to determine the
 /// most likely kill chain phase. Operations that span multiple phases
 /// (like `AssumeRole`) are classified by their primary intent.
 #[must_use]
-pub fn classify_operation(operation: &str) -> AttackPhase {
+pub fn classify_aws_operation(operation: &str) -> AttackPhase {
     match operation {
         // ── Persistence ──────────────────────────────
         "CreateAccessKey" | "CreateUser" | "CreateLoginProfile" | "CreateServiceLinkedRole" => {

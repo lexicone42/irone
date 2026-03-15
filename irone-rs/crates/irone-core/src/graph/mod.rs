@@ -2,6 +2,7 @@ pub mod attack_path;
 pub mod builder;
 pub mod enrichment;
 mod models;
+pub mod patterns;
 mod timeline;
 
 pub use attack_path::{AttackNarrative, AttackPhase, AttackStep, extract_attack_paths};
@@ -13,6 +14,7 @@ pub use models::{
     APIOperationNode, EdgeType, EventNode, GraphEdge, GraphNode, IPAddressNode, NodeType,
     PrincipalNode, ResourceNode, SecurityFindingNode, SecurityGraph,
 };
+pub use patterns::{GraphPattern, PatternType, detect_patterns};
 pub use timeline::{
     EventTag, InvestigationTimeline, TAG_COLORS, TemporalCluster, TimelineEvent,
     cluster_timeline_events, extract_timeline_from_graph, generate_narrative,

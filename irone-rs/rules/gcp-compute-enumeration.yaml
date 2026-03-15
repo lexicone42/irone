@@ -1,0 +1,48 @@
+id: detect-gcp-compute-enumeration
+name: GCP Compute Resource Enumeration
+description: >
+  Detects bulk enumeration of GCP resources across multiple services.
+  After initial access, attackers enumerate the environment to understand
+  what's available. A burst of List/Get calls across Compute, IAM, Storage,
+  and other services in a short window indicates reconnaissance.
+author: irone contributors
+severity: medium
+event_class: api_activity
+limit: 5000
+threshold: 50
+tags:
+  - discovery
+  - gcp
+  - enumeration
+mitre_attack:
+  - T1580
+  - T1526
+references:
+  - https://attack.mitre.org/techniques/T1580/
+  - https://attack.mitre.org/techniques/T1526/
+data_sources:
+  - gcp-audit
+filters:
+  - field: api.operation
+    in:
+      - google.cloud.compute.v1.Instances.List
+      - google.cloud.compute.v1.Instances.AggregatedList
+      - google.iam.admin.v1.ListServiceAccounts
+      - google.iam.admin.v1.ListServiceAccountKeys
+      - google.iam.admin.v1.ListRoles
+      - google.cloud.resourcemanager.v3.Projects.ListProjects
+      - google.storage.v2.StorageService.ListBuckets
+      - google.cloud.bigquery.v2.DatasetService.ListDatasets
+      - google.cloud.bigquery.v2.TableService.ListTables
+      - google.cloud.functions.v2.FunctionService.ListFunctions
+      - google.cloud.run.v2.Services.ListServices
+      - google.cloud.sql.v1.SqlInstancesService.List
+
+test_cases:
+  - name: triggers on burst of list calls
+    events:
+      - api.operation: google.cloud.compute.v1.Instances.List
+        api.service.name: compute.googleapis.com
+    expected:
+      triggered: true
+      threshold_override: 1

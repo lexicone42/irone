@@ -85,6 +85,7 @@ export class WebStack extends cdk.Stack {
         SECDASH_COGNITO_REDIRECT_URI:
           "https://irone.lexicone.com/auth/callback",
         SECDASH_COGNITO_PASSKEY_CLIENT_ID: props.passkeyClientId,
+        SECDASH_IS_LAMBDA: "true",
         SECDASH_USE_DIRECT_QUERY: "true",
         SECDASH_AUTH_ENABLED: "true",
         SECDASH_CEDAR_POLICY_DIR: "cedar",

@@ -189,9 +189,9 @@ impl IamEnricher {
 
         // Enrich IAM roles (extracted from ARNs matching `:role/`)
         let role_names: Vec<String> = identifiers
-            .arns
+            .resource_ids
             .iter()
-            .filter_map(|arn| {
+            .filter_map(|arn: &String| {
                 let role_part = arn.split(":role/").nth(1)?;
                 // Strip any path prefix (e.g., "service-role/MyRole" → "MyRole")
                 Some(

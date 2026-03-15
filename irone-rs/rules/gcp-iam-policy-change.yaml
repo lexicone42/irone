@@ -1,0 +1,44 @@
+id: detect-gcp-iam-policy-change
+name: GCP IAM Policy Modification
+description: >
+  Detects changes to IAM policies at project, folder, or organization level.
+  SetIamPolicy is the GCP equivalent of AWS AttachRolePolicy/PutUserPolicy —
+  it can grant any role to any principal. Unauthorized policy changes are a
+  primary privilege escalation vector.
+author: irone contributors
+severity: high
+event_class: api_activity
+limit: 1000
+threshold: 1
+tags:
+  - privilege-escalation
+  - gcp
+  - iam
+mitre_attack:
+  - T1098
+  - T1078.004
+references:
+  - https://attack.mitre.org/techniques/T1098/
+  - https://cloud.google.com/iam/docs/overview
+  - https://rhinosecuritylabs.com/gcp/privilege-escalation-google-cloud-platform-part-1/
+data_sources:
+  - gcp-audit
+filters:
+  - field: api.operation
+    in:
+      - google.iam.v1.IAMPolicy.SetIamPolicy
+      - SetIamPolicy
+  - field: api.service.name
+    in:
+      - cloudresourcemanager.googleapis.com
+      - iam.googleapis.com
+      - storage.googleapis.com
+
+test_cases:
+  - name: triggers on project-level SetIamPolicy
+    events:
+      - api.operation: google.iam.v1.IAMPolicy.SetIamPolicy
+        api.service.name: cloudresourcemanager.googleapis.com
+    expected:
+      triggered: true
+      match_count: 1

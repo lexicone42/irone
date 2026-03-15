@@ -1,15 +1,17 @@
 id: detect-lambda-execution-failure
-name: Lambda Execution Failure
+name: Lambda Execution Failure Spike
 description: >
-  Detects failed Lambda function executions. While occasional failures are
-  normal, a pattern of failures on security-critical functions (token handlers,
-  auth edge functions) may indicate misconfiguration, resource exhaustion,
-  or an attacker probing function behavior.
+  Detects a spike in failed Lambda function executions. In OCSF, any Lambda
+  invocation returning an error (including HTTP 4xx from API Gateway-backed
+  functions) is status=Failure. A web Lambda behind API Gateway generates
+  routine 401/404 failures from normal traffic, so the threshold is set high
+  to catch genuine spikes (runtime crashes, resource exhaustion, DoS) while
+  filtering out baseline HTTP error noise.
 author: irone contributors
 severity: medium
 event_class: api_activity
-limit: 1000
-threshold: 5
+limit: 5000
+threshold: 500
 tags:
   - lambda
   - availability

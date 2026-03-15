@@ -9,8 +9,9 @@ use serde::{Deserialize, Serialize};
 
 use irone_core::audit;
 use irone_core::graph::{
-    AttackNarrative, EdgeType, EventTag, GraphBuilder, GraphEdge, GraphNode, InvestigationTimeline,
-    NodeType, SecurityGraph, extract_attack_paths, extract_timeline_from_graph,
+    AttackNarrative, EdgeType, EventTag, GraphBuilder, GraphEdge, GraphNode, GraphPattern,
+    InvestigationTimeline, NodeType, SecurityGraph, detect_patterns, extract_attack_paths,
+    extract_timeline_from_graph,
 };
 use irone_core::reports::graph_to_report_data;
 
@@ -41,6 +42,7 @@ pub fn router() -> Router<AppState> {
             get(get_attack_paths),
         )
         .route("/investigations/{inv_id}/anomalies", get(get_anomalies))
+        .route("/investigations/{inv_id}/patterns", get(get_patterns))
         .route(
             "/investigations/{inv_id}/enrich",
             post(enrich_investigation),
@@ -787,6 +789,37 @@ async fn get_anomalies(
     Ok(Json(scores))
 }
 
+/// `GET /api/investigations/{inv_id}/patterns` — graph-structural pattern detection.
+///
+/// Returns patterns detected by analyzing the investigation graph's topology
+/// (privilege fanout, resource convergence, multi-source auth, service bridges).
+/// Each pattern includes a human `description` and a machine-readable `analysis_hint`
+/// for AI investigators.
+async fn get_patterns(
+    State(state): State<AppState>,
+    Path(inv_id): Path<String>,
+) -> Result<Json<Vec<GraphPattern>>, WebError> {
+    // S3 path: try pre-computed patterns.json first, fall back to on-demand
+    if state.s3_client.is_some() {
+        if let Ok(patterns) = load_patterns_from_s3(&state, &inv_id).await {
+            return Ok(Json(patterns));
+        }
+        // Fall back to computing from graph
+        let graph = load_graph_from_s3(&state, &inv_id).await.map_err(|e| {
+            WebError::NotFound(format!("graph not found for investigation '{inv_id}': {e}"))
+        })?;
+        return Ok(Json(detect_patterns(&graph)));
+    }
+
+    // In-memory fallback
+    let invs = state.investigations.read().await;
+    let inv = invs
+        .get(&inv_id)
+        .ok_or_else(|| WebError::NotFound(format!("investigation '{inv_id}' not found")))?;
+
+    Ok(Json(detect_patterns(&inv.graph)))
+}
+
 /// `POST /api/investigations/{inv_id}/enrich` — re-enrich an investigation.
 #[allow(clippy::too_many_lines)]
 async fn enrich_investigation(
@@ -1299,7 +1332,7 @@ fn build_seed_graph(now: DateTime<Utc>) -> SecurityGraph {
             );
             p.insert("api_service_name".into(), serde_json::json!("iam"));
             p.insert(
-                "resource_arn".into(),
+                "resource_id".into(),
                 serde_json::json!("arn:aws:iam::651804262336:user/bryan"),
             );
             p.insert(
@@ -1323,7 +1356,7 @@ fn build_seed_graph(now: DateTime<Utc>) -> SecurityGraph {
             p.insert("api_operation".into(), serde_json::json!("CreateAccessKey"));
             p.insert("api_service_name".into(), serde_json::json!("iam"));
             p.insert(
-                "resource_arn".into(),
+                "resource_id".into(),
                 serde_json::json!("arn:aws:iam::651804262336:user/bryan"),
             );
             p.insert(
@@ -1347,7 +1380,7 @@ fn build_seed_graph(now: DateTime<Utc>) -> SecurityGraph {
             p.insert("api_operation".into(), serde_json::json!("GetObject"));
             p.insert("api_service_name".into(), serde_json::json!("s3"));
             p.insert(
-                "resource_arn".into(),
+                "resource_id".into(),
                 serde_json::json!("arn:aws:s3:::customer-data-prod"),
             );
             p.insert(
@@ -1658,6 +1691,34 @@ async fn load_attack_paths_from_s3(
         .into_bytes();
 
     serde_json::from_slice(&bytes).map_err(|e| format!("attack_paths deserialization failed: {e}"))
+}
+
+/// Load pre-computed graph patterns from S3 for the given investigation.
+async fn load_patterns_from_s3(
+    state: &AppState,
+    inv_id: &str,
+) -> Result<Vec<GraphPattern>, String> {
+    let s3_client = state
+        .s3_client
+        .as_ref()
+        .ok_or_else(|| "S3 client not initialized".to_string())?;
+    let bucket = &state.config.report_bucket;
+    let key = format!("investigations/{inv_id}/patterns.json");
+
+    let bytes = s3_client
+        .get_object()
+        .bucket(bucket)
+        .key(&key)
+        .send()
+        .await
+        .map_err(|e| format!("S3 GetObject failed: {e}"))?
+        .body
+        .collect()
+        .await
+        .map_err(|e| format!("S3 body read failed: {e}"))?
+        .into_bytes();
+
+    serde_json::from_slice(&bytes).map_err(|e| format!("patterns deserialization failed: {e}"))
 }
 
 /// Convert a `SecurityGraph` to Cytoscape.js elements format.

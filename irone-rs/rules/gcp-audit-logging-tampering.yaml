@@ -1,0 +1,50 @@
+id: detect-gcp-audit-logging-tampering
+name: GCP Audit Logging Tampering
+description: >
+  Detects attempts to delete or modify Cloud Logging sinks or exclusion
+  filters. Deleting a log sink stops log export; creating an exclusion
+  filter silently drops matching entries. Both are defense evasion
+  techniques that make subsequent attacker actions invisible.
+  Any modification to logging infrastructure is a critical-severity event.
+author: irone contributors
+severity: critical
+event_class: api_activity
+limit: 1000
+threshold: 1
+tags:
+  - defense-evasion
+  - gcp
+  - logging-tampering
+mitre_attack:
+  - T1562.008
+references:
+  - https://attack.mitre.org/techniques/T1562/008/
+  - https://cloud.google.com/logging/docs/routing/overview
+data_sources:
+  - gcp-audit
+filters:
+  - field: api.operation
+    in:
+      - google.logging.v2.ConfigServiceV2.DeleteSink
+      - google.logging.v2.ConfigServiceV2.DeleteExclusion
+      - google.logging.v2.ConfigServiceV2.UpdateExclusion
+      - google.logging.v2.ConfigServiceV2.UpdateSink
+  - field: api.service.name
+    equals: logging.googleapis.com
+
+test_cases:
+  - name: triggers on sink deletion
+    events:
+      - api.operation: google.logging.v2.ConfigServiceV2.DeleteSink
+        api.service.name: logging.googleapis.com
+    expected:
+      triggered: true
+      match_count: 1
+
+  - name: does not trigger on sink creation
+    events:
+      - api.operation: google.logging.v2.ConfigServiceV2.CreateSink
+        api.service.name: logging.googleapis.com
+    expected:
+      triggered: false
+      match_count: 0

@@ -110,7 +110,7 @@ impl GraphBuilder {
             users = identifiers.users.len(),
             ips = identifiers.ips.len(),
             operations = identifiers.operations.len(),
-            arns = identifiers.arns.len(),
+            resources = identifiers.resource_ids.len(),
             domains = identifiers.domains.len(),
             "extracted identifiers"
         );
@@ -217,7 +217,7 @@ impl GraphBuilder {
     /// Run enrichment against additional Security Lake sources.
     ///
     /// For each secondary connector, queries for the same extracted identifiers
-    /// (users, IPs, ARNs, domains) and merges results into the graph. Skips
+    /// (users, IPs, resource IDs, domains) and merges results into the graph. Skips
     /// sources that match `primary_source_name` (already enriched).
     pub async fn run_cross_source_enrichment<S: SecurityLakeQueries>(
         &mut self,
@@ -324,13 +324,13 @@ impl GraphBuilder {
                 ids.services.insert(s.to_string());
             }
 
-            // Resource ARNs from resources[] array
+            // Resource IDs from resources[] array (AWS ARNs, GCP resource names, etc.)
             if let Some(resources) = crate::connectors::ocsf::get_nested_array(m, "resources") {
                 for res in &resources {
                     if let Some(uid) = res.get("uid").and_then(|v| v.as_str())
-                        && uid.starts_with("arn:")
+                        && !uid.is_empty()
                     {
-                        ids.arns.insert(uid.to_string());
+                        ids.resource_ids.insert(uid.to_string());
                     }
                 }
             }
@@ -594,7 +594,7 @@ impl GraphBuilder {
     /// Stores selective OCSF fields as flat properties for narrative generation:
     /// `actor_user_name`, `actor_user_type`, `api_operation`, `api_service_name`,
     /// `src_endpoint_ip`, `dst_endpoint_ip`, `status`, `query_hostname`,
-    /// `resource_arn`, `protocol_name`, `bytes_in`, `bytes_out`.
+    /// `resource_id`, `protocol_name`, `bytes_in`, `bytes_out`.
     fn add_event_from_ocsf(
         &mut self,
         event: &serde_json::Map<String, Value>,
@@ -684,7 +684,7 @@ impl GraphBuilder {
                 .find_map(|r| r.get("uid").and_then(Value::as_str))
         {
             node.properties
-                .insert("resource_arn".into(), Value::String(uid.to_string()));
+                .insert("resource_id".into(), Value::String(uid.to_string()));
         }
         // Network flow
         if let Some(v) = get_nested_value(event, "connection_info.protocol_name")
@@ -847,7 +847,7 @@ impl GraphBuilder {
     ) -> Vec<QueryResult> {
         let users: Vec<String> = identifiers.users.iter().take(10).cloned().collect();
         let ips: Vec<String> = identifiers.ips.iter().take(10).cloned().collect();
-        let arns: Vec<String> = identifiers.arns.iter().take(10).cloned().collect();
+        let arns: Vec<String> = identifiers.resource_ids.iter().take(10).cloned().collect();
         let domains: Vec<String> = identifiers.domains.iter().take(10).cloned().collect();
 
         debug!(
@@ -930,8 +930,11 @@ impl GraphBuilder {
             }
         }
 
-        // Compute anomaly scores from all enrichment data
-        let anomalies = score_entity_anomalies(&enrichment_results, 1.0);
+        // Compute anomaly scores from all enrichment data.
+        // Threshold 2.0: MAD-based modified z-scores — catches entities with
+        // activity >2σ-equivalent above the median. Lower than the conventional
+        // 3.5 cutoff because we prefer sensitivity in investigation context.
+        let anomalies = score_entity_anomalies(&enrichment_results, 2.0);
         if !anomalies.is_empty() {
             let scores: Vec<Value> = anomalies
                 .iter()
@@ -962,7 +965,8 @@ pub struct ExtractedIdentifiers {
     pub ips: HashSet<String>,
     pub operations: HashSet<String>,
     pub services: HashSet<String>,
-    pub arns: HashSet<String>,
+    /// Resource identifiers — AWS ARNs, GCP resource names, or any OCSF `resources[].uid`.
+    pub resource_ids: HashSet<String>,
     pub domains: HashSet<String>,
 }
 
@@ -1316,7 +1320,7 @@ mod tests {
         ];
 
         let ids = GraphBuilder::extract_identifiers(&matches);
-        assert!(ids.arns.contains("arn:aws:s3:::my-bucket"));
+        assert!(ids.resource_ids.contains("arn:aws:s3:::my-bucket"));
         assert!(ids.domains.contains("evil.example.com"));
     }
 
