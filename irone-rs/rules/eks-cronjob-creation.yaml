@@ -1,0 +1,55 @@
+id: detect-eks-cronjob-creation
+name: EKS CronJob Creation
+description: >
+  Detects creation of CronJobs in EKS. CronJobs provide scheduled execution
+  within the cluster — attackers use them for persistence (runs even if the
+  initial pod is killed), periodic data exfiltration, and maintaining C2
+  callbacks. Unlike DaemonSets, CronJobs are time-triggered, making them
+  harder to detect via runtime monitoring since the pods are ephemeral.
+author: irone contributors
+severity: medium
+event_class: api_activity
+limit: 1000
+threshold: 1
+tags:
+  - persistence
+  - kubernetes
+  - scheduled-task
+  - eks
+mitre_attack:
+  - T1053.007
+references:
+  - https://microsoft.github.io/Threat-Matrix-for-Kubernetes/techniques/Cronjob/
+  - https://kubernetes.io/docs/concepts/workloads/controllers/cron-jobs/
+data_sources:
+  - eks-audit
+filters:
+  - field: api.operation
+    in:
+      - create
+      - update
+      - patch
+  - field: api.service.name
+    equals: eks.amazonaws.com
+  - field: resources
+    contains: cronjobs
+
+test_cases:
+  - name: triggers on cronjob creation
+    events:
+      - api.operation: create
+        api.service.name: eks.amazonaws.com
+        resources: cronjobs
+        actor.user.name: developer@example.com
+    expected:
+      triggered: true
+      match_count: 1
+
+  - name: does not trigger on job creation
+    events:
+      - api.operation: create
+        api.service.name: eks.amazonaws.com
+        resources: jobs
+    expected:
+      triggered: false
+      match_count: 0

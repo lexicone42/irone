@@ -1,0 +1,56 @@
+id: detect-eks-privileged-pod
+name: EKS Privileged Pod Creation
+description: >
+  Detects creation of privileged pods or containers in EKS. Privileged containers
+  have full access to the host's namespaces, devices, and kernel capabilities —
+  effectively root on the node. Attackers use this for container escape and
+  node-level persistence. Legitimate use is rare outside of system DaemonSets.
+author: irone contributors
+severity: critical
+event_class: api_activity
+limit: 1000
+threshold: 1
+tags:
+  - privilege-escalation
+  - kubernetes
+  - container-escape
+  - eks
+mitre_attack:
+  - T1611
+  - T1610
+references:
+  - https://attack.mitre.org/techniques/T1611/
+  - https://microsoft.github.io/Threat-Matrix-for-Kubernetes/techniques/Privileged%20container/
+  - https://kubernetes.io/docs/concepts/security/pod-security-standards/
+data_sources:
+  - eks-audit
+filters:
+  - field: api.operation
+    in:
+      - create
+      - update
+      - patch
+  - field: api.service.name
+    equals: eks.amazonaws.com
+  - field: resources
+    contains: pods
+
+test_cases:
+  - name: triggers on privileged pod creation
+    events:
+      - api.operation: create
+        api.service.name: eks.amazonaws.com
+        resources: pods
+        actor.user.name: attacker@example.com
+    expected:
+      triggered: true
+      match_count: 1
+
+  - name: does not trigger on configmap creation
+    events:
+      - api.operation: create
+        api.service.name: eks.amazonaws.com
+        resources: configmaps
+    expected:
+      triggered: false
+      match_count: 0

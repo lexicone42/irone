@@ -1,0 +1,58 @@
+id: detect-eks-rbac-escalation
+name: EKS RBAC Privilege Escalation
+description: >
+  Detects creation or modification of ClusterRoleBindings and ClusterRoles
+  that grant cluster-wide permissions. This is the primary Kubernetes privilege
+  escalation path — binding a user or service account to cluster-admin gives
+  full control over every namespace. Attackers who compromise a pod often
+  escalate via RBAC before moving laterally.
+author: irone contributors
+severity: critical
+event_class: api_activity
+limit: 1000
+threshold: 1
+tags:
+  - privilege-escalation
+  - kubernetes
+  - rbac
+  - eks
+mitre_attack:
+  - T1078.001
+references:
+  - https://attack.mitre.org/techniques/T1078/001/
+  - https://microsoft.github.io/Threat-Matrix-for-Kubernetes/techniques/Cluster-admin%20binding/
+  - https://kubernetes.io/docs/reference/access-authn-authz/rbac/
+data_sources:
+  - eks-audit
+filters:
+  - field: api.operation
+    in:
+      - create
+      - update
+      - patch
+  - field: api.service.name
+    equals: eks.amazonaws.com
+  - field: resources
+    in:
+      - clusterrolebindings
+      - clusterroles
+
+test_cases:
+  - name: triggers on clusterrolebinding creation
+    events:
+      - api.operation: create
+        api.service.name: eks.amazonaws.com
+        resources: clusterrolebindings
+        actor.user.name: attacker@example.com
+    expected:
+      triggered: true
+      match_count: 1
+
+  - name: does not trigger on namespace-scoped rolebinding
+    events:
+      - api.operation: create
+        api.service.name: eks.amazonaws.com
+        resources: rolebindings
+    expected:
+      triggered: false
+      match_count: 0

@@ -1,0 +1,53 @@
+id: detect-eks-kubectl-exec
+name: EKS Container Exec Session
+description: >
+  Detects kubectl exec or attach commands against running pods. Exec into a
+  container is the Kubernetes equivalent of SSH — it gives interactive shell
+  access to the container runtime. While used legitimately for debugging,
+  exec sessions are a primary vector for hands-on-keyboard attacks after
+  initial access. Unusual exec targets or off-hours exec should be investigated.
+author: irone contributors
+severity: high
+event_class: api_activity
+limit: 1000
+threshold: 1
+tags:
+  - execution
+  - kubernetes
+  - interactive-access
+  - eks
+mitre_attack:
+  - T1609
+references:
+  - https://attack.mitre.org/techniques/T1609/
+  - https://microsoft.github.io/Threat-Matrix-for-Kubernetes/techniques/Exec%20into%20container/
+data_sources:
+  - eks-audit
+filters:
+  - field: api.operation
+    in:
+      - create
+  - field: api.service.name
+    equals: eks.amazonaws.com
+  - field: resources
+    contains: pods/exec
+
+test_cases:
+  - name: triggers on exec into pod
+    events:
+      - api.operation: create
+        api.service.name: eks.amazonaws.com
+        resources: pods/exec
+        actor.user.name: developer@example.com
+    expected:
+      triggered: true
+      match_count: 1
+
+  - name: does not trigger on pod list
+    events:
+      - api.operation: list
+        api.service.name: eks.amazonaws.com
+        resources: pods
+    expected:
+      triggered: false
+      match_count: 0

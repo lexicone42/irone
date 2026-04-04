@@ -1,0 +1,33 @@
+id: pb-k8s-container-escape
+name: Kubernetes Container Escape Response
+description: >
+  Automated containment for container breakout or privilege escalation in EKS.
+  Quarantines the affected pod and disables compromised service accounts immediately.
+  Deployment scale-down requires approval to avoid production impact.
+trigger:
+  min_severity: critical
+  rule_ids:
+    - detect-eks-privileged-pod
+    - detect-eks-rbac-escalation
+  mitre_techniques:
+    - T1611
+    - T1610
+enabled: true
+actions:
+  - name: Quarantine pod with deny-all network policy
+    action_type: quarantine_pod
+    approval: auto
+    timeout_seconds: 120
+    parameters:
+      network_policy: deny-all
+      label: quarantined=true
+  - name: Disable compromised service account
+    action_type: disable_service_account
+    approval: auto
+    timeout_seconds: 300
+  - name: Scale affected deployment to zero
+    action_type: scale_to_zero
+    approval: manual
+    timeout_seconds: 1800
+    parameters:
+      confirm_message: "This will stop the deployment. Confirm only after verifying no active traffic depends on it."

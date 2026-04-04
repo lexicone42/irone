@@ -63,6 +63,11 @@ enum ArrowRowFilter {
     And(Vec<ArrowRowFilter>),
     /// Filter rows where a nested integer column equals a specific value.
     NestedIntEquals { path: Vec<String>, value: i64 },
+    /// Filter rows where a nested string column contains a substring.
+    NestedStringContains { path: Vec<String>, value: String },
+    /// Filter rows where a nested string column does NOT equal a specific value
+    /// (null values pass — they're not equal to anything).
+    NestedStringNotEquals { path: Vec<String>, value: String },
     /// Match rows where a List<Struct> column contains an element with a field
     /// equal to the given value (Arrow equivalent of `any_match`).
     ListContains {
@@ -121,6 +126,22 @@ impl ArrowRowFilter {
                 Ok(BooleanArray::from(bits))
             }
 
+            Self::NestedStringContains { path, value } => {
+                let str_col = resolve_nested_string_column(batch, path)?;
+                let bits: Vec<bool> = (0..batch.num_rows())
+                    .map(|i| !str_col.is_null(i) && str_col.value(i).contains(value.as_str()))
+                    .collect();
+                Ok(BooleanArray::from(bits))
+            }
+
+            Self::NestedStringNotEquals { path, value } => {
+                let str_col = resolve_nested_string_column(batch, path)?;
+                let bits: Vec<bool> = (0..batch.num_rows())
+                    .map(|i| str_col.is_null(i) || str_col.value(i) != value)
+                    .collect();
+                Ok(BooleanArray::from(bits))
+            }
+
             Self::NestedIntEquals { path, value } => resolve_nested_int_mask(batch, path, *value),
 
             Self::Or(filters) => {
@@ -162,6 +183,43 @@ impl ArrowRowFilter {
                 field,
                 values,
             } => list_any_match(batch, list_path, field, |s| values.iter().any(|v| v == s)),
+        }
+    }
+
+    /// Collect the top-level column names this filter needs.
+    ///
+    /// For nested paths like `["actor", "user", "name"]`, returns `"actor"` —
+    /// the Parquet reader needs the top-level struct column to decompress.
+    fn required_columns(&self) -> Vec<String> {
+        let mut cols = Vec::new();
+        self.collect_columns(&mut cols);
+        cols.sort();
+        cols.dedup();
+        cols
+    }
+
+    fn collect_columns(&self, out: &mut Vec<String>) {
+        match self {
+            Self::IntEquals { column, .. } => out.push(column.clone()),
+            Self::NestedStringEquals { path, .. }
+            | Self::NestedStringIn { path, .. }
+            | Self::NestedStringContains { path, .. }
+            | Self::NestedStringNotEquals { path, .. }
+            | Self::NestedIntEquals { path, .. } => {
+                if let Some(root) = path.first() {
+                    out.push(root.clone());
+                }
+            }
+            Self::ListContains { list_path, .. } | Self::ListContainsAny { list_path, .. } => {
+                if let Some(root) = list_path.first() {
+                    out.push(root.clone());
+                }
+            }
+            Self::Or(filters) | Self::And(filters) => {
+                for f in filters {
+                    f.collect_columns(out);
+                }
+            }
         }
     }
 
@@ -437,6 +495,18 @@ fn single_column_filter_to_arrow(filter: &ColumnFilter) -> Option<ArrowRowFilter
             path: path.split('.').map(String::from).collect(),
             value: *value,
         }),
+        ColumnFilter::StringContains { path, value } => {
+            Some(ArrowRowFilter::NestedStringContains {
+                path: path.split('.').map(String::from).collect(),
+                value: value.clone(),
+            })
+        }
+        ColumnFilter::StringNotEquals { path, value } => {
+            Some(ArrowRowFilter::NestedStringNotEquals {
+                path: path.split('.').map(String::from).collect(),
+                value: value.clone(),
+            })
+        }
         ColumnFilter::RawSql(sql) => {
             warn!(
                 sql = &sql[..sql.len().min(80)],
@@ -565,7 +635,30 @@ impl IcebergConnector {
         limit: Option<usize>,
         row_filter: Option<ArrowRowFilter>,
     ) -> Result<QueryResult, AwsError> {
-        // Plan: get the list of Parquet files to read
+        let (total_rows, batches) = self.execute_scan_lazy(scan, limit, row_filter).await?;
+
+        if total_rows == 0 {
+            return Ok(QueryResult::empty());
+        }
+
+        let materialize_start = std::time::Instant::now();
+        let qr = record_batches_to_query_result(&batches);
+        let materialize_ms = materialize_start.elapsed().as_secs_f64() * 1000.0;
+        tracing::debug!(total_rows, materialize_ms, "Arrow->JSON materialization");
+
+        Ok(qr)
+    }
+
+    /// Zero-materialization scan: returns `(total_matching_rows, filtered_batches)`.
+    ///
+    /// Callers that only need a count + sample can avoid full JSON materialization
+    /// by calling this directly and only converting the first N rows.
+    async fn execute_scan_lazy(
+        &self,
+        scan: TableScan,
+        limit: Option<usize>,
+        row_filter: Option<ArrowRowFilter>,
+    ) -> Result<(usize, Vec<RecordBatch>), AwsError> {
         let plan = scan
             .plan_files()
             .await
@@ -579,7 +672,7 @@ impl IcebergConnector {
         tracing::info!(file_count = tasks.len(), "Iceberg scan planned");
 
         if tasks.is_empty() {
-            return Ok(QueryResult::empty());
+            return Ok((0, Vec::new()));
         }
 
         let mut all_batches = Vec::new();
@@ -594,9 +687,22 @@ impl IcebergConnector {
             let file_path = &task.data_file_path;
             debug!(path = %file_path, "Reading Parquet file");
 
+            let dl_start = std::time::Instant::now();
             let parquet_bytes = self.download_parquet(file_path).await?;
-            let batches = read_parquet_bytes(&parquet_bytes, row_limit - total_rows)?;
+            let dl_ms = dl_start.elapsed().as_secs_f64() * 1000.0;
 
+            let decode_start = std::time::Instant::now();
+            let projection = row_filter.as_ref().map(ArrowRowFilter::required_columns);
+            let proj_count = projection.as_ref().map_or(0, Vec::len);
+            let batches = read_parquet_bytes(
+                &parquet_bytes,
+                row_limit - total_rows,
+                projection.as_deref(),
+            )?;
+            let decode_ms = decode_start.elapsed().as_secs_f64() * 1000.0;
+
+            let filter_start = std::time::Instant::now();
+            let pre_filter_rows: usize = batches.iter().map(RecordBatch::num_rows).sum();
             for batch in batches {
                 let filtered = if let Some(ref filter) = row_filter {
                     filter.apply(&batch)?
@@ -611,6 +717,19 @@ impl IcebergConnector {
                     break;
                 }
             }
+            let filter_ms = filter_start.elapsed().as_secs_f64() * 1000.0;
+
+            tracing::debug!(
+                path = %file_path,
+                bytes = parquet_bytes.len(),
+                projected_cols = proj_count,
+                pre_filter_rows,
+                post_filter_rows = total_rows,
+                dl_ms,
+                decode_ms,
+                filter_ms,
+                "scan file profiling"
+            );
         }
 
         tracing::info!(
@@ -618,7 +737,7 @@ impl IcebergConnector {
             files_read = tasks.len(),
             "Iceberg scan complete"
         );
-        Ok(record_batches_to_query_result(&all_batches))
+        Ok((total_rows, all_batches))
     }
 
     /// Download a Parquet file from S3.
@@ -658,15 +777,117 @@ impl IcebergConnector {
         #[allow(clippy::cast_possible_wrap)]
         Reference::new("class_uid").equal_to(Datum::int(class_uid as i32))
     }
+
+    /// Zero-materialization scan for detection rules.
+    ///
+    /// Returns `(total_matching_rows, sample_rows_as_json)` where sample is at
+    /// most `sample_size` rows. Avoids materializing the full result set into
+    /// JSON — only converts the sample rows needed for `DetectionResult.matches`.
+    ///
+    /// For a rule with threshold=5 scanning 100K events where 200 match:
+    /// - Old path: materializes all 200 rows into JSON (200 * 50 columns = 10K allocations)
+    /// - New path: counts 200 in Arrow, materializes only 100 sample rows
+    #[allow(clippy::too_many_arguments)]
+    pub async fn query_by_event_class_count(
+        &self,
+        event_class: OCSFEventClass,
+        start: DateTime<Utc>,
+        end: DateTime<Utc>,
+        limit: usize,
+        filters: Option<&[ColumnFilter]>,
+        sample_size: usize,
+    ) -> Result<(usize, QueryResult), SecurityLakeError> {
+        let safe_limit = limit.min(10_000);
+        let table = self
+            .load_table()
+            .await
+            .map_err(|e| SecurityLakeError::QueryFailed(e.to_string()))?;
+
+        let time_pred = Self::time_range_predicate(&start, &end);
+        let class_pred = Self::class_uid_predicate(event_class.class_uid());
+        let predicate = Predicate::and(time_pred, class_pred);
+
+        let scan = Self::build_scan(&table, Some(predicate))
+            .map_err(|e| SecurityLakeError::QueryFailed(e.to_string()))?;
+
+        #[allow(clippy::cast_possible_wrap)]
+        let class_filter = ArrowRowFilter::IntEquals {
+            column: "class_uid".into(),
+            value: event_class.class_uid() as i32,
+        };
+
+        let row_filter = if let Some(extra) = filters.and_then(column_filters_to_arrow) {
+            ArrowRowFilter::And(vec![class_filter, extra])
+        } else {
+            class_filter
+        };
+
+        let (total_rows, batches) = self
+            .execute_scan_lazy(scan, Some(safe_limit), Some(row_filter))
+            .await
+            .map_err(|e| SecurityLakeError::QueryFailed(e.to_string()))?;
+
+        if total_rows == 0 || sample_size == 0 {
+            return Ok((total_rows, QueryResult::empty()));
+        }
+
+        // Only materialize the first `sample_size` rows for the detection sample
+        let mut sample_batches = Vec::new();
+        let mut sample_rows = 0;
+        for batch in &batches {
+            if sample_rows >= sample_size {
+                break;
+            }
+            let take = (sample_size - sample_rows).min(batch.num_rows());
+            if take < batch.num_rows() {
+                sample_batches.push(batch.slice(0, take));
+            } else {
+                sample_batches.push(batch.clone());
+            }
+            sample_rows += take;
+        }
+
+        let sample_qr = record_batches_to_query_result(&sample_batches);
+        Ok((total_rows, sample_qr))
+    }
 }
 
 /// Read Parquet bytes into Arrow `RecordBatch`es.
-fn read_parquet_bytes(
+///
+/// When `projection_columns` is provided, only those top-level columns are
+/// decompressed from the Parquet file. For OCSF data with ~50 columns where
+/// a detection rule only filters on 2-3 fields, this can cut decode time by 90%+.
+pub(crate) fn read_parquet_bytes(
     data: &bytes::Bytes,
     max_rows: usize,
+    projection_columns: Option<&[String]>,
 ) -> Result<Vec<arrow_array::RecordBatch>, AwsError> {
     let builder = ParquetRecordBatchReaderBuilder::try_new(data.clone())
         .map_err(|e| AwsError::ResultReadFailed(format!("Parquet reader init failed: {e}")))?;
+
+    let builder = if let Some(cols) = projection_columns {
+        // Build a projection mask from column names → Parquet schema indices
+        let parquet_schema = builder.parquet_schema().clone();
+        let indices: Vec<usize> = cols
+            .iter()
+            .filter_map(|name| {
+                parquet_schema
+                    .columns()
+                    .iter()
+                    .position(|c| c.self_type().name() == name)
+            })
+            .collect();
+
+        if indices.is_empty() {
+            // No matching columns — read all (graceful fallback)
+            builder
+        } else {
+            let mask = parquet::arrow::ProjectionMask::roots(builder.parquet_schema(), indices);
+            builder.with_projection(mask)
+        }
+    } else {
+        builder
+    };
 
     let reader = builder
         .with_batch_size(max_rows.min(8192))
@@ -991,6 +1212,29 @@ impl SecurityLakeQueries for IcebergConnector {
 
         Ok(QueryResult::from_maps(rows))
     }
+
+    async fn query_by_event_class_count(
+        &self,
+        event_class: OCSFEventClass,
+        start: DateTime<Utc>,
+        end: DateTime<Utc>,
+        limit: usize,
+        filters: Option<&[ColumnFilter]>,
+        sample_size: usize,
+    ) -> Result<(usize, QueryResult), SecurityLakeError> {
+        // Delegate to the inherent method which uses execute_scan_lazy
+        // to avoid full JSON materialization.
+        IcebergConnector::query_by_event_class_count(
+            self,
+            event_class,
+            start,
+            end,
+            limit,
+            filters,
+            sample_size,
+        )
+        .await
+    }
 }
 
 #[cfg(test)]
@@ -1025,7 +1269,7 @@ mod tests {
         writer.close().unwrap();
 
         let parquet_bytes = bytes::Bytes::from(buf);
-        let batches = read_parquet_bytes(&parquet_bytes, 100).unwrap();
+        let batches = read_parquet_bytes(&parquet_bytes, 100, None).unwrap();
 
         assert_eq!(batches.len(), 1);
         assert_eq!(batches[0].num_rows(), 2);
@@ -1062,7 +1306,7 @@ mod tests {
         let parquet_bytes = bytes::Bytes::from(buf);
 
         // Request only 2 rows
-        let batches = read_parquet_bytes(&parquet_bytes, 2).unwrap();
+        let batches = read_parquet_bytes(&parquet_bytes, 2, None).unwrap();
         let total_rows: usize = batches.iter().map(arrow_array::RecordBatch::num_rows).sum();
         // batch_size=2 means at most 2 rows per batch; we stop after first batch
         assert!(total_rows <= 2);
@@ -1112,7 +1356,7 @@ mod tests {
         writer.close().unwrap();
 
         let parquet_bytes = bytes::Bytes::from(buf);
-        let batches = read_parquet_bytes(&parquet_bytes, 100).unwrap();
+        let batches = read_parquet_bytes(&parquet_bytes, 100, None).unwrap();
 
         let qr = record_batches_to_query_result(&batches);
         assert_eq!(qr.len(), 1);
@@ -1615,5 +1859,195 @@ mod tests {
         };
         let filtered = filter.apply(&batch).unwrap();
         assert_eq!(filtered.num_rows(), 2);
+    }
+
+    // ── New scan path optimization tests ──────────────────────────────
+
+    #[test]
+    fn nested_string_contains_filters_rows() {
+        let batch = nested_actor_batch(&[
+            Some("AttachUserPolicy"),
+            Some("ListBuckets"),
+            Some("PutRolePolicy"),
+            Some("GetCallerIdentity"),
+        ]);
+
+        let filter = ArrowRowFilter::NestedStringContains {
+            path: vec!["actor".into(), "user".into(), "name".into()],
+            value: "Policy".into(),
+        };
+        let filtered = filter.apply(&batch).unwrap();
+        assert_eq!(filtered.num_rows(), 2); // AttachUserPolicy + PutRolePolicy
+    }
+
+    #[test]
+    fn nested_string_contains_handles_nulls() {
+        let batch = nested_actor_batch(&[Some("AttachPolicy"), None, Some("ListBuckets")]);
+
+        let filter = ArrowRowFilter::NestedStringContains {
+            path: vec!["actor".into(), "user".into(), "name".into()],
+            value: "Policy".into(),
+        };
+        let filtered = filter.apply(&batch).unwrap();
+        assert_eq!(filtered.num_rows(), 1); // null doesn't match
+    }
+
+    #[test]
+    fn nested_string_not_equals_filters_rows() {
+        let batch = nested_actor_batch(&[Some("root"), Some("alice"), Some("root")]);
+
+        let filter = ArrowRowFilter::NestedStringNotEquals {
+            path: vec!["actor".into(), "user".into(), "name".into()],
+            value: "root".into(),
+        };
+        let filtered = filter.apply(&batch).unwrap();
+        assert_eq!(filtered.num_rows(), 1); // alice
+    }
+
+    #[test]
+    fn nested_string_not_equals_nulls_pass() {
+        // null != "root" should be true (consistent with SQL NULL semantics for NOT EQUALS)
+        let batch = nested_actor_batch(&[Some("root"), None, Some("alice")]);
+
+        let filter = ArrowRowFilter::NestedStringNotEquals {
+            path: vec!["actor".into(), "user".into(), "name".into()],
+            value: "root".into(),
+        };
+        let filtered = filter.apply(&batch).unwrap();
+        assert_eq!(filtered.num_rows(), 2); // null + alice
+    }
+
+    #[test]
+    fn required_columns_from_filter() {
+        let filter = ArrowRowFilter::And(vec![
+            ArrowRowFilter::IntEquals {
+                column: "class_uid".into(),
+                value: 6003,
+            },
+            ArrowRowFilter::NestedStringEquals {
+                path: vec!["actor".into(), "user".into(), "name".into()],
+                value: "root".into(),
+            },
+            ArrowRowFilter::NestedStringContains {
+                path: vec!["api".into(), "operation".into()],
+                value: "Policy".into(),
+            },
+            ArrowRowFilter::NestedStringNotEquals {
+                path: vec!["src_endpoint".into(), "ip".into()],
+                value: "10.0.0.1".into(),
+            },
+        ]);
+
+        let cols = filter.required_columns();
+        assert_eq!(cols, vec!["actor", "api", "class_uid", "src_endpoint"]);
+    }
+
+    #[test]
+    fn required_columns_deduplicates() {
+        let filter = ArrowRowFilter::And(vec![
+            ArrowRowFilter::NestedStringEquals {
+                path: vec!["actor".into(), "user".into(), "name".into()],
+                value: "alice".into(),
+            },
+            ArrowRowFilter::NestedStringEquals {
+                path: vec!["actor".into(), "user".into(), "type".into()],
+                value: "IAMUser".into(),
+            },
+        ]);
+
+        let cols = filter.required_columns();
+        assert_eq!(cols, vec!["actor"]); // deduplicated
+    }
+
+    #[test]
+    fn column_filter_contains_converts_to_arrow() {
+        let filters = vec![ColumnFilter::StringContains {
+            path: "api.operation".into(),
+            value: "Policy".into(),
+        }];
+        let result = column_filters_to_arrow(&filters);
+        assert!(result.is_some());
+    }
+
+    #[test]
+    fn column_filter_not_equals_converts_to_arrow() {
+        let filters = vec![ColumnFilter::StringNotEquals {
+            path: "actor.user.type".into(),
+            value: "AWSService".into(),
+        }];
+        let result = column_filters_to_arrow(&filters);
+        assert!(result.is_some());
+    }
+
+    #[test]
+    fn read_parquet_with_column_projection() {
+        use arrow_array::{Int64Array, RecordBatch, StringArray};
+        use arrow_schema::{Field, Schema};
+        use std::sync::Arc;
+
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("name", DataType::Utf8, false),
+            Field::new("value", DataType::Int64, false),
+            Field::new("extra", DataType::Utf8, false),
+        ]));
+
+        let batch = RecordBatch::try_new(
+            schema.clone(),
+            vec![
+                Arc::new(StringArray::from(vec!["alice", "bob"])),
+                Arc::new(Int64Array::from(vec![10, 20])),
+                Arc::new(StringArray::from(vec!["x", "y"])),
+            ],
+        )
+        .unwrap();
+
+        let mut buf = Vec::new();
+        let mut writer = parquet::arrow::ArrowWriter::try_new(&mut buf, schema, None).unwrap();
+        writer.write(&batch).unwrap();
+        writer.close().unwrap();
+
+        let parquet_bytes = bytes::Bytes::from(buf);
+
+        // Project only "name" column
+        let proj = vec!["name".to_string()];
+        let batches = read_parquet_bytes(&parquet_bytes, 100, Some(&proj)).unwrap();
+
+        assert_eq!(batches.len(), 1);
+        assert_eq!(batches[0].num_rows(), 2);
+        // Should only have the "name" column
+        assert_eq!(batches[0].num_columns(), 1);
+        assert_eq!(batches[0].schema().field(0).name(), "name");
+    }
+
+    #[test]
+    fn read_parquet_projection_none_reads_all() {
+        use arrow_array::{Int64Array, RecordBatch, StringArray};
+        use arrow_schema::{Field, Schema};
+        use std::sync::Arc;
+
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("a", DataType::Utf8, false),
+            Field::new("b", DataType::Int64, false),
+            Field::new("c", DataType::Utf8, false),
+        ]));
+
+        let batch = RecordBatch::try_new(
+            schema.clone(),
+            vec![
+                Arc::new(StringArray::from(vec!["x"])),
+                Arc::new(Int64Array::from(vec![1])),
+                Arc::new(StringArray::from(vec!["y"])),
+            ],
+        )
+        .unwrap();
+
+        let mut buf = Vec::new();
+        let mut writer = parquet::arrow::ArrowWriter::try_new(&mut buf, schema, None).unwrap();
+        writer.write(&batch).unwrap();
+        writer.close().unwrap();
+
+        let parquet_bytes = bytes::Bytes::from(buf);
+        let batches = read_parquet_bytes(&parquet_bytes, 100, None).unwrap();
+        assert_eq!(batches[0].num_columns(), 3); // all columns
     }
 }

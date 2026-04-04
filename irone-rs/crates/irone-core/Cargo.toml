@@ -17,6 +17,7 @@ tracing = { workspace = true }
 envy = { workspace = true }
 tokio = { version = "1", features = ["time"] }
 futures = { workspace = true }
+reqwest = { workspace = true }
 
 [dev-dependencies]
 proptest = "1"

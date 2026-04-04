@@ -9,6 +9,24 @@ pub mod security_hub;
 pub mod security_lake;
 pub mod sns;
 
+/// Test utilities — exposes internal functions for integration tests and benchmarks.
+#[doc(hidden)]
+pub mod iceberg_test_utils {
+    use arrow_array::RecordBatch;
+    use bytes::Bytes;
+
+    use crate::error::AwsError;
+
+    /// Public wrapper around `read_parquet_bytes` for benchmark tests.
+    pub fn read_parquet_bytes_pub(
+        data: &Bytes,
+        max_rows: usize,
+        projection_columns: Option<&[String]>,
+    ) -> Result<Vec<RecordBatch>, AwsError> {
+        crate::iceberg::read_parquet_bytes(data, max_rows, projection_columns)
+    }
+}
+
 use std::collections::HashMap;
 
 use chrono::{DateTime, Utc};
@@ -128,6 +146,21 @@ impl SecurityLakeQueries for ConnectorKind {
         end: DateTime<Utc>,
     ) -> Result<QueryResult, SecurityLakeError> {
         delegate!(self, get_event_summary(start, end))
+    }
+
+    async fn query_by_event_class_count(
+        &self,
+        event_class: OCSFEventClass,
+        start: DateTime<Utc>,
+        end: DateTime<Utc>,
+        limit: usize,
+        filters: Option<&[ColumnFilter]>,
+        sample_size: usize,
+    ) -> Result<(usize, QueryResult), SecurityLakeError> {
+        delegate!(
+            self,
+            query_by_event_class_count(event_class, start, end, limit, filters, sample_size)
+        )
     }
 }
 

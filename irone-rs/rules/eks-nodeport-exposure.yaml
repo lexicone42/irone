@@ -1,0 +1,56 @@
+id: detect-eks-nodeport-exposure
+name: EKS NodePort/LoadBalancer Service Creation
+description: >
+  Detects creation of NodePort or LoadBalancer services that expose cluster
+  workloads to external traffic. NodePort opens a static port on every node;
+  LoadBalancer provisions a cloud load balancer. Attackers create these to
+  establish reverse shells, expose C2 endpoints, or exfiltrate data through
+  a service that looks legitimate. Unexpected external-facing services in
+  production clusters warrant immediate investigation.
+author: irone contributors
+severity: medium
+event_class: api_activity
+limit: 1000
+threshold: 1
+tags:
+  - initial-access
+  - kubernetes
+  - network-exposure
+  - eks
+mitre_attack:
+  - T1133
+references:
+  - https://microsoft.github.io/Threat-Matrix-for-Kubernetes/techniques/Exposed%20sensitive%20interfaces/
+  - https://kubernetes.io/docs/concepts/services-networking/service/#type-nodeport
+data_sources:
+  - eks-audit
+filters:
+  - field: api.operation
+    in:
+      - create
+      - update
+      - patch
+  - field: api.service.name
+    equals: eks.amazonaws.com
+  - field: resources
+    contains: services
+
+test_cases:
+  - name: triggers on service creation
+    events:
+      - api.operation: create
+        api.service.name: eks.amazonaws.com
+        resources: services
+        actor.user.name: developer@example.com
+    expected:
+      triggered: true
+      match_count: 1
+
+  - name: does not trigger on endpoint creation
+    events:
+      - api.operation: create
+        api.service.name: eks.amazonaws.com
+        resources: endpoints
+    expected:
+      triggered: false
+      match_count: 0

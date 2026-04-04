@@ -476,8 +476,9 @@ fn parse_filters(
 
 /// Split `FieldFilter`s into pushdown `ColumnFilter`s and remaining post-query `FieldFilter`s.
 ///
-/// `Equals` → `StringEquals`, `In` → `StringIn` (pushable).
-/// `Contains`, `NotEquals`, `Regex` stay as post-query filters.
+/// All filter ops except `Regex` are now pushable to the Arrow layer.
+/// `Equals` → `StringEquals`, `In` → `StringIn`, `Contains` → `StringContains`,
+/// `NotEquals` → `StringNotEquals`. Only `Regex` remains as a post-query filter.
 fn split_filters(filters: &[FieldFilter]) -> (Vec<ColumnFilter>, Vec<FieldFilter>) {
     let mut pushdown = Vec::new();
     let mut post = Vec::new();
@@ -491,7 +492,15 @@ fn split_filters(filters: &[FieldFilter]) -> (Vec<ColumnFilter>, Vec<FieldFilter
                 path: f.field.clone(),
                 values: vals.clone(),
             }),
-            _ => post.push(f.clone()),
+            FilterOp::Contains(val) => pushdown.push(ColumnFilter::StringContains {
+                path: f.field.clone(),
+                value: val.clone(),
+            }),
+            FilterOp::NotEquals(val) => pushdown.push(ColumnFilter::StringNotEquals {
+                path: f.field.clone(),
+                value: val.clone(),
+            }),
+            FilterOp::Regex(_) => post.push(f.clone()),
         }
     }
     (pushdown, post)
@@ -707,7 +716,8 @@ mod tests {
 
     #[tokio::test]
     async fn run_ocsf_rule_with_post_query_filters() {
-        // Contains/NotEquals/Regex filters stay as post-query filters.
+        // Only Regex filters stay as post-query filters now (Contains/NotEquals
+        // are pushed down to the connector as ColumnFilter variants).
         let mut runner = DetectionRunner::new();
         let rule = OCSFDetectionRule {
             meta: DetectionMetadata {
@@ -723,7 +733,7 @@ mod tests {
             event_class: OCSFEventClass::ApiActivity,
             rule_filters: vec![FieldFilter {
                 field: "op".into(),
-                op: FilterOp::Contains("Policy".into()),
+                op: FilterOp::Regex(regex::Regex::new(".*Policy.*").unwrap()),
             }],
             threshold: 1,
             limit: 5000,
@@ -742,7 +752,7 @@ mod tests {
             .run_rule("ocsf-post", &connector, None, None, 15)
             .await;
         assert!(result.triggered);
-        assert_eq!(result.match_count, 2); // Contains("Policy") matches 2 of 3
+        assert_eq!(result.match_count, 2); // Regex(".*Policy.*") matches 2 of 3
     }
 
     #[test]
@@ -766,13 +776,19 @@ mod tests {
             },
         ];
         let (pushdown, post) = super::split_filters(&filters);
-        assert_eq!(pushdown.len(), 2); // Equals + In
-        assert_eq!(post.len(), 2); // Contains + NotEquals
+        assert_eq!(pushdown.len(), 4); // Equals + Contains + In + NotEquals
+        assert_eq!(post.len(), 0); // Only Regex stays post-query
         assert!(
             matches!(&pushdown[0], ColumnFilter::StringEquals { path, .. } if path == "api.operation")
         );
         assert!(
-            matches!(&pushdown[1], ColumnFilter::StringIn { path, .. } if path == "api.service.name")
+            matches!(&pushdown[1], ColumnFilter::StringContains { path, .. } if path == "status")
+        );
+        assert!(
+            matches!(&pushdown[2], ColumnFilter::StringIn { path, .. } if path == "api.service.name")
+        );
+        assert!(
+            matches!(&pushdown[3], ColumnFilter::StringNotEquals { path, .. } if path == "actor")
         );
     }
 

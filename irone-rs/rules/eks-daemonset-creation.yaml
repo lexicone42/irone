@@ -1,0 +1,56 @@
+id: detect-eks-daemonset-creation
+name: EKS DaemonSet Creation
+description: >
+  Detects creation of DaemonSets in EKS. DaemonSets run a pod on every node
+  in the cluster — perfect for an attacker who wants persistent, cluster-wide
+  access from a single manifest. Malicious DaemonSets have been used for
+  cryptomining (every node mines), data exfil (sidecar on every workload),
+  and rootkit deployment. New DaemonSets outside of system namespaces are
+  suspicious.
+author: irone contributors
+severity: high
+event_class: api_activity
+limit: 1000
+threshold: 1
+tags:
+  - persistence
+  - kubernetes
+  - cluster-wide
+  - eks
+mitre_attack:
+  - T1053.007
+references:
+  - https://microsoft.github.io/Threat-Matrix-for-Kubernetes/techniques/DaemonSet/
+  - https://kubernetes.io/docs/concepts/workloads/controllers/daemonset/
+data_sources:
+  - eks-audit
+filters:
+  - field: api.operation
+    in:
+      - create
+      - update
+      - patch
+  - field: api.service.name
+    equals: eks.amazonaws.com
+  - field: resources
+    contains: daemonsets
+
+test_cases:
+  - name: triggers on daemonset creation
+    events:
+      - api.operation: create
+        api.service.name: eks.amazonaws.com
+        resources: daemonsets
+        actor.user.name: attacker@example.com
+    expected:
+      triggered: true
+      match_count: 1
+
+  - name: does not trigger on deployment creation
+    events:
+      - api.operation: create
+        api.service.name: eks.amazonaws.com
+        resources: deployments
+    expected:
+      triggered: false
+      match_count: 0

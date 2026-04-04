@@ -1,0 +1,42 @@
+id: pb-defense-evasion
+name: Defense Evasion Response
+description: >
+  Immediate response when an attacker attempts to disable logging, tamper with
+  CloudTrail, or modify security tool configurations. Logging disruption is always
+  a precursor to further malicious activity and must be restored immediately.
+trigger:
+  min_severity: critical
+  tags:
+    - defense-evasion
+    - logging-tampering
+  rule_ids:
+    - detect-cloudtrail-tampering
+    - detect-guardduty-tampering
+    - detect-security-tools-tampering
+enabled: true
+actions:
+  - name: Alert security team (critical priority)
+    action_type: notify
+    approval: auto
+    timeout_seconds: 30
+    parameters:
+      channel: pagerduty
+      severity: critical
+      message_prefix: "DEFENSE EVASION DETECTED"
+  - name: Snapshot current logging configuration
+    action_type: snapshot_evidence
+    approval: auto
+    timeout_seconds: 120
+    parameters:
+      artifact_type: logging_config
+  - name: Revoke actor credentials
+    action_type: revoke_credentials
+    approval: auto
+    timeout_seconds: 120
+  - name: Invoke logging restoration Lambda
+    action_type: invoke_lambda
+    approval: auto
+    timeout_seconds: 300
+    parameters:
+      function_name: restore-logging-config
+      comment: "Restores CloudTrail and GuardDuty to known-good configuration"

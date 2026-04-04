@@ -206,6 +206,10 @@ pub enum ColumnFilter {
     And(Vec<ColumnFilter>),
     /// Exact integer match on a (possibly nested) OCSF column.
     IntEquals { path: String, value: i64 },
+    /// Substring match on a (possibly nested) OCSF string column.
+    StringContains { path: String, value: String },
+    /// Negated exact string match on a (possibly nested) OCSF string column.
+    StringNotEquals { path: String, value: String },
     /// Raw SQL expression — used for Athena-specific features like `any_match()`.
     /// Iceberg ignores this variant gracefully.
     RawSql(String),
@@ -275,6 +279,16 @@ impl ColumnFilter {
                 }
                 let parts: Vec<String> = filters.iter().map(Self::to_sql).collect();
                 format!("({})", parts.join(" AND "))
+            }
+            Self::StringContains { path, value } => {
+                let col = Self::quote_ocsf_path(path);
+                let safe = sanitize_string(value);
+                format!("{col} LIKE '%{safe}%'")
+            }
+            Self::StringNotEquals { path, value } => {
+                let col = Self::quote_ocsf_path(path);
+                let safe = sanitize_string(value);
+                format!("{col} != '{safe}'")
             }
             Self::RawSql(sql) => sql.clone(),
             Self::ListContains {
@@ -365,6 +379,28 @@ pub trait SecurityLakeQueries: Send + Sync {
         start: DateTime<Utc>,
         end: DateTime<Utc>,
     ) -> Result<QueryResult, SecurityLakeError>;
+
+    /// Zero-materialization detection scan: returns `(match_count, sample_rows)`.
+    ///
+    /// Only materializes `sample_size` rows into JSON instead of full result.
+    /// Default implementation falls back to `query_by_event_class` + truncation.
+    /// `IcebergConnector` overrides this to avoid materialization entirely.
+    async fn query_by_event_class_count(
+        &self,
+        event_class: OCSFEventClass,
+        start: DateTime<Utc>,
+        end: DateTime<Utc>,
+        limit: usize,
+        filters: Option<&[ColumnFilter]>,
+        sample_size: usize,
+    ) -> Result<(usize, QueryResult), SecurityLakeError> {
+        let qr = self
+            .query_by_event_class(event_class, start, end, limit, filters)
+            .await?;
+        let count = qr.len();
+        let sample = qr.head(sample_size);
+        Ok((count, sample))
+    }
 }
 
 /// Format a `DateTime<Utc>` to the Athena TIMESTAMP literal format.
