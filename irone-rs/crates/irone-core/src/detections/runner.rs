@@ -152,7 +152,11 @@ impl DetectionRunner {
         result
     }
 
-    /// Run all enabled detection rules.
+    /// Run all enabled detection rules concurrently.
+    ///
+    /// Rules are executed in parallel via `futures::future::join_all`. Each rule
+    /// independently queries the connector, so N rules complete in ~1x wall-clock
+    /// time instead of ~Nx sequential time.
     pub async fn run_all<C: DataConnector + SecurityLakeQueries>(
         &self,
         connector: &C,
@@ -160,16 +164,14 @@ impl DetectionRunner {
         end: Option<DateTime<Utc>>,
         lookback_minutes: i64,
     ) -> Vec<DetectionResult> {
-        let mut results = Vec::new();
-        for (id, rule) in &self.rules {
-            if rule.metadata().enabled {
-                results.push(
-                    self.run_rule(id, connector, start, end, lookback_minutes)
-                        .await,
-                );
-            }
-        }
-        results
+        let futures: Vec<_> = self
+            .rules
+            .iter()
+            .filter(|(_, rule)| rule.metadata().enabled)
+            .map(|(id, _)| self.run_rule(id, connector, start, end, lookback_minutes))
+            .collect();
+
+        futures::future::join_all(futures).await
     }
 
     /// Load detection rules from YAML files in a directory.

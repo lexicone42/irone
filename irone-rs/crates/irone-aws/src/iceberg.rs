@@ -1199,15 +1199,15 @@ impl SecurityLakeQueries for IcebergConnector {
 
         // Sort by event_count descending
         rows.sort_by(|a, b| {
-            let ca = a
+            let count_a = a
                 .get("event_count")
                 .and_then(serde_json::Value::as_u64)
                 .unwrap_or(0);
-            let cb = b
+            let count_b = b
                 .get("event_count")
                 .and_then(serde_json::Value::as_u64)
                 .unwrap_or(0);
-            cb.cmp(&ca)
+            count_b.cmp(&count_a)
         });
 
         Ok(QueryResult::from_maps(rows))

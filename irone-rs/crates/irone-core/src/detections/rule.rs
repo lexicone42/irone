@@ -209,27 +209,13 @@ impl FieldFilter {
     #[must_use]
     pub fn matches(&self, row: &serde_json::Map<String, Value>) -> bool {
         let val = get_nested_value(row, &self.field);
+        let str_val = val.and_then(|v| v.as_str());
         match &self.op {
-            FilterOp::Equals(expected) => val
-                .as_ref()
-                .and_then(Value::as_str)
-                .is_some_and(|s| s == expected),
-            FilterOp::NotEquals(expected) => val
-                .as_ref()
-                .and_then(Value::as_str)
-                .is_none_or(|s| s != expected),
-            FilterOp::Contains(needle) => val
-                .as_ref()
-                .and_then(Value::as_str)
-                .is_some_and(|s| s.contains(needle.as_str())),
-            FilterOp::In(values) => val
-                .as_ref()
-                .and_then(Value::as_str)
-                .is_some_and(|s| values.iter().any(|v| v == s)),
-            FilterOp::Regex(re) => val
-                .as_ref()
-                .and_then(Value::as_str)
-                .is_some_and(|s| re.is_match(s)),
+            FilterOp::Equals(expected) => str_val.is_some_and(|s| s == expected),
+            FilterOp::NotEquals(expected) => str_val.is_none_or(|s| s != expected),
+            FilterOp::Contains(needle) => str_val.is_some_and(|s| s.contains(needle.as_str())),
+            FilterOp::In(values) => str_val.is_some_and(|s| values.iter().any(|v| v == s)),
+            FilterOp::Regex(re) => str_val.is_some_and(|s| re.is_match(s)),
         }
     }
 }

@@ -284,7 +284,7 @@ impl GraphBuilder {
         for m in matches {
             // Users — fall back to uid_alt for anonymous principals (e.g. Cognito)
             if let Some(val) = get_nested_value(m, "actor.user.name")
-                .or_else(|| m.get("user_name").cloned())
+                .or_else(|| m.get("user_name"))
                 .or_else(|| get_nested_value(m, "actor.user.uid_alt"))
                 && let Some(s) = val.as_str()
                 && !s.is_empty()
@@ -294,8 +294,8 @@ impl GraphBuilder {
 
             // Source IP
             if let Some(val) = get_nested_value(m, "src_endpoint.ip")
-                .or_else(|| m.get("source_ip").cloned())
-                .or_else(|| m.get("src_ip").cloned())
+                .or_else(|| m.get("source_ip"))
+                .or_else(|| m.get("src_ip"))
                 && let Some(s) = val.as_str()
             {
                 ids.ips.insert(s.to_string());
@@ -309,16 +309,14 @@ impl GraphBuilder {
             }
 
             // Operation
-            if let Some(val) =
-                get_nested_value(m, "api.operation").or_else(|| m.get("operation").cloned())
+            if let Some(val) = get_nested_value(m, "api.operation").or_else(|| m.get("operation"))
                 && let Some(s) = val.as_str()
             {
                 ids.operations.insert(s.to_string());
             }
 
             // Service
-            if let Some(val) =
-                get_nested_value(m, "api.service.name").or_else(|| m.get("service").cloned())
+            if let Some(val) = get_nested_value(m, "api.service.name").or_else(|| m.get("service"))
                 && let Some(s) = val.as_str()
             {
                 ids.services.insert(s.to_string());
@@ -649,28 +647,28 @@ impl GraphBuilder {
         // Store selective OCSF fields for narrative generation
         // Actor
         if let Some(v) = get_nested_value(event, "actor.user.name") {
-            node.properties.insert("actor_user_name".into(), v);
+            node.properties.insert("actor_user_name".into(), v.clone());
         }
         if let Some(v) = get_nested_value(event, "actor.user.type") {
-            node.properties.insert("actor_user_type".into(), v);
+            node.properties.insert("actor_user_type".into(), v.clone());
         }
         // API
         if let Some(v) = get_nested_value(event, "api.operation") {
-            node.properties.insert("api_operation".into(), v);
+            node.properties.insert("api_operation".into(), v.clone());
         }
         if let Some(v) = get_nested_value(event, "api.service.name") {
-            node.properties.insert("api_service_name".into(), v);
+            node.properties.insert("api_service_name".into(), v.clone());
         }
         // Network endpoints
         if let Some(v) = get_nested_value(event, "src_endpoint.ip") {
-            node.properties.insert("src_endpoint_ip".into(), v);
+            node.properties.insert("src_endpoint_ip".into(), v.clone());
         }
         if let Some(v) = get_nested_value(event, "dst_endpoint.ip") {
-            node.properties.insert("dst_endpoint_ip".into(), v);
+            node.properties.insert("dst_endpoint_ip".into(), v.clone());
         }
         // Status
-        if let Some(v) = event.get("status").cloned() {
-            node.properties.insert("status".into(), v);
+        if let Some(v) = event.get("status") {
+            node.properties.insert("status".into(), v.clone());
         }
         // DNS
         if let Some(hostname) = get_nested_str(event, &["query.hostname", "dns.query.hostname"]) {
@@ -681,7 +679,7 @@ impl GraphBuilder {
         if let Some(resources) = crate::connectors::ocsf::get_nested_array(event, "resources")
             && let Some(uid) = resources
                 .iter()
-                .find_map(|r| r.get("uid").and_then(Value::as_str))
+                .find_map(|r| r.get("uid").and_then(|v| v.as_str()))
         {
             node.properties
                 .insert("resource_id".into(), Value::String(uid.to_string()));
@@ -690,13 +688,13 @@ impl GraphBuilder {
         if let Some(v) = get_nested_value(event, "connection_info.protocol_name")
             .or_else(|| get_nested_value(event, "protocol_name"))
         {
-            node.properties.insert("protocol_name".into(), v);
+            node.properties.insert("protocol_name".into(), v.clone());
         }
         if let Some(v) = get_nested_value(event, "traffic.bytes_in") {
-            node.properties.insert("bytes_in".into(), v);
+            node.properties.insert("bytes_in".into(), v.clone());
         }
         if let Some(v) = get_nested_value(event, "traffic.bytes_out") {
-            node.properties.insert("bytes_out".into(), v);
+            node.properties.insert("bytes_out".into(), v.clone());
         }
 
         self.graph.add_node(node);
@@ -741,28 +739,28 @@ impl GraphBuilder {
             let mut properties = HashMap::new();
 
             if let Some(port) = get_nested_value(event, "dst_endpoint.port") {
-                properties.insert("dst_port".into(), port);
+                properties.insert("dst_port".into(), port.clone());
             }
             if let Some(proto) = get_nested_value(event, "connection_info.protocol_name")
                 .or_else(|| get_nested_value(event, "protocol_name"))
             {
-                properties.insert("protocol".into(), proto);
+                properties.insert("protocol".into(), proto.clone());
             }
             if let Some(bytes_in) = get_nested_value(event, "traffic.bytes_in") {
-                properties.insert("bytes_in".into(), bytes_in);
+                properties.insert("bytes_in".into(), bytes_in.clone());
             }
             if let Some(bytes_out) = get_nested_value(event, "traffic.bytes_out") {
-                properties.insert("bytes_out".into(), bytes_out);
+                properties.insert("bytes_out".into(), bytes_out.clone());
             }
 
             // Initial weight from bytes (log-scale)
             let total_bytes = properties
                 .get("bytes_in")
-                .and_then(Value::as_u64)
+                .and_then(serde_json::Value::as_u64)
                 .unwrap_or(0)
                 + properties
                     .get("bytes_out")
-                    .and_then(Value::as_u64)
+                    .and_then(serde_json::Value::as_u64)
                     .unwrap_or(0);
             #[allow(clippy::cast_precision_loss)] // log-scale weight, precision irrelevant
             let weight = if total_bytes > 0 {

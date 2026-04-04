@@ -194,7 +194,7 @@ pub enum SecurityLakeError {
 /// converted to SQL (for Athena) or Arrow-level filters (for Iceberg).
 /// Dot-notation paths match the existing `get_nested_value` convention
 /// (e.g. `"actor.user.name"`, `"src_endpoint.ip"`).
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ColumnFilter {
     /// Exact string match on a (possibly nested) OCSF column.
     StringEquals { path: String, value: String },
@@ -417,12 +417,15 @@ pub fn format_athena_timestamp(dt: &DateTime<Utc>) -> String {
 /// then navigates nested JSON objects. Returns a cloned value since nested
 /// traversal may cross ownership boundaries.
 #[must_use]
-pub fn get_nested_value(data: &serde_json::Map<String, Value>, path: &str) -> Option<Value> {
+pub fn get_nested_value<'a>(
+    data: &'a serde_json::Map<String, Value>,
+    path: &str,
+) -> Option<&'a Value> {
     // Try direct flat key
     if let Some(val) = data.get(path)
         && !val.is_null()
     {
-        return Some(val.clone());
+        return Some(val);
     }
 
     // Navigate nested structure
@@ -439,7 +442,7 @@ pub fn get_nested_value(data: &serde_json::Map<String, Value>, path: &str) -> Op
     if current.is_null() {
         None
     } else {
-        Some(current.clone())
+        Some(current)
     }
 }
 
@@ -454,9 +457,11 @@ pub fn get_nested_array(
     path: &str,
 ) -> Option<Vec<serde_json::Map<String, Value>>> {
     let val = get_nested_value(data, path)?;
-    let arr = val.as_array()?;
-    let objects: Vec<serde_json::Map<String, Value>> =
-        arr.iter().filter_map(|v| v.as_object().cloned()).collect();
+    let objects: Vec<serde_json::Map<String, Value>> = val
+        .as_array()?
+        .iter()
+        .filter_map(|v| v.as_object().cloned())
+        .collect();
     if objects.is_empty() {
         None
     } else {
@@ -524,7 +529,7 @@ mod tests {
         let mut data = serde_json::Map::new();
         data.insert("actor.user.name".to_string(), json!("alice"));
         let val = get_nested_value(&data, "actor.user.name");
-        assert_eq!(val, Some(json!("alice")));
+        assert_eq!(val, Some(&json!("alice")));
     }
 
     #[test]
@@ -532,7 +537,7 @@ mod tests {
         let data: serde_json::Map<String, Value> =
             serde_json::from_str(r#"{"actor": {"user": {"name": "bob"}}}"#).unwrap();
         let val = get_nested_value(&data, "actor.user.name");
-        assert_eq!(val, Some(json!("bob")));
+        assert_eq!(val, Some(&json!("bob")));
     }
 
     #[test]
