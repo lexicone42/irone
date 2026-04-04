@@ -1002,22 +1002,6 @@ dependencies = [
 
 [[package]]
 name = "aws_lambda_events"
-version = "0.15.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7319a086b79c3ff026a33a61e80f04fd3885fbb73237981ea080d21944e1cb1c"
-dependencies = [
- "base64",
- "bytes",
- "http 1.4.0",
- "http-body 1.0.1",
- "http-serde",
- "query_map",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "aws_lambda_events"
 version = "0.16.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "144ec7565561115498a288850cc6a42b279e09b6c4b88f623eecb9c8ca96c08c"
@@ -2956,7 +2940,7 @@ dependencies = [
  "irone-core",
  "irone-persistence",
  "l42-token-handler",
- "lambda_http 0.14.0",
+ "lambda_http",
  "serde",
  "serde_json",
  "thiserror",
@@ -3111,7 +3095,7 @@ dependencies = [
  "dotenvy",
  "hmac",
  "jsonwebtoken",
- "lambda_http 0.13.0",
+ "lambda_http",
  "rand 0.8.5",
  "reqwest",
  "serde",
@@ -3161,38 +3145,11 @@ dependencies = [
 
 [[package]]
 name = "lambda_http"
-version = "0.13.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "67fe279be7f89f5f72c97c3a96f45c43db8edab1007320ecc6a5741273b4d6db"
-dependencies = [
- "aws_lambda_events 0.15.1",
- "base64",
- "bytes",
- "encoding_rs",
- "futures",
- "futures-util",
- "http 1.4.0",
- "http-body 1.0.1",
- "http-body-util",
- "hyper 1.8.1",
- "lambda_runtime",
- "mime",
- "percent-encoding",
- "pin-project-lite",
- "serde",
- "serde_json",
- "serde_urlencoded",
- "tokio-stream",
- "url",
-]
-
-[[package]]
-name = "lambda_http"
 version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "68b470cea1ec37b96e9543870a33c1f4b9e243754fe5892668efa3125ea12784"
 dependencies = [
- "aws_lambda_events 0.16.1",
+ "aws_lambda_events",
  "base64",
  "bytes",
  "encoding_rs",
