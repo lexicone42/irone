@@ -31,7 +31,7 @@ use std::collections::HashMap;
 
 use chrono::{DateTime, Utc};
 
-use irone_core::catalog::DataSource;
+use irone_core::catalog::{DataCatalog, DataSource};
 use irone_core::connectors::base::{ConnectorError, DataConnector, HealthCheckResult};
 use irone_core::connectors::ocsf::{
     ColumnFilter, OCSFEventClass, SecurityLakeError, SecurityLakeQueries,
@@ -193,4 +193,32 @@ pub async fn create_connector(
     ConnectorKind::Athena(Box::new(SecurityLakeConnector::from_source(
         source, sdk_config,
     )))
+}
+
+/// Shared Lambda initialization: read env vars, build catalog, create connector.
+///
+/// Extracts the repeated 6-line init pattern from all four Lambda binaries into
+/// a single function. Returns `(catalog, connector, region)`.
+pub async fn init_from_env(
+    sdk_config: &aws_config::SdkConfig,
+    source_name: &str,
+) -> Result<(DataCatalog, ConnectorKind, String), String> {
+    let security_lake_db = std::env::var("SECDASH_SECURITY_LAKE_DB").unwrap_or_default();
+    let region = std::env::var("SECDASH_REGION").unwrap_or_else(|_| "us-west-2".into());
+    let use_direct_query = std::env::var("SECDASH_USE_DIRECT_QUERY")
+        .map(|v| v.eq_ignore_ascii_case("true"))
+        .unwrap_or(true);
+
+    let mut catalog = DataCatalog::new();
+    if !security_lake_db.is_empty() {
+        catalog.register_security_lake_sources(&security_lake_db, &region);
+    }
+
+    let source = catalog
+        .get_source(source_name)
+        .cloned()
+        .ok_or_else(|| format!("source '{source_name}' not found in catalog"))?;
+
+    let connector = create_connector(source, sdk_config, use_direct_query).await;
+    Ok((catalog, connector, region))
 }

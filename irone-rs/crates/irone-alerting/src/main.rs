@@ -6,7 +6,6 @@ use irone_aws::health_cache::HealthCacheClient;
 use irone_aws::security_hub::SecurityHubNotifier;
 use irone_aws::sns::SnsNotifier;
 use irone_core::audit;
-use irone_core::catalog::DataCatalog;
 use irone_core::detections::{DetectionResult, DetectionRunner, Severity};
 use irone_core::graph::GraphBuilder;
 use irone_core::notifications::{NotificationChannel, SecurityAlert};
@@ -48,27 +47,10 @@ async fn handler(event: LambdaEvent<AlertEvent>) -> Result<AlertResult, Error> {
 
 /// Run all detection rules against the cloudtrail source, send alerts, auto-investigate criticals.
 async fn run_detections(sdk_config: &aws_config::SdkConfig) -> Result<AlertResult, Error> {
-    let security_lake_db = std::env::var("SECDASH_SECURITY_LAKE_DB").unwrap_or_default();
-    let region = std::env::var("SECDASH_REGION").unwrap_or_else(|_| "us-west-2".into());
-    let use_direct_query = std::env::var("SECDASH_USE_DIRECT_QUERY")
-        .map(|v| v.eq_ignore_ascii_case("true"))
-        .unwrap_or(true);
-
     let alerts_topic = std::env::var("SECDASH_ALERTS_TOPIC_ARN")?;
     let critical_topic = std::env::var("SECDASH_CRITICAL_ALERTS_TOPIC_ARN")?;
 
-    // Build catalog and connector
-    let mut catalog = DataCatalog::new();
-    if !security_lake_db.is_empty() {
-        catalog.register_security_lake_sources(&security_lake_db, &region);
-    }
-
-    let source = catalog
-        .get_source("cloudtrail")
-        .cloned()
-        .ok_or("cloudtrail source not found in catalog")?;
-
-    let connector = irone_aws::create_connector(source, sdk_config, use_direct_query).await;
+    let (_catalog, connector, region) = irone_aws::init_from_env(sdk_config, "cloudtrail").await?;
 
     // Load rules
     let mut runner = DetectionRunner::new();

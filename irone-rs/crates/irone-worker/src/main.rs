@@ -1,5 +1,4 @@
 use chrono::Duration;
-use irone_core::catalog::DataCatalog;
 use irone_core::graph::{
     GraphBuilder, detect_patterns, extract_attack_paths, extract_timeline_from_graph,
 };
@@ -70,28 +69,12 @@ async fn handler(event: LambdaEvent<WorkerEvent>) -> Result<WorkerResult, Error>
     );
 
     // 2. Build connector for the specified source
-    let security_lake_db = std::env::var("SECDASH_SECURITY_LAKE_DB").unwrap_or_default();
-    let region = std::env::var("SECDASH_REGION").unwrap_or_else(|_| "us-west-2".into());
+    let (catalog, connector, _region) = irone_aws::init_from_env(&sdk_config, &payload.source_name)
+        .await
+        .map_err(Error::from)?;
     let use_direct_query = std::env::var("SECDASH_USE_DIRECT_QUERY")
         .map(|v| v.eq_ignore_ascii_case("true"))
         .unwrap_or(true);
-
-    let mut catalog = DataCatalog::new();
-    if !security_lake_db.is_empty() {
-        catalog.register_security_lake_sources(&security_lake_db, &region);
-    }
-
-    let source = catalog
-        .get_source(&payload.source_name)
-        .cloned()
-        .ok_or_else(|| {
-            Error::from(format!(
-                "source '{}' not found in catalog",
-                payload.source_name
-            ))
-        })?;
-
-    let connector = irone_aws::create_connector(source, &sdk_config, use_direct_query).await;
 
     // 3. Full enrichment: graph + timeline
     let mut builder = GraphBuilder::new();
