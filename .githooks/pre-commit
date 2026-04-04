@@ -11,6 +11,10 @@ echo "── cargo clippy ──"
 cargo clippy --workspace -- -D warnings
 
 echo "── cargo deny ──"
-cargo deny check 2>/dev/null || echo "cargo-deny not installed, skipping"
+if command -v cargo-deny &>/dev/null; then
+    cargo deny check
+else
+    echo "cargo-deny not installed, skipping"
+fi
 
 echo "✓ pre-commit checks passed"
