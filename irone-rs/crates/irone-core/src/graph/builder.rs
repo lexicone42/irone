@@ -644,31 +644,24 @@ impl GraphBuilder {
                 .insert("class_uid".into(), class_uid.clone());
         }
 
-        // Store selective OCSF fields for narrative generation
-        // Actor
-        if let Some(v) = get_nested_value(event, "actor.user.name") {
-            node.properties.insert("actor_user_name".into(), v.clone());
+        // Store selective OCSF fields for narrative generation.
+        for &(ocsf_path, prop_key) in &[
+            ("actor.user.name", "actor_user_name"),
+            ("actor.user.type", "actor_user_type"),
+            ("api.operation", "api_operation"),
+            ("api.service.name", "api_service_name"),
+            ("src_endpoint.ip", "src_endpoint_ip"),
+            ("dst_endpoint.ip", "dst_endpoint_ip"),
+            ("traffic.bytes_in", "bytes_in"),
+            ("traffic.bytes_out", "bytes_out"),
+        ] {
+            if let Some(val) = get_nested_value(event, ocsf_path) {
+                node.properties.insert(prop_key.into(), val.clone());
+            }
         }
-        if let Some(v) = get_nested_value(event, "actor.user.type") {
-            node.properties.insert("actor_user_type".into(), v.clone());
-        }
-        // API
-        if let Some(v) = get_nested_value(event, "api.operation") {
-            node.properties.insert("api_operation".into(), v.clone());
-        }
-        if let Some(v) = get_nested_value(event, "api.service.name") {
-            node.properties.insert("api_service_name".into(), v.clone());
-        }
-        // Network endpoints
-        if let Some(v) = get_nested_value(event, "src_endpoint.ip") {
-            node.properties.insert("src_endpoint_ip".into(), v.clone());
-        }
-        if let Some(v) = get_nested_value(event, "dst_endpoint.ip") {
-            node.properties.insert("dst_endpoint_ip".into(), v.clone());
-        }
-        // Status
-        if let Some(v) = event.get("status") {
-            node.properties.insert("status".into(), v.clone());
+
+        if let Some(status) = event.get("status") {
+            node.properties.insert("status".into(), status.clone());
         }
         // DNS
         if let Some(hostname) = get_nested_str(event, &["query.hostname", "dns.query.hostname"]) {
@@ -685,16 +678,11 @@ impl GraphBuilder {
                 .insert("resource_id".into(), Value::String(uid.to_string()));
         }
         // Network flow
-        if let Some(v) = get_nested_value(event, "connection_info.protocol_name")
+        if let Some(protocol) = get_nested_value(event, "connection_info.protocol_name")
             .or_else(|| get_nested_value(event, "protocol_name"))
         {
-            node.properties.insert("protocol_name".into(), v.clone());
-        }
-        if let Some(v) = get_nested_value(event, "traffic.bytes_in") {
-            node.properties.insert("bytes_in".into(), v.clone());
-        }
-        if let Some(v) = get_nested_value(event, "traffic.bytes_out") {
-            node.properties.insert("bytes_out".into(), v.clone());
+            node.properties
+                .insert("protocol_name".into(), protocol.clone());
         }
 
         self.graph.add_node(node);
