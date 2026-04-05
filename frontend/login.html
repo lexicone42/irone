@@ -173,10 +173,10 @@
         // Initialize config first, then enable form interactions
         await initConfig();
 
-        // On auth state change, redirect to dashboard
-        onAuthStateChange((isAuth) => {
-            if (isAuth) window.location.href = '/';
-        });
+        // NOTE: Don't use onAuthStateChange for redirect — it fires when
+        // tokens are set, BEFORE _persistHandlerSession() completes the
+        // /auth/session POST. The navigation aborts the in-flight POST.
+        // Instead, redirect explicitly after await loginWithPassword().
 
         // If already authenticated, go to dashboard
         if (isAuthenticated()) {
@@ -192,7 +192,7 @@
 
             try {
                 await loginWithPassword(emailInput.value, passwordInput.value);
-                // onAuthStateChange will redirect
+                window.location.href = '/';
             } catch (err) {
                 showError(err.message);
                 passwordBtn.disabled = false;
