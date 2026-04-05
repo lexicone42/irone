@@ -152,24 +152,49 @@ impl DetectionRunner {
         result
     }
 
-    /// Run all enabled detection rules concurrently.
+    /// Run all enabled detection rules concurrently for a given data source.
     ///
-    /// Rules are executed in parallel via `futures::future::join_all`. Each rule
-    /// independently queries the connector, so N rules complete in ~1x wall-clock
-    /// time instead of ~Nx sequential time.
+    /// Rules are filtered by `source_name`: only rules whose `data_sources`
+    /// list includes the source (or is empty, meaning "any source") are executed.
+    /// This prevents rules targeting Route53 DNS logs from running against
+    /// `CloudTrail` data, for example.
+    ///
+    /// Rules execute in parallel via `futures::future::join_all`.
     pub async fn run_all<C: DataConnector + SecurityLakeQueries>(
         &self,
         connector: &C,
         start: Option<DateTime<Utc>>,
         end: Option<DateTime<Utc>>,
         lookback_minutes: i64,
+        source_name: Option<&str>,
     ) -> Vec<DetectionResult> {
         let futures: Vec<_> = self
             .rules
             .iter()
-            .filter(|(_, rule)| rule.metadata().enabled)
+            .filter(|(_, rule)| {
+                let meta = rule.metadata();
+                if !meta.enabled {
+                    return false;
+                }
+                // If source_name is specified, only run rules that target this source
+                // (or rules with no data_sources restriction)
+                if let Some(source) = source_name {
+                    meta.data_sources.is_empty() || meta.data_sources.iter().any(|ds| ds == source)
+                } else {
+                    true
+                }
+            })
             .map(|(id, _)| self.run_rule(id, connector, start, end, lookback_minutes))
             .collect();
+
+        if let Some(source) = source_name {
+            tracing::info!(
+                total_rules = self.rules.len(),
+                matched_rules = futures.len(),
+                source,
+                "filtered rules by data source"
+            );
+        }
 
         futures::future::join_all(futures).await
     }
@@ -802,7 +827,7 @@ mod tests {
         let connector = MockConnector {
             result: QueryResult::from_maps(vec![json_row!("x" => 1)]),
         };
-        let results = runner.run_all(&connector, None, None, 15).await;
+        let results = runner.run_all(&connector, None, None, 15, None).await;
         assert_eq!(results.len(), 1);
         assert!(results[0].triggered);
     }

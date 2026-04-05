@@ -59,7 +59,9 @@ async fn run_detections(sdk_config: &aws_config::SdkConfig) -> Result<AlertResul
     tracing::info!(loaded, "loaded detection rules");
 
     // Run all enabled rules with 60-min lookback (matches schedule interval)
-    let results = runner.run_all(&connector, None, None, 60).await;
+    let results = runner
+        .run_all(&connector, None, None, 60, Some("cloudtrail"))
+        .await;
     let rules_checked = results.len();
 
     let triggered_results: Vec<&DetectionResult> = results.iter().filter(|r| r.triggered).collect();
