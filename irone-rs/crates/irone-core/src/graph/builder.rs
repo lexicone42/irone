@@ -9,9 +9,27 @@ use super::models::{
     APIOperationNode, EdgeType, GraphEdge, GraphNode, IPAddressNode, NodeType, PrincipalNode,
     ResourceNode, SecurityFindingNode, SecurityGraph,
 };
+use serde::{Deserialize, Serialize};
+
 use crate::connectors::ocsf::{SecurityLakeQueries, get_nested_str, get_nested_value};
 use crate::connectors::result::QueryResult;
 use crate::detections::DetectionResult;
+
+/// Summary of what happened during graph building — replaces silent void returns.
+///
+/// Callers can distinguish "enrichment found nothing" from "enrichment failed"
+/// and surface warnings to the user or investigation log.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct BuildStats {
+    /// Number of enrichment queries executed.
+    pub queries_executed: usize,
+    /// Number of enrichment queries that returned results.
+    pub queries_with_results: usize,
+    /// Warnings encountered during building (non-fatal issues).
+    pub warnings: Vec<String>,
+    /// Whether enrichment was attempted at all.
+    pub enrichment_attempted: bool,
+}
 
 /// Builds security investigation graphs from detection results.
 ///
@@ -48,7 +66,7 @@ impl GraphBuilder {
         enrichment_window_minutes: i64,
         max_related_events: usize,
         include_events: bool,
-    ) -> &SecurityGraph {
+    ) -> BuildStats {
         self.reset();
 
         info!(
@@ -120,29 +138,38 @@ impl GraphBuilder {
         self.process_matches(&result.matches, &finding_id, include_events);
 
         // Enrich if a connector is provided
+        let mut stats = BuildStats::default();
         if let Some(sl) = security_lake {
+            stats.enrichment_attempted = true;
             let enricher = SecurityLakeEnricher::new(sl);
             let end_time = result.executed_at;
             let start_time = end_time - Duration::minutes(enrichment_window_minutes);
 
-            self.run_enrichment(
-                &enricher,
-                &identifiers,
-                start_time,
-                end_time,
-                max_related_events,
-                include_events,
-            )
-            .await;
+            let enrichment_stats = self
+                .run_enrichment(
+                    &enricher,
+                    &identifiers,
+                    start_time,
+                    end_time,
+                    max_related_events,
+                    include_events,
+                )
+                .await;
+            stats.queries_executed = enrichment_stats.queries_executed;
+            stats.queries_with_results = enrichment_stats.queries_with_results;
+            stats.warnings = enrichment_stats.warnings;
         }
 
         info!(
             nodes = self.graph.node_count(),
             edges = self.graph.edge_count(),
+            enrichment_queries = stats.queries_executed,
+            enrichment_results = stats.queries_with_results,
+            warnings = stats.warnings.len(),
             "graph build complete"
         );
 
-        &self.graph
+        stats
     }
 
     /// Build a graph from specific identifiers without a detection.
@@ -156,7 +183,7 @@ impl GraphBuilder {
         end: Option<DateTime<Utc>>,
         max_events: usize,
         include_events: bool,
-    ) -> &SecurityGraph {
+    ) -> BuildStats {
         self.reset();
 
         let end_time = end.unwrap_or_else(Utc::now);
@@ -169,24 +196,24 @@ impl GraphBuilder {
 
         let enricher = SecurityLakeEnricher::new(security_lake);
 
-        // Build identifiers from the provided lists
         let identifiers = ExtractedIdentifiers {
             users: users.iter().cloned().collect(),
             ips: ips.iter().cloned().collect(),
             ..Default::default()
         };
 
-        self.run_enrichment(
-            &enricher,
-            &identifiers,
-            start_time,
-            end_time,
-            max_events,
-            include_events,
-        )
-        .await;
-
-        &self.graph
+        let mut stats = self
+            .run_enrichment(
+                &enricher,
+                &identifiers,
+                start_time,
+                end_time,
+                max_events,
+                include_events,
+            )
+            .await;
+        stats.enrichment_attempted = true;
+        stats
     }
 
     /// Return a reference to the built graph.
@@ -889,12 +916,15 @@ impl GraphBuilder {
         end: DateTime<Utc>,
         limit: usize,
         include_events: bool,
-    ) {
+    ) -> BuildStats {
+        let mut stats = BuildStats::default();
         let enrichment_results =
             Self::run_enrichment_parallel(enricher, identifiers, start, end, limit).await;
 
+        stats.queries_executed = enrichment_results.len();
         for qr in &enrichment_results {
             if !qr.is_empty() {
+                stats.queries_with_results += 1;
                 self.process_query_result(qr, include_events);
             }
         }
@@ -937,6 +967,7 @@ impl GraphBuilder {
                 .metadata
                 .insert("anomaly_scores".into(), Value::Array(scores));
         }
+        stats
     }
 }
 
