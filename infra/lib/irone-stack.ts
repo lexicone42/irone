@@ -249,18 +249,11 @@ export class IroneStack extends cdk.Stack {
       certificate,
       defaultRootObject: "index.html",
       priceClass: cloudfront.PriceClass.PRICE_CLASS_100,
-      errorResponses: [
-        {
-          httpStatus: 403,
-          responseHttpStatus: 200,
-          responsePagePath: "/index.html",
-        },
-        {
-          httpStatus: 404,
-          responseHttpStatus: 200,
-          responsePagePath: "/index.html",
-        },
-      ],
+      // NOTE: No custom error responses. The previous 403→index.html and
+      // 404→index.html SPA fallback was intercepting legitimate API/auth
+      // error responses (e.g., CSRF 403 on /auth/session) and replacing
+      // them with index.html, breaking the auth flow.
+      // SPA routing is handled by S3 website hosting error document instead.
     });
     (
       distribution.node.defaultChild as cloudfront.CfnDistribution

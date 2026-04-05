@@ -38,6 +38,7 @@ fn build_cors_layer(frontend_url: &str) -> CorsLayer {
             http::header::AUTHORIZATION,
             http::header::HeaderName::from_static("x-service-token"),
             http::header::HeaderName::from_static("x-csrf-token"),
+            http::header::HeaderName::from_static("x-l42-csrf"),
         ])
         .allow_credentials(true)
 }
