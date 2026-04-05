@@ -111,19 +111,13 @@ impl ArrowRowFilter {
             }
 
             Self::NestedStringEquals { path, value } => {
-                let str_col = resolve_nested_string_column(batch, path)?;
-                let bits: Vec<bool> = (0..batch.num_rows())
-                    .map(|i| !str_col.is_null(i) && str_col.value(i) == value)
-                    .collect();
-                Ok(BooleanArray::from(bits))
+                // Uses Arrow's vectorized eq kernel — SIMD on dictionary-encoded columns
+                compute_string_eq_mask(batch, path, value)
             }
 
             Self::NestedStringIn { path, values } => {
-                let str_col = resolve_nested_string_column(batch, path)?;
-                let bits: Vec<bool> = (0..batch.num_rows())
-                    .map(|i| !str_col.is_null(i) && values.iter().any(|v| v == str_col.value(i)))
-                    .collect();
-                Ok(BooleanArray::from(bits))
+                // OR of vectorized eq kernels — each comparison is SIMD
+                compute_string_in_mask(batch, path, values)
             }
 
             Self::NestedStringContains { path, value } => {
@@ -336,10 +330,91 @@ fn resolve_nested_string_column(
                 })?;
             Ok(arr.clone())
         }
+        DataType::Dictionary(_, value_type) if value_type.as_ref() == &DataType::Utf8 => {
+            // Parquet dictionary-encoded string column — decode to StringArray.
+            // For equality checks, callers should prefer compute_string_eq_mask()
+            // which compares dictionary indices (SIMD-friendly integers) instead.
+            let casted = arrow_cast::cast(&leaf, &DataType::Utf8)
+                .map_err(|e| AwsError::QueryFailed(format!("Dictionary→Utf8 cast failed: {e}")))?;
+            let arr = casted
+                .as_any()
+                .downcast_ref::<StringArray>()
+                .ok_or_else(|| {
+                    AwsError::QueryFailed("downcast to StringArray after dict cast failed".into())
+                })?;
+            Ok(arr.clone())
+        }
         dt => Err(AwsError::QueryFailed(format!(
             "expected string column at end of path, got {dt:?}"
         ))),
     }
+}
+
+/// SIMD-friendly string equality mask using Arrow's vectorized comparison.
+///
+/// For dictionary-encoded columns (common in Parquet), Arrow's `eq` kernel
+/// compares dictionary indices (integer SIMD) instead of decoding strings.
+/// For plain `StringArray` columns, it still uses optimized comparison.
+/// This replaces the row-by-row `str_col.value(i) == value` pattern.
+fn compute_string_eq_mask(
+    batch: &RecordBatch,
+    path: &[String],
+    value: &str,
+) -> Result<BooleanArray, AwsError> {
+    let leaf = resolve_nested_column(batch, path)?;
+    let n = batch.num_rows();
+
+    match leaf.data_type() {
+        DataType::Utf8 => {
+            let arr = leaf
+                .as_any()
+                .downcast_ref::<StringArray>()
+                .ok_or_else(|| AwsError::QueryFailed("downcast to StringArray failed".into()))?;
+            let target = StringArray::from(vec![value; n]);
+            eq(arr, &target).map_err(|e| AwsError::QueryFailed(format!("string eq failed: {e}")))
+        }
+        DataType::Dictionary(_, value_type) if value_type.as_ref() == &DataType::Utf8 => {
+            // Dictionary-encoded: Arrow's eq kernel compares via index lookup,
+            // avoiding per-row string decoding. This is the fast path.
+            let target = StringArray::from(vec![value; n]);
+            // Cast target to match dictionary type for kernel compatibility
+            let dict_target = arrow_cast::cast(&target, leaf.data_type())
+                .map_err(|e| AwsError::QueryFailed(format!("dict target cast failed: {e}")))?;
+            arrow_ord::cmp::eq(&leaf, &dict_target)
+                .map_err(|e| AwsError::QueryFailed(format!("dict eq failed: {e}")))
+        }
+        _ => {
+            // Fallback: cast to Utf8 and compare
+            let casted = arrow_cast::cast(&leaf, &DataType::Utf8)
+                .map_err(|e| AwsError::QueryFailed(format!("cast to Utf8 for eq failed: {e}")))?;
+            let arr = casted
+                .as_any()
+                .downcast_ref::<StringArray>()
+                .ok_or_else(|| AwsError::QueryFailed("downcast after cast for eq failed".into()))?;
+            let target = StringArray::from(vec![value; n]);
+            eq(arr, &target).map_err(|e| AwsError::QueryFailed(format!("string eq failed: {e}")))
+        }
+    }
+}
+
+/// SIMD-friendly string IN-list mask using Arrow's vectorized comparison.
+fn compute_string_in_mask(
+    batch: &RecordBatch,
+    path: &[String],
+    values: &[String],
+) -> Result<BooleanArray, AwsError> {
+    if values.is_empty() {
+        return Ok(BooleanArray::from(vec![false; batch.num_rows()]));
+    }
+    // OR together equality masks for each value
+    let first = compute_string_eq_mask(batch, path, &values[0])?;
+    let mut result = first;
+    for val in &values[1..] {
+        let mask = compute_string_eq_mask(batch, path, val)?;
+        result = arrow_arith::boolean::or(&result, &mask)
+            .map_err(|e| AwsError::QueryFailed(format!("boolean OR failed: {e}")))?;
+    }
+    Ok(result)
 }
 
 /// Check if any element in a `List<Struct>` column has a string field matching a predicate.
@@ -854,9 +929,10 @@ impl IcebergConnector {
 
 /// Read Parquet bytes into Arrow `RecordBatch`es.
 ///
-/// When `projection_columns` is provided, only those top-level columns are
-/// decompressed from the Parquet file. For OCSF data with ~50 columns where
-/// a detection rule only filters on 2-3 fields, this can cut decode time by 90%+.
+/// Optimizations applied:
+/// - **Column projection**: only decompress columns in `projection_columns`
+/// - **Row group pruning**: skip row groups where `class_uid` statistics
+///   prove no rows can match the target class (when `class_uid_filter` is set)
 pub(crate) fn read_parquet_bytes(
     data: &bytes::Bytes,
     max_rows: usize,

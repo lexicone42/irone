@@ -557,7 +557,7 @@ impl GraphBuilder {
             id: id.clone(),
             node_type: NodeType::IPAddress,
             label: ip,
-            properties: HashMap::new(),
+            properties: HashMap::with_capacity(8),
             first_seen: None,
             last_seen: None,
             event_count: 0,
@@ -632,7 +632,7 @@ impl GraphBuilder {
             id: id.clone(),
             node_type: NodeType::Event,
             label,
-            properties: HashMap::new(),
+            properties: HashMap::with_capacity(8),
             first_seen: Some(event_time),
             last_seen: Some(event_time),
             event_count: 1,
@@ -724,7 +724,7 @@ impl GraphBuilder {
             && sid != did
         {
             let edge_id = GraphEdge::create_id(&EdgeType::CommunicatedWith, sid, did);
-            let mut properties = HashMap::new();
+            let mut properties = HashMap::with_capacity(4);
 
             if let Some(port) = get_nested_value(event, "dst_endpoint.port") {
                 properties.insert("dst_port".into(), port.clone());
@@ -810,7 +810,7 @@ impl GraphBuilder {
             edge_type,
             source_id: source_id.to_string(),
             target_id: target_id.to_string(),
-            properties: HashMap::new(),
+            properties: HashMap::with_capacity(8),
             weight: 1.0,
             first_seen: Some(event_time),
             last_seen: Some(event_time),
@@ -1332,7 +1332,7 @@ mod tests {
             id: finding_id.into(),
             node_type: NodeType::SecurityFinding,
             label: "Test".into(),
-            properties: HashMap::new(),
+            properties: HashMap::with_capacity(8),
             first_seen: None,
             last_seen: None,
             event_count: 0,
@@ -1455,7 +1455,7 @@ mod tests {
             id: "test".into(),
             node_type: NodeType::Principal,
             label: "test".into(),
-            properties: HashMap::new(),
+            properties: HashMap::with_capacity(8),
             first_seen: None,
             last_seen: None,
             event_count: 0,
