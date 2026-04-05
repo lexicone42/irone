@@ -152,14 +152,14 @@ impl DetectionRunner {
         result
     }
 
-    /// Run all enabled detection rules concurrently for a given data source.
+    /// Run all enabled detection rules with bounded concurrency.
     ///
     /// Rules are filtered by `source_name`: only rules whose `data_sources`
     /// list includes the source (or is empty, meaning "any source") are executed.
-    /// This prevents rules targeting Route53 DNS logs from running against
-    /// `CloudTrail` data, for example.
     ///
-    /// Rules execute in parallel via `futures::future::join_all`.
+    /// Concurrency is bounded to 5 simultaneous rules to avoid overwhelming
+    /// the Iceberg/S3/Glue backend with 50+ concurrent table scans (which
+    /// causes all queries to time out at 30s).
     pub async fn run_all<C: DataConnector + SecurityLakeQueries>(
         &self,
         connector: &C,
@@ -168,7 +168,11 @@ impl DetectionRunner {
         lookback_minutes: i64,
         source_name: Option<&str>,
     ) -> Vec<DetectionResult> {
-        let futures: Vec<_> = self
+        // Bounded concurrency: run up to 5 rules at a time to avoid
+        // overwhelming S3/Glue with 50+ simultaneous Iceberg scans.
+        const MAX_CONCURRENT: usize = 5;
+
+        let rule_ids: Vec<_> = self
             .rules
             .iter()
             .filter(|(_, rule)| {
@@ -176,27 +180,36 @@ impl DetectionRunner {
                 if !meta.enabled {
                     return false;
                 }
-                // If source_name is specified, only run rules that target this source
-                // (or rules with no data_sources restriction)
                 if let Some(source) = source_name {
                     meta.data_sources.is_empty() || meta.data_sources.iter().any(|ds| ds == source)
                 } else {
                     true
                 }
             })
-            .map(|(id, _)| self.run_rule(id, connector, start, end, lookback_minutes))
+            .map(|(id, _)| id.clone())
             .collect();
 
         if let Some(source) = source_name {
             tracing::info!(
                 total_rules = self.rules.len(),
-                matched_rules = futures.len(),
+                matched_rules = rule_ids.len(),
                 source,
                 "filtered rules by data source"
             );
         }
 
-        futures::future::join_all(futures).await
+        let mut results = Vec::with_capacity(rule_ids.len());
+
+        for chunk in rule_ids.chunks(MAX_CONCURRENT) {
+            let chunk_futures: Vec<_> = chunk
+                .iter()
+                .map(|id| self.run_rule(id, connector, start, end, lookback_minutes))
+                .collect();
+            let chunk_results = futures::future::join_all(chunk_futures).await;
+            results.extend(chunk_results);
+        }
+
+        results
     }
 
     /// Load detection rules from YAML files in a directory.
