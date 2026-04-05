@@ -4,8 +4,9 @@ description: >
   Detects disabling or deleting AWS security monitoring tools: Config
   recorders, Config rules, IAM Access Analyzer, and Macie. Attackers
   disable these services to blind defenders before performing malicious
-  actions. Any single tampering call is critical — the attacker is actively
-  degrading the organization's detection capability.
+  actions. Excludes known AWS service roles (SecurityHub manages its own
+  Config rules via DeleteConfigRule as part of normal standards management).
+  Any human-initiated tampering call is critical.
 author: irone contributors
 severity: critical
 event_class: api_activity
@@ -38,6 +39,8 @@ filters:
       - config.amazonaws.com
       - access-analyzer.amazonaws.com
       - macie2.amazonaws.com
+  - field: actor.user.type
+    not_equals: AWSService
 
 test_cases:
   - name: triggers on StopConfigurationRecorder

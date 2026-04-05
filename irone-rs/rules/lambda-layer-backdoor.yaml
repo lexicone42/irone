@@ -1,18 +1,16 @@
 id: detect-lambda-layer-backdoor
 name: Lambda Layer Published or Attached
 description: >
-  Detects Lambda layer operations that may indicate code injection. An attacker
-  can publish a malicious Lambda layer and attach it to existing functions via
-  UpdateFunctionConfiguration. Lambda layers execute before the function code,
-  enabling credential theft, data exfiltration, or backdoor installation without
-  modifying the function's deployment package. Also detects direct function code
-  updates (UpdateFunctionCode) which can replace function logic entirely.
-  Threshold of 1 for immediate alerting on any layer or code modification.
+  Detects bulk Lambda layer or code modifications that may indicate supply chain
+  attack or code injection. An attacker who publishes a malicious layer and
+  attaches it to many functions achieves broad persistent access. Normal deploys
+  update 4-5 functions; a threshold of 10 catches bulk injection while allowing
+  routine CI/CD activity. Also detects direct function code updates.
 author: irone contributors
 severity: high
 event_class: api_activity
 limit: 5000
-threshold: 1
+threshold: 10
 tags:
   - persistence
   - execution
@@ -49,6 +47,7 @@ test_cases:
         status: Success
     expected:
       triggered: true
+      threshold_override: 1
       match_count: 1
 
   - name: triggers on UpdateFunctionConfiguration
@@ -58,6 +57,7 @@ test_cases:
         status: Success
     expected:
       triggered: true
+      threshold_override: 1
       match_count: 1
 
   - name: triggers on UpdateFunctionCode
@@ -67,6 +67,7 @@ test_cases:
         status: Success
     expected:
       triggered: true
+      threshold_override: 1
       match_count: 1
 
   - name: does not trigger on GetFunction
