@@ -8,11 +8,11 @@
  *   import { configure, isAuthenticated, loginWithPassword } from './auth.js';
  *   configure({ clientId: 'xxx', cognitoDomain: 'xxx.auth.region.amazoncognito.com' });
  *
- * @version 0.20.0
+ * @version 0.21.1
  * @license Apache-2.0
  */
 
-export const VERSION = '0.20.0';
+export const VERSION = '0.21.1';
 
 // ==================== CONFIGURATION ====================
 
@@ -419,7 +419,9 @@ function logSecurityEvent({
     };
 
     // Remove undefined fields
-    Object.keys(event).forEach(key => event[key] === undefined && delete event[key]);
+    for (var key of Object.keys(event)) {
+        if (event[key] === undefined) delete event[key];
+    }
 
     if (logger === 'console') {
         console.log('[L42-AUTH-OCSF]', JSON.stringify(event));
@@ -951,26 +953,7 @@ export function shouldRefreshToken(tokens) {
     }
 }
 
-/**
- * Detect auth method from token claims (for migration from older versions).
- * @param {Object} tokens - Tokens object
- * @returns {string} Detected auth method ('password' or 'passkey')
- */
-function detectAuthMethod(tokens) {
-    if (tokens.auth_method) return tokens.auth_method;
 
-    try {
-        const claims = UNSAFE_decodeJwtPayload(tokens.id_token);
-        const amr = claims.amr || [];
-        if (amr.includes('webauthn') || amr.includes('mfa')) {
-            return 'passkey';
-        }
-    } catch {
-        // Ignore decode errors
-    }
-
-    return 'password';
-}
 
 /**
  * Refresh tokens using Cognito refresh token flow.
@@ -1221,7 +1204,7 @@ function sleep(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-function getBackoffDelay(attempt) {
+export function getBackoffDelay(attempt) {
     const exponentialDelay = RETRY_CONFIG.baseDelayMs * Math.pow(2, attempt);
     const jitter = Math.random() * 0.3 * exponentialDelay;
     return Math.min(exponentialDelay + jitter, RETRY_CONFIG.maxDelayMs);
@@ -1288,7 +1271,7 @@ function resetLoginAttempts(email) {
  * Detect Cognito account lockout from error response.
  * Returns true if the error indicates a server-side lockout.
  */
-function detectCognitoLockout(error) {
+export function detectCognitoLockout(error) {
     const msg = (error.message || '').toLowerCase();
     const type = (error.__type || error.code || '').toLowerCase();
     return (
@@ -1515,7 +1498,7 @@ export async function loginWithPassword(email, password) {
  * @returns {string} UUID-formatted string
  * @private
  */
-function formatAaguid(bytes) {
+export function formatAaguid(bytes) {
     const hex = Array.from(bytes, function(b) { return b.toString(16).padStart(2, '0'); }).join('');
     return hex.slice(0, 8) + '-' + hex.slice(8, 12) + '-' + hex.slice(12, 16) + '-' + hex.slice(16, 20) + '-' + hex.slice(20, 32);
 }
@@ -1533,7 +1516,7 @@ function formatAaguid(bytes) {
  * @returns {Object|null} Parsed flags, signCount, and optional AAGUID; null if too short
  * @private
  */
-function parseAuthenticatorData(authData) {
+export function parseAuthenticatorData(authData) {
     var bytes = new Uint8Array(authData);
     if (bytes.length < 37) return null;
 
@@ -1801,9 +1784,12 @@ export async function loginWithConditionalUI(options = {}) {
     _conditionalAbortController = controller;
 
     // Merge user signal with internal controller
-    var signal = options.signal
-        ? AbortSignal.any([options.signal, controller.signal])
-        : controller.signal;
+    var signal;
+    if (options.signal && typeof AbortSignal.any === 'function') {
+        signal = AbortSignal.any([options.signal, controller.signal]);
+    } else {
+        signal = controller.signal;
+    }
 
     var rpId = config.relyingPartyId || window.location.hostname;
 
@@ -1889,7 +1875,7 @@ export async function loginWithConditionalUI(options = {}) {
         // Mode B: Discovery flow — local challenge, then re-auth
         try {
             var challenge = crypto.getRandomValues(new Uint8Array(32));
-            var credential = await navigator.credentials.get({
+            var discoveryCredential = await navigator.credentials.get({
                 publicKey: {
                     challenge: challenge.buffer,
                     rpId: rpId,
@@ -1903,7 +1889,7 @@ export async function loginWithConditionalUI(options = {}) {
             _conditionalAbortController = null;
 
             // Extract username from userHandle
-            var userHandle = credential.response.userHandle;
+            var userHandle = discoveryCredential.response.userHandle;
             if (!userHandle || userHandle.byteLength === 0) {
                 throw new Error('No user handle returned — credential may not be discoverable');
             }
@@ -1956,7 +1942,7 @@ const PKCE_VERIFIER_KEY = 'l42_pkce_verifier';
  * RFC 7636 requires 43-128 characters from unreserved URI characters.
  * @returns {string} Random code verifier (64 characters)
  */
-function generateCodeVerifier() {
+export function generateCodeVerifier() {
     const array = new Uint8Array(48); // 48 bytes = 64 base64url chars
     crypto.getRandomValues(array);
     // Base64url encoding without padding
@@ -1971,7 +1957,7 @@ function generateCodeVerifier() {
  * @param {string} verifier - Code verifier
  * @returns {Promise<string>} Base64url-encoded SHA-256 hash
  */
-async function generateCodeChallenge(verifier) {
+export async function generateCodeChallenge(verifier) {
     const encoder = new TextEncoder();
     const data = encoder.encode(verifier);
     const hash = await crypto.subtle.digest('SHA-256', data);
@@ -2148,7 +2134,7 @@ export async function exchangeCodeForTokens(code, state) {
  *
  * @returns {void|Promise<void>}
  */
-export function logout() {
+export async function logout() {
     abortConditionalRequest();
     debugLog('auth', 'logout');
     const email = getUserEmail();
@@ -2156,8 +2142,8 @@ export function logout() {
     // Clear local cache first (immediate UI update)
     clearTokens();
 
-    // Call server endpoint in background
-    return logoutViaHandler(email);
+    // Call server endpoint to destroy server session
+    await logoutViaHandler(email);
 }
 
 /**
@@ -3086,7 +3072,7 @@ export async function fetchWithAuth(url, options = {}) {
                     'Authorization': `Bearer ${freshTokens.access_token}`
                 }
             });
-        } catch (e) {
+        } catch {
             clearTokens();
             notifySessionExpired('Server returned 401 and refresh failed');
             throw new Error('Session expired. Please log in again.');
@@ -3094,6 +3080,45 @@ export async function fetchWithAuth(url, options = {}) {
     }
 
     return response;
+}
+
+// ==================== TEST SUPPORT ====================
+
+/**
+ * Reset all module-level state for test isolation.
+ * ONLY for use in test suites — never call in production code.
+ * @private
+ */
+export function _resetForTesting() {
+    // Config
+    config = { ...DEFAULT_CONFIG };
+    _configured = false;
+
+    // Token cache
+    HandlerTokenStore._cache = null;
+    HandlerTokenStore._cacheExpiry = 0;
+    HandlerTokenStore._fetchPromise = null;
+
+    // Abort controllers
+    if (_conditionalAbortController) {
+        _conditionalAbortController.abort();
+    }
+    _conditionalAbortController = null;
+
+    // Rate limiting
+    _loginAttempts.clear();
+
+    // Listeners
+    authStateListeners.clear();
+    loginListeners.clear();
+    logoutListeners.clear();
+    sessionExpiredListeners.clear();
+
+    // Auto-refresh
+    stopAutoRefresh();
+
+    // Debug
+    _debugHistory.length = 0;
 }
 
 // ==================== DEFAULT EXPORT ====================
@@ -3152,5 +3177,13 @@ export default {
     getDiagnostics,
     clearDebugHistory,
     // Login rate limiting (v0.12.1+)
-    getLoginAttemptInfo
+    getLoginAttemptInfo,
+    getBackoffDelay,
+    detectCognitoLockout,
+    // WebAuthn parsing utilities (v0.19.0+)
+    parseAuthenticatorData,
+    formatAaguid,
+    // PKCE utilities
+    generateCodeVerifier,
+    generateCodeChallenge
 };
