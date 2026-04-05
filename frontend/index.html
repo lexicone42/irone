@@ -13,7 +13,7 @@
     <script src="/assets/app.js"></script>
 </head>
 <body>
-    <div class="layout" x-data="navApp()">
+    <div class="layout" x-data="navApp">
         <nav class="sidebar">
             <div class="nav-brand">&gt; irone_</div>
 
@@ -39,7 +39,7 @@
             </template>
         </nav>
 
-        <main class="main-content" x-data="dashboardApp()">
+        <main class="main-content" x-data="dashboardApp">
             <h1>Dashboard</h1>
 
             <template x-if="loading">

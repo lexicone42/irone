@@ -12,7 +12,7 @@
     <script src="/assets/app.js"></script>
 </head>
 <body>
-    <div class="layout" x-data="navApp()">
+    <div class="layout" x-data="navApp">
         <nav class="sidebar">
             <div class="nav-brand">&gt; irone_</div>
 
@@ -38,7 +38,7 @@
             </template>
         </nav>
 
-        <main class="main-content" x-data="sourcesApp()">
+        <main class="main-content" x-data="sourcesApp">
             <h1>Data Sources</h1>
 
             <template x-if="loading">
