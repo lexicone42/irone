@@ -181,6 +181,8 @@ function detectionsApp() {
             }
         },
 
+        setActiveTab(tab) { this.activeTab = tab; },
+
         // Group rules by severity in display order
         rulesBySeverity() {
             const order = ["critical", "high", "medium", "low", "info"];
@@ -440,6 +442,9 @@ function investigationsApp() {
         // Source dropdown
         availableSources: [],
         newSourceName: "",
+
+        setCreateTab(tab) { this.createTab = tab; },
+        setTimelineFilter(filter) { this.timelineFilter = filter; },
 
         async init() {
             await this.loadList();

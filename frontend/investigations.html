@@ -8,7 +8,7 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/cytoscape/3.30.4/cytoscape.min.js"></script>
-    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.csp.min.js"></script>
     <script src="/assets/auth.js"></script>
     <script src="/assets/app.js"></script>
 </head>
@@ -55,11 +55,11 @@
                         <div class="card-header">New Investigation</div>
                         <div class="tab-bar" style="margin-bottom: 0.75rem;">
                             <button class="tab-btn" :class="createTab === 'identifiers' && 'active'"
-                                    @click="createTab = 'identifiers'">
+                                    @click="setCreateTab('identifiers')">
                                 <i class="fa-solid fa-fingerprint"></i> From Identifiers
                             </button>
                             <button class="tab-btn" :class="createTab === 'detection' && 'active'"
-                                    @click="createTab = 'detection'">
+                                    @click="setCreateTab('detection')">
                                 <i class="fa-solid fa-shield-halved"></i> From Detection
                                 <template x-if="triggeredRuns.length > 0">
                                     <span class="badge badge-error badge-sm" style="margin-left: 0.35rem;"
@@ -393,13 +393,13 @@
                             <div class="timeline-filter-bar">
                                 <button class="timeline-filter-btn"
                                         :class="timelineFilter === 'all' && 'active'"
-                                        @click="timelineFilter = 'all'">All</button>
+                                        @click="setTimelineFilter('all')">All</button>
                                 <button class="timeline-filter-btn"
                                         :class="timelineFilter === 'suspicious' && 'active'"
-                                        @click="timelineFilter = 'suspicious'">Suspicious</button>
+                                        @click="setTimelineFilter('suspicious')">Suspicious</button>
                                 <button class="timeline-filter-btn"
                                         :class="timelineFilter === 'unreviewed' && 'active'"
-                                        @click="timelineFilter = 'unreviewed'">Unreviewed</button>
+                                        @click="setTimelineFilter('unreviewed')">Unreviewed</button>
                             </div>
 
                             <!-- Event list (new grid-based timeline) -->
