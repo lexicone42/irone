@@ -942,23 +942,27 @@ pub(crate) fn read_parquet_bytes(
         .map_err(|e| AwsError::ResultReadFailed(format!("Parquet reader init failed: {e}")))?;
 
     let builder = if let Some(cols) = projection_columns {
-        // Build a projection mask from column names → Parquet schema indices
-        let parquet_schema = builder.parquet_schema().clone();
-        let indices: Vec<usize> = cols
-            .iter()
-            .filter_map(|name| {
-                parquet_schema
-                    .columns()
-                    .iter()
-                    .position(|c| c.self_type().name() == name)
-            })
-            .collect();
+        // Map top-level field names to Parquet root column indices.
+        // Parquet's flat schema expands nested structs (e.g., "actor" becomes
+        // actor.user.name, actor.user.type as separate leaf columns). We need
+        // the ROOT index for each top-level field, not the leaf position.
+        let parquet_schema = builder.parquet_schema();
+        let root_schema = parquet_schema.root_schema();
+        let mut root_indices = Vec::new();
+        for name in cols {
+            for (i, field) in root_schema.get_fields().iter().enumerate() {
+                if field.name() == name {
+                    root_indices.push(i);
+                    break;
+                }
+            }
+        }
 
-        if indices.is_empty() {
-            // No matching columns — read all (graceful fallback)
+        if root_indices.is_empty() {
             builder
         } else {
-            let mask = parquet::arrow::ProjectionMask::roots(builder.parquet_schema(), indices);
+            let mask =
+                parquet::arrow::ProjectionMask::roots(builder.parquet_schema(), root_indices);
             builder.with_projection(mask)
         }
     } else {
