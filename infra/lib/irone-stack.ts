@@ -167,8 +167,8 @@ export class IroneStack extends cdk.Stack {
             contentSecurityPolicy: [
               "default-src 'self'",
               "script-src 'self' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com",
-              "style-src 'self' https://cdnjs.cloudflare.com 'unsafe-inline'",
-              "font-src 'self' https://cdnjs.cloudflare.com",
+              "style-src 'self' https://cdnjs.cloudflare.com https://fonts.googleapis.com 'unsafe-inline'",
+              "font-src 'self' https://cdnjs.cloudflare.com https://fonts.gstatic.com",
               "img-src 'self' data:",
               "connect-src 'self' https://*.amazonaws.com https://*.amazoncognito.com",
             ].join("; "),
