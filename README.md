@@ -16,8 +16,9 @@ The name "irone" comes from the aromatic compound found in iris flowers — and 
 
 ```
 irone/
-├── irone-rs/                  # Rust workspace (8 crates, 447 tests)
-│   ├── irone-core/            # Config, connectors, catalog, detections, graph, reports
+├── irone-rs/                  # Rust workspace (8 crates, 515+ tests)
+│   ├── irone-core/            # Config, connectors, catalog, detections, graph, reports,
+│   │                          #   playbooks (SOAR engine), investigator (Claude AI analysis)
 │   ├── irone-aws/             # Iceberg + Athena connectors, DynamoDB, SNS, SSM secrets
 │   ├── irone-persistence/     # redb-backed investigation + detection store
 │   ├── irone-auth/            # Cognito OAuth + Cedar authorization (via l42-token-handler)
@@ -25,9 +26,11 @@ irone/
 │   ├── irone-worker/          # Investigation enrichment worker (Step Functions)
 │   ├── irone-alerting/        # Scheduled detection + freshness alerting Lambda
 │   ├── irone-health-checker/  # Scheduled EventBridge Lambda for parallel health checks
-│   └── rules/                 # 45 OCSF detection rules (YAML)
+│   ├── rules/                 # 53 OCSF detection rules (YAML) — AWS, EKS, GCP
+│   └── playbooks/             # 3 SOAR response playbooks (YAML)
 ├── frontend/                 # Static Alpine.js frontend → S3 + CloudFront
 ├── infra/                    # TypeScript CDK (5 stacks)
+├── scenarios/                # Mock incident scenarios for interview prep
 ├── scripts/                  # Deploy + migration scripts
 └── docs/                     # Cost estimates, Rust patterns guide
 ```
@@ -35,13 +38,18 @@ irone/
 ## Features
 
 - **AWS Security Lake**: Query OCSF-formatted data via direct Iceberg reads (sub-second) or Athena fallback
-- **OCSF Detection Rules**: 45 bundled rules with declarative field filters, MITRE ATT&CK mapping, and kill-chain phase classification
-- **Investigation Graphs**: Build security graphs from detection results with OCSF entity extraction, attack path analysis, and anomaly detection
+- **53 OCSF Detection Rules**: AWS CloudTrail, EKS audit logs, and GCP audit logs with declarative field filters, MITRE ATT&CK mapping (42 techniques across 11 tactics), and kill-chain phase classification
+- **Investigation Graphs**: Build security graphs from detection results with OCSF entity extraction, attack path analysis, graph pattern detection (PrivilegeFanout, ResourceConvergence, MultiSourceAuth, ServiceBridge), and MAD-based anomaly scoring
+- **SOAR Playbook Engine**: Declarative response playbooks with trigger matching, approval gates (auto/manual/business-hours), and 10 action types including K8s-specific containment
+- **Claude AI Investigator**: Feed investigation artifacts (graph, timeline, patterns, anomalies) to Claude for structured analysis — verdict, confidence, recommended actions, detection improvements
+- **Zero-Materialization Scan Path**: Column projection + Arrow-native filtering + lazy evaluation — 381x faster than full JSON materialization on 10K-row OCSF datasets
+- **Parallel Detection Runner**: 53 rules execute concurrently via `futures::join_all`
 - **Automated Alerting**: Hourly detection scans + 15-minute freshness checks via scheduled Lambda
 - **Health Monitoring**: DynamoDB-cached source health checks with history tracking
 - **Cedar Authorization**: RBAC with 5 groups (admin, detection-engineer, soc-analyst, incident-responder, read-only) and 20 fine-grained actions
 - **Passkey Authentication**: WebAuthn/FIDO2 passkey login via Cognito + l42-cognito-passkey
-- **Lambda Deployment**: ~10MB web zip, ~7MB health zip, 220ms cold start, 1-2ms warm
+- **Supply Chain Verification**: `cargo vet` with Google + Mozilla audit imports, `cargo deny` for advisories/licenses
+- **Lambda Deployment**: ~16MB web zip, ~13MB worker zip, 220ms cold start, 1-2ms warm
 
 ## Quick Start
 
@@ -55,7 +63,7 @@ irone/
 
 ```bash
 cd irone-rs
-cargo test --workspace    # 447 tests
+cargo test --workspace    # 515+ tests
 cargo build --release     # Build all crates
 ```
 
@@ -107,7 +115,10 @@ filters:
     equals: IAMUser
 ```
 
-**45 bundled rules** covering: IAM privilege escalation, root console login, Security Hub critical findings, Cognito auth failure spikes, Lambda invocation spikes, console login detection, GitHub OIDC role assumption, API permission enumeration, S3 public access, IMDS credential theft, VPC flow anomalies, and more.
+**53 bundled rules** across three platforms:
+- **AWS** (40 rules): IAM privilege escalation, root console login, CloudTrail tampering, cross-account role assumption, S3 data collection, IMDS credential theft, Lambda layer injection, and more
+- **EKS/Kubernetes** (8 rules): privileged pod creation, kubectl exec, RBAC escalation, secret access, DaemonSet/CronJob persistence, service account token theft, NodePort exposure
+- **GCP** (5 rules): audit logging tampering, service account key creation, IAM policy changes, bucket exposure, compute enumeration
 
 Filter operators: `equals`, `not_equals`, `contains`, `in`, `regex`.
 
@@ -130,12 +141,13 @@ All config via environment variables with `SECDASH_` prefix:
 
 ### Pre-commit Hooks
 
-Uses [prek](https://github.com/catppuccin/prek):
+Native shell hook at `.githooks/pre-commit`:
 
 - `cargo fmt --check` — format check on every commit
 - `cargo clippy -- -D warnings` — lint on every commit
-- `cargo deny check` — license/advisory check on every commit
-- `cargo test --workspace` — full test suite on pre-push
+- `cargo deny check` — license/advisory/ban check on every commit (real failures block commits)
+
+Supply chain: `cargo vet` with Google + Mozilla audit imports (60 crates audited, 501 exempted).
 
 ### Rust Patterns
 
@@ -171,6 +183,7 @@ See [docs/rust-patterns.md](docs/rust-patterns.md) for a guide to the Rust patte
 | `/api/investigations/{id}/timeline` | GET | Get investigation timeline |
 | `/api/investigations/{id}/attack-paths` | GET | Get attack path analysis |
 | `/api/investigations/{id}/anomalies` | GET | Get anomaly scores |
+| `/api/investigations/{id}/patterns` | GET | Get graph structural patterns |
 | `/api/investigations/{id}/enrich` | POST | Enrich investigation with context |
 | `/api/investigations/{id}/timeline/tag` | POST | Tag a timeline event |
 
