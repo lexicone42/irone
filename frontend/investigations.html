@@ -8,12 +8,12 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/cytoscape/3.30.4/cytoscape.min.js"></script>
-    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.csp.min.js"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.15.11/dist/cdn.min.js"></script>
     <script src="/assets/auth.js"></script>
     <script src="/assets/app.js"></script>
 </head>
 <body>
-    <div class="layout" x-data="navApp">
+    <div class="layout" x-data="navApp()">
         <nav class="sidebar">
             <div class="nav-brand">&gt; irone_</div>
 
@@ -39,7 +39,7 @@
             </template>
         </nav>
 
-        <main class="main-content" x-data="investigationsApp">
+        <main class="main-content" x-data="investigationsApp()">
 
             <!-- ─── List View ──────────────────────────────── -->
             <template x-if="!activeInv">

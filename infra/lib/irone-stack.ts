@@ -166,7 +166,7 @@ export class IroneStack extends cdk.Stack {
             // TODO: revisit when Alpine 4.x ships with full Trusted Types support.
             contentSecurityPolicy: [
               "default-src 'self'",
-              "script-src 'self' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com",
+              "script-src 'self' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com 'unsafe-inline' 'unsafe-eval'",
               "style-src 'self' https://cdnjs.cloudflare.com https://fonts.googleapis.com 'unsafe-inline'",
               "font-src 'self' https://cdnjs.cloudflare.com https://fonts.gstatic.com",
               "img-src 'self' data:",
