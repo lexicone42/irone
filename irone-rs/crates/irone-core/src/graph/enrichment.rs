@@ -62,9 +62,9 @@ pub fn score_entity_anomalies(
     results: &[QueryResult],
     z_threshold: f64,
 ) -> Vec<EntityAnomalyScore> {
-    let mut user_counts: HashMap<String, usize> = HashMap::new();
-    let mut ip_counts: HashMap<String, usize> = HashMap::new();
-    let mut service_counts: HashMap<String, usize> = HashMap::new();
+    let mut user_counts: HashMap<String, usize> = HashMap::with_capacity(32);
+    let mut ip_counts: HashMap<String, usize> = HashMap::with_capacity(32);
+    let mut service_counts: HashMap<String, usize> = HashMap::with_capacity(16);
 
     for qr in results {
         for row in qr.rows() {

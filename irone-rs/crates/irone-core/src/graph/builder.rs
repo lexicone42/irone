@@ -78,7 +78,7 @@ impl GraphBuilder {
 
         // Create the security finding node
         let finding_id = SecurityFindingNode::create_id(&result.rule_id, result.executed_at);
-        let mut finding_props = HashMap::new();
+        let mut finding_props = HashMap::with_capacity(4);
         if !result.mitre_attack.is_empty() {
             finding_props.insert(
                 "mitre_attack".into(),

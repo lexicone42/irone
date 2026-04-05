@@ -703,11 +703,11 @@ impl SecurityGraph {
     /// Summary of the graph contents.
     #[must_use]
     pub fn summary(&self) -> GraphSummary {
-        let mut nodes_by_type: HashMap<String, usize> = HashMap::new();
+        let mut nodes_by_type: HashMap<String, usize> = HashMap::with_capacity(6);
         for node in self.nodes.values() {
             *nodes_by_type.entry(node.node_type.to_string()).or_default() += 1;
         }
-        let mut edges_by_type: HashMap<String, usize> = HashMap::new();
+        let mut edges_by_type: HashMap<String, usize> = HashMap::with_capacity(10);
         for edge in &self.edges {
             *edges_by_type.entry(edge.edge_type.to_string()).or_default() += 1;
         }

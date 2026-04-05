@@ -229,7 +229,7 @@ impl InvestigationTimeline {
     /// Summary statistics.
     #[must_use]
     pub fn summary(&self) -> TimelineSummary {
-        let mut tag_counts: HashMap<String, usize> = HashMap::new();
+        let mut tag_counts: HashMap<String, usize> = HashMap::with_capacity(8);
         for event in &self.events {
             *tag_counts.entry(event.tag.to_string()).or_default() += 1;
         }
@@ -286,8 +286,8 @@ pub fn cluster_timeline_events(
     let mut current_ids: Vec<String> = vec![events[0].id.clone()];
     let mut current_start = events[0].timestamp;
     let mut current_end = events[0].timestamp;
-    let mut entity_counts: HashMap<String, usize> = HashMap::new();
-    let mut source_counts: HashMap<String, usize> = HashMap::new();
+    let mut entity_counts: HashMap<String, usize> = HashMap::with_capacity(16);
+    let mut source_counts: HashMap<String, usize> = HashMap::with_capacity(8);
     *entity_counts
         .entry(events[0].entity_id.clone())
         .or_default() += 1;
