@@ -161,9 +161,9 @@ export class IroneStack extends cdk.Stack {
         responseHeadersPolicyName: "irone-security-headers",
         securityHeadersBehavior: {
           contentSecurityPolicy: {
-            // "Perfect Types" — Alpine CSP build eliminates Function(), so we
-            // can enforce Trusted Types and drop 'unsafe-eval' entirely.
-            // DOM XSS is structurally impossible with this policy.
+            // Strong CSP without Trusted Types. Alpine.js CSP build avoids
+            // Function() but still triggers Trusted Types violations internally.
+            // TODO: revisit when Alpine 4.x ships with full Trusted Types support.
             contentSecurityPolicy: [
               "default-src 'self'",
               "script-src 'self' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com",
@@ -171,8 +171,6 @@ export class IroneStack extends cdk.Stack {
               "font-src 'self' https://cdnjs.cloudflare.com",
               "img-src 'self' data:",
               "connect-src 'self' https://*.amazonaws.com https://*.amazoncognito.com",
-              "require-trusted-types-for 'script'",
-              "trusted-types 'none'",
             ].join("; "),
             override: true,
           },
